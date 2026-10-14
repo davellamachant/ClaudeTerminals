@@ -151,7 +151,7 @@ internal sealed class MainForm : Form
         isRepo = st.IsRepo,
         error = st.Error,
         root = s.RepoRoot,
-        head = st.HeadOid,
+        head = st.HeadId,
         branch = st.Branch,
         upstream = st.Upstream,
         ahead = st.Ahead,

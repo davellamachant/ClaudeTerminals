@@ -86,31 +86,51 @@ public sealed class OpenFileTests
         File.WriteAllText(Path.Combine(outside, "secret.txt"), "out");
         try
         {
-            Junction(Path.Combine(repo, "link"), outside);
-            Junction(alias, repo);
+            FileSystemFixtures.Junction(Path.Combine(repo, "link"), outside);
+            FileSystemFixtures.Junction(alias, repo);
+            FileSystemFixtures.Junction(Path.Combine(top, "hop2"), outside);
+            FileSystemFixtures.Junction(Path.Combine(repo, "hop1"), Path.Combine(top, "hop2"));   // a chain that ends outside
+            FileSystemFixtures.Junction(Path.Combine(repo, "self"), Path.Combine(repo));          // a link that stays inside
 
             Assert.NotNull(GitService.FullPathInRepo(repo, @"link\secret.txt"));        // lexically inside...
             Assert.Null(GitService.ExistingPathInRepo(repo, @"link\secret.txt"));        // ...but really outside
+            Assert.Null(GitService.ExistingPathInRepo(repo, @"hop1\secret.txt"));
             Assert.NotNull(GitService.ExistingPathInRepo(repo, "inside.txt"));
+            Assert.NotNull(GitService.ExistingPathInRepo(repo, @"self\inside.txt"));
+            Assert.NotNull(GitService.ExistingPathInRepo(repo, "INSIDE.TXT"));          // case variant in a case-insensitive folder
             Assert.NotNull(GitService.ExistingPathInRepo(alias, "inside.txt"));          // repository opened through a link
             Assert.Null(GitService.ExistingPathInRepo(repo, "missing.txt"));
         }
         finally
         {
-            Directory.Delete(Path.Combine(repo, "link"));   // removes the junction, not its target
-            Directory.Delete(alias);
-            Directory.Delete(top, true);
+            FileSystemFixtures.DeleteTree(top);   // removes the junctions, not their targets' contents twice
         }
     }
 
-    private static void Junction(string link, string target)
+    [Fact]
+    public void A_differently_cased_sibling_folder_is_outside_the_repository()
     {
-        using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe", $"/d /c mklink /J \"{link}\" \"{target}\"")
+        // In a case-sensitive parent, Repo and repo are two folders; text equal after case folding is not "inside".
+        var top = Path.Combine(Path.GetTempPath(), "ct-casepar-" + Guid.NewGuid().ToString("N")[..8]);
+        try
         {
-            UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true,
-        })!;
-        p.WaitForExit();
-        Assert.True(Directory.Exists(link), "could not create junction");
+            FileSystemFixtures.MakeCaseSensitive(top);
+            var repo = Path.Combine(top, "Repo");
+            var sibling = Path.Combine(top, "repo");
+            Directory.CreateDirectory(repo);
+            Directory.CreateDirectory(sibling);
+            File.WriteAllText(Path.Combine(repo, "inside.txt"), "in");
+            File.WriteAllText(Path.Combine(sibling, "secret.txt"), "out");
+            FileSystemFixtures.Junction(Path.Combine(repo, "link"), sibling);
+
+            Assert.Null(GitService.FullPathInRepo(repo, @"..\repo\secret.txt"));
+            Assert.Null(GitService.ExistingPathInRepo(repo, @"link\secret.txt"));
+            Assert.NotNull(GitService.ExistingPathInRepo(repo, "inside.txt"));
+        }
+        finally
+        {
+            FileSystemFixtures.DeleteTree(top);
+        }
     }
 
     // ---- F3: only the app page itself may drive the host

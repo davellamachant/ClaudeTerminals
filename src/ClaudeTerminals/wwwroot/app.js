@@ -1048,6 +1048,7 @@ function confirmUndo(s, kind, files, folder) {
   const reverted = files.filter((f) => !isNew(f));
   const renamed = staged ? files.filter((f) => f.status === 'R') : [];
   const alsoUnstaged = staged ? files.filter((f) => unstagedPaths.has(f.path)) : [];
+  const head = s.git?.head ?? null;   // the commit this dialog describes: s.git may be replaced before the click
   // Single file: 'The file …'; several: '2 files …' / '1 file …'.
   const count = (n, single, noun) => (files.length === 1 ? single : `${n} ${noun}${n === 1 ? '' : 's'}`);
 
@@ -1077,7 +1078,7 @@ function confirmUndo(s, kind, files, folder) {
     async () => {
       try {
         // Send what this dialog showed (the files, the commit, which ones had unstaged edits); the host refuses if any changed since.
-        await request('git.undo', { id: s.id, staged, head: s.git?.head ?? null, alsoUnstaged: alsoUnstaged.map((f) => f.path),
+        await request('git.undo', { id: s.id, staged, head, alsoUnstaged: alsoUnstaged.map((f) => f.path),
           files: files.map(({ path, origPath, status, untracked, inHead }) => ({ path, origPath, status, untracked, inHead })) });
       } catch (e) {
         s.info = { text: e.message, error: true };
