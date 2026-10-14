@@ -377,13 +377,22 @@ function renderTileHeader(s) {
 
 function renderSessionTabs() {
   const host = $('#sessionTabs');
-  host.replaceChildren(...state.sessions.map((s, i) => h('button', {
+  // A div rather than a button, so the close button inside it is valid markup.
+  host.replaceChildren(...state.sessions.map((s, i) => h('div', {
     class: 'session-tab' + (state.expandedId === s.id ? ' active' : ''),
+    role: 'button',
     'data-id': s.id,
-    title: `${s.directory}\n${statusText(s)}`,
-    onclick: () => (state.expandedId === s.id ? collapse() : expand(s.id)),
+    title: `${s.directory}\n${statusText(s)}\nMiddle-click to close`,
+    onclick: (e) => {
+      if (e.target.closest('.tab-close')) return;
+      state.expandedId === s.id ? collapse() : expand(s.id);
+    },
+    onmousedown: (e) => { if (e.button === 1) e.preventDefault(); },   // no autoscroll cursor
+    onauxclick: (e) => { if (e.button === 1) confirmRemove(s); },
     oncontextmenu: (e) => { e.preventDefault(); sessionMenu(s, e.clientX, e.clientY); },
-  }, h('span', { class: 'dot ' + statusClass(s) }), s.name, i < 9 ? h('span', { class: 'key' }, `Ctrl+${i + 1}`) : null)));
+  }, h('span', { class: 'dot ' + statusClass(s) }), s.name, i < 9 ? h('span', { class: 'key' }, `Ctrl+${i + 1}`) : null,
+  // Closing a session tab removes the session, after the same confirmation as "Remove session…".
+  h('button', { class: 'icon-btn small tab-close', title: 'Close session…', onclick: () => confirmRemove(s) }, iconEl('close')))));
   $('#btnGrid').classList.toggle('active', !state.expandedId);
   renderDocTabs();
 }
