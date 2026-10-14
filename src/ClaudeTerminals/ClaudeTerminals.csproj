@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+
+    <!-- Version shown in Explorer, Apps & Features and the installer. Bump for each release. -->
+    <Version>1.0.2</Version>
+    <Product>Claude Terminals</Product>
+    <AssemblyTitle>Claude Terminals</AssemblyTitle>
+    <Company>LLAMACHANT TECHNOLOGY LTD</Company>
+    <Copyright>© LLAMACHANT TECHNOLOGY LTD</Copyright>
+    <Description>Manage multiple Claude Code sessions with VS-style Git views.</Description>
+    <!-- The WebView2 package drags in its WPF assembly; harmless for WinForms. -->
+    <NoWarn>$(NoWarn);MSB3277</NoWarn>
+    <WebDir>$(MSBuildProjectDirectory)\..\..\web</WebDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4258.31" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="wwwroot\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- Third-party front-end libraries come from web/node_modules (run `npm install` in /web). -->
+  <ItemGroup>
+    <XtermFiles Include="$(WebDir)\node_modules\@xterm\xterm\lib\xterm.js;$(WebDir)\node_modules\@xterm\xterm\css\xterm.css" />
+    <XtermFiles Include="$(WebDir)\node_modules\@xterm\addon-*\lib\addon-*.js" />
+    <MonacoFiles Include="$(WebDir)\node_modules\monaco-editor\min\vs\**\*" />
+  </ItemGroup>
+
+  <Target Name="CopyWebLibs" AfterTargets="Build">
+    <Error Condition="!Exists('$(WebDir)\node_modules\monaco-editor')" Text="Front-end libraries missing. Run 'npm install' in $(WebDir)." />
+    <Copy SourceFiles="@(XtermFiles)" DestinationFolder="$(OutDir)wwwroot\lib\xterm" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(MonacoFiles)" DestinationFiles="@(MonacoFiles->'$(OutDir)wwwroot\lib\monaco\vs\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="PublishWebLibs" AfterTargets="Publish">
+    <Copy SourceFiles="@(XtermFiles)" DestinationFolder="$(PublishDir)wwwroot\lib\xterm" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(MonacoFiles)" DestinationFiles="@(MonacoFiles->'$(PublishDir)wwwroot\lib\monaco\vs\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

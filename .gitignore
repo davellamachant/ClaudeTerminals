@@ -1,0 +1,16 @@
+# Build output
+bin/
+obj/
+artifacts/
+
+# Front-end packages (restored with `npm ci` in web/)
+web/node_modules/
+
+# IDE / OS
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+Thumbs.db
+Desktop.ini

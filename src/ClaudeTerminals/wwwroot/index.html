@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Claude Terminals</title>
+  <link rel="stylesheet" href="lib/xterm/xterm.css">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <div id="app">
+    <header id="titlebar">
+      <button id="btnGrid" class="tb-btn" title="All sessions (Shift+Esc)"></button>
+      <div id="sessionTabs" class="session-tabs"></div>
+      <div class="spacer"></div>
+      <button id="btnAdd" class="tb-btn text" title="New session (Ctrl+Shift+N)"></button>
+      <button id="btnGit" class="tb-btn" title="Git Changes (Ctrl+Shift+G)"></button>
+    </header>
+
+    <div id="main">
+      <div id="stage">
+        <div id="docTabs" class="doc-tabs"></div>
+        <div id="docArea">
+        <div id="termPane">
+          <div id="grid"></div>
+          <div id="empty" hidden>
+            <div class="empty-title">No sessions yet</div>
+            <div class="empty-sub">Add a session for each worktree you want Claude to work in.</div>
+            <button id="btnAddEmpty" class="btn primary">New Session…</button>
+          </div>
+        </div>
+
+        <section id="diffDoc" hidden>
+          <div class="diff-toolbar">
+            <span id="diffSummary" class="diff-summary"></span>
+            <button id="diffPrev" class="icon-btn" title="Previous change (Alt+Up)"></button>
+            <button id="diffNext" class="icon-btn" title="Next change (Alt+Down)"></button>
+            <span class="sep"></span>
+            <button id="diffMode" class="icon-btn" title="Toggle side-by-side / inline"></button>
+            <button id="diffWs" class="icon-btn toggle" title="Ignore trim whitespace"></button>
+            <button id="diffOpenFile" class="icon-btn" title="Open file"></button>
+            <div class="spacer"></div>
+            <span id="diffSession" class="dim"></span>
+          </div>
+          <div class="diff-labels">
+            <div id="diffLeftLabel"></div>
+            <div id="diffRightLabel"></div>
+          </div>
+          <div id="diffEditor"></div>
+          <div id="diffNotice" hidden></div>
+        </section>
+        </div>
+      </div>
+
+      <div id="splitter"></div>
+
+      <aside id="gitPanel">
+        <div class="tw-title">
+          <div class="tw-tabs">
+            <button class="tw-tab active" data-tab="changes">Git Changes</button>
+            <button class="tw-tab" data-tab="repo">Git Repository</button>
+          </div>
+          <div class="spacer"></div>
+          <button id="gitRefresh" class="icon-btn" title="Refresh"></button>
+          <button id="gitHide" class="icon-btn" title="Hide (Ctrl+Shift+G)"></button>
+        </div>
+        <div class="tw-session">
+          <select id="gitSession" title="Session"></select>
+        </div>
+        <div id="gitBody"></div>
+      </aside>
+    </div>
+  </div>
+
+  <div id="modalHost" hidden></div>
+  <div id="menuHost"></div>
+  <div id="toastHost"></div>
+
+  <script src="lib/xterm/xterm.js"></script>
+  <script src="lib/xterm/addon-fit.js"></script>
+  <script src="lib/xterm/addon-webgl.js"></script>
+  <script src="lib/xterm/addon-unicode11.js"></script>
+  <script src="lib/xterm/addon-web-links.js"></script>
+  <script src="lib/monaco/vs/loader.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
