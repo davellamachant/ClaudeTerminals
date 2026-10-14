@@ -8,6 +8,7 @@ internal static class Native
     public const uint EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
     public const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
     public const uint CREATE_SUSPENDED = 0x00000004;
+    public const int STARTF_USESTDHANDLES = 0x00000100;
     public static readonly IntPtr PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE = (IntPtr)0x00020016;
 
     public const int JobObjectExtendedLimitInformation = 9;

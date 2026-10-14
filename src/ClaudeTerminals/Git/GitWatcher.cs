@@ -13,8 +13,14 @@ internal sealed class GitWatcher : IDisposable
 
     public event Action? Changed;
 
+    private static int live;
+
+    /// <summary>Watchers created and not yet disposed (lets tests detect a leaked watcher).</summary>
+    internal static int Live => Volatile.Read(ref live);
+
     public GitWatcher(string worktree, string? externalGitDir)
     {
+        Interlocked.Increment(ref live);
         debounce = new System.Threading.Timer(_ => Raise(), null, Timeout.Infinite, Timeout.Infinite);
         poll = new System.Threading.Timer(_ => Raise(), null, 15000, 15000);
         TryWatch(worktree, true);
@@ -69,6 +75,8 @@ internal sealed class GitWatcher : IDisposable
 
     public void Dispose()
     {
+        if (disposed) return;
+        Interlocked.Decrement(ref live);
         disposed = true;
         Changed = null;
         foreach (var w in watchers) w.Dispose();

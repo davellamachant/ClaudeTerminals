@@ -8,6 +8,9 @@ internal sealed class TerminalSession : IDisposable
 {
     private PseudoConsoleProcess? process;
     private GitWatcher? watcher;
+    private readonly object gitLock = new();
+    private int gitGeneration;
+    private bool disposed;
     private int statusRunning;
     private int statusDirty;
 
@@ -69,15 +72,29 @@ internal sealed class TerminalSession : IDisposable
 
     public async Task InitGitAsync()
     {
-        watcher?.Dispose();
-        watcher = null;
-        RepoRoot = await GitService.GetTopLevelAsync(Info.Directory);
-        var external = RepoRoot != null ? await GitService.GetExternalGitDirAsync(RepoRoot) : null;
-        // Watch the session folder even if it isn't a repo yet, so a later `git init` is picked up.
-        if (Directory.Exists(Info.Directory))
+        int generation;
+        lock (gitLock)
         {
-            watcher = new GitWatcher(RepoRoot ?? Info.Directory, external);
-            watcher.Changed += () => _ = RefreshStatusAsync();
+            if (disposed) return;
+            generation = ++gitGeneration;
+            watcher?.Dispose();
+            watcher = null;
+        }
+        var root = await GitService.GetTopLevelAsync(Info.Directory);
+        var external = root != null ? await GitService.GetExternalGitDirAsync(root) : null;
+        lock (gitLock)
+        {
+            // A newer refresh started while git was answering, or the session was removed: installing a watcher (or
+            // recording this answer's repository root) now would orphan the watcher, with its file watcher and 15 s poll
+            // running for the rest of the app's life, and could replace the newer setup's root.
+            if (disposed || generation != gitGeneration) return;
+            RepoRoot = root;
+            // Watch the session folder even if it isn't a repo yet, so a later `git init` is picked up.
+            if (Directory.Exists(Info.Directory))
+            {
+                watcher = new GitWatcher(RepoRoot ?? Info.Directory, external);
+                watcher.Changed += () => _ = RefreshStatusAsync();
+            }
         }
         await RefreshStatusAsync();
     }
@@ -114,7 +131,12 @@ internal sealed class TerminalSession : IDisposable
         Output = null;
         Exited = null;
         StatusChanged = null;
-        watcher?.Dispose();
+        lock (gitLock)
+        {
+            disposed = true;
+            watcher?.Dispose();
+            watcher = null;
+        }
         Stop();
     }
 }

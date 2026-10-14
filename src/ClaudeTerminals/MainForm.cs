@@ -263,16 +263,20 @@ internal sealed class MainForm : Form
 
             case "addSessions":
             {
-                foreach (var item in msg.GetProperty("sessions").EnumerateArray())
+                var items = msg.GetProperty("sessions").EnumerateArray()
+                    .Select(item => (Dir: Str(item, "directory"), Name: Str(item, "name"), Command: Str(item, "command")))
+                    .ToList();
+                // All or nothing: check every folder before adding any. Adding as we went left the earlier sessions
+                // added but unsaved and unshown after a failure, and a retry then added them a second time.
+                foreach (var item in items)
+                    if (!Directory.Exists(item.Dir)) throw new DirectoryNotFoundException(item.Dir);
+                foreach (var item in items)
                 {
-                    var dir = Str(item, "directory");
-                    if (!Directory.Exists(dir)) throw new DirectoryNotFoundException(dir);
-                    var name = Str(item, "name");
                     AddSessionRuntime(new SessionInfo
                     {
-                        Name = string.IsNullOrWhiteSpace(name) ? Path.GetFileName(dir.TrimEnd('\\')) : name.Trim(),
-                        Directory = dir,
-                        Command = string.IsNullOrWhiteSpace(Str(item, "command")) ? "claude" : Str(item, "command").Trim(),
+                        Name = string.IsNullOrWhiteSpace(item.Name) ? Path.GetFileName(item.Dir.TrimEnd('\\')) : item.Name.Trim(),
+                        Directory = item.Dir,
+                        Command = string.IsNullOrWhiteSpace(item.Command) ? "claude" : item.Command.Trim(),
                     });
                 }
                 SaveSessions();

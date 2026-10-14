@@ -8,6 +8,9 @@ internal sealed record GitResult(int ExitCode, byte[] Output, string Error)
 {
     public bool Ok => ExitCode == 0;
     public string Text => Encoding.UTF8.GetString(Output);
+
+    /// <summary>Output went past the requested limit, so reading stopped and git was ended; <see cref="Output"/> is incomplete.</summary>
+    public bool Truncated { get; init; }
 }
 
 /// <param name="Untracked">Not known to git at all ("?" in status); undoing it means deleting the file.</param>
@@ -30,7 +33,8 @@ internal sealed record GitStatus(
 
 internal sealed record CommitInfo(string Sha, string ShortSha, string Author, string Date, string Subject, string Refs, bool Outgoing);
 
-internal sealed record WorktreeInfo(string Path, string? Branch, bool Bare);
+/// <param name="Prunable">Git still lists the worktree but its folder is gone.</param>
+internal sealed record WorktreeInfo(string Path, string? Branch, bool Bare, bool Prunable = false);
 
 internal sealed record DiffContent(string Original, string Modified, string OriginalLabel, string ModifiedLabel, string? Notice);
 
@@ -39,7 +43,9 @@ internal static class GitService
 {
     private const int MaxDiffBytes = 4 * 1024 * 1024;
 
-    public static async Task<GitResult> RunAsync(string dir, IEnumerable<string> args, string? stdin = null, CancellationToken ct = default)
+    /// <param name="maxOutputBytes">Stop reading (and end git) once stdout exceeds this; the result is then <see cref="GitResult.Truncated"/>.</param>
+    public static async Task<GitResult> RunAsync(string dir, IEnumerable<string> args, string? stdin = null, CancellationToken ct = default,
+        int? maxOutputBytes = null)
     {
         var psi = new ProcessStartInfo("git")
         {
@@ -61,17 +67,62 @@ internal static class GitService
         foreach (var a in args) psi.ArgumentList.Add(a);
 
         using var process = Process.Start(psi) ?? throw new InvalidOperationException("Could not start git");
-        if (stdin != null)
+        void Kill()
         {
-            await process.StandardInput.WriteAsync(stdin);
-            process.StandardInput.Close();
+            try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { } catch (System.ComponentModel.Win32Exception) { }
         }
-        using var ms = new MemoryStream();
-        var stdoutTask = process.StandardOutput.BaseStream.CopyToAsync(ms, ct);
-        var stderrTask = process.StandardError.ReadToEndAsync(ct);
-        await Task.WhenAll(stdoutTask, stderrTask);
-        await process.WaitForExitAsync(ct);
-        return new GitResult(process.ExitCode, ms.ToArray(), stderrTask.Result.Trim());
+        try
+        {
+            // Drain stdout and stderr before feeding stdin: git may answer while still reading its input (cat-file
+            // --batch-check replies line by line), and with nobody reading, a full output pipe blocks both sides forever.
+            // Past the output limit git is ended at once, which also releases a write to its stdin still in progress.
+            using var ms = new MemoryStream();
+            var stdoutTask = ReadOutputAsync(process.StandardOutput.BaseStream, ms, maxOutputBytes, Kill, ct);
+            var stderrTask = process.StandardError.ReadToEndAsync(ct);
+            if (stdin != null)
+            {
+                try
+                {
+                    await process.StandardInput.WriteAsync(stdin.AsMemory(), ct);
+                    process.StandardInput.Close();
+                }
+                catch (IOException)
+                {
+                    // git stopped reading (it failed, or was ended above); its exit code and stderr say why.
+                }
+            }
+            var truncated = await stdoutTask;
+            var error = await stderrTask;
+            await process.WaitForExitAsync(ct);
+            return new GitResult(truncated ? -1 : process.ExitCode, ms.ToArray(), error.Trim()) { Truncated = truncated };
+        }
+        catch
+        {
+            Kill();   // cancelled or failed part-way: don't leave git running (disposing Process doesn't end it)
+            throw;
+        }
+    }
+
+    /// <returns>True if reading stopped because <paramref name="max"/> was exceeded (and <paramref name="onLimit"/> was called).</returns>
+    private static async Task<bool> ReadOutputAsync(Stream source, MemoryStream target, int? max, Action onLimit, CancellationToken ct)
+    {
+        if (max is not { } limit)
+        {
+            await source.CopyToAsync(target, ct);
+            return false;
+        }
+        var buffer = new byte[81920];
+        int read;
+        while ((read = await source.ReadAsync(buffer, ct)) > 0)
+        {
+            if (target.Length + read > limit)
+            {
+                onLimit();
+                return true;
+            }
+            target.Write(buffer, 0, read);
+        }
+        return false;
     }
 
     public static async Task<GitStatus> GetStatusAsync(string dir)
@@ -235,20 +286,21 @@ internal static class GitService
         var r = await RunAsync(dir, ["worktree", "list", "--porcelain"]);
         if (!r.Ok) return list;
         string? path = null, branch = null;
-        var bare = false;
+        bool bare = false, prunable = false;
         foreach (var raw in r.Text.Split('\n').Append(""))
         {
             var line = raw.TrimEnd('\r');
             if (line.Length == 0)
             {
-                if (path != null) list.Add(new WorktreeInfo(path.Replace('/', '\\'), branch, bare));
+                if (path != null) list.Add(new WorktreeInfo(path.Replace('/', '\\'), branch, bare, prunable));
                 path = branch = null;
-                bare = false;
+                bare = prunable = false;
             }
             else if (line.StartsWith("worktree ")) path = line[9..];
             else if (line.StartsWith("branch ")) branch = line[7..].Replace("refs/heads/", "");
             else if (line == "detached") branch = "(detached)";
             else if (line == "bare") bare = true;
+            else if (line == "prunable" || line.StartsWith("prunable ")) prunable = true;   // its folder is gone
         }
         return list;
     }
@@ -287,15 +339,18 @@ internal static class GitService
         }
     }
 
-    private sealed record Blob(bool Exists, byte[] Bytes)
+    /// <param name="TooLarge">Bigger than the viewer handles; its bytes were deliberately not loaded.</param>
+    internal sealed record Blob(bool Exists, byte[] Bytes, bool TooLarge = false)
     {
         public static readonly Blob Empty = new(false, []);
+        public static readonly Blob Large = new(true, [], TooLarge: true);
     }
 
-    private static async Task<Blob> ShowAsync(string dir, string spec)
+    /// <summary>Reads one side of a diff from git, giving up (and ending git) as soon as it is too large to show.</summary>
+    internal static async Task<Blob> ShowAsync(string dir, string spec)
     {
-        var r = await RunAsync(dir, ["show", spec]);
-        return r.Ok ? new Blob(true, r.Output) : Blob.Empty;
+        var r = await RunAsync(dir, ["show", spec], maxOutputBytes: MaxDiffBytes);
+        return r.Truncated ? Blob.Large : r.Ok ? new Blob(true, r.Output) : Blob.Empty;
     }
 
     private static Blob ReadWorkingFile(string fullPath)
@@ -303,9 +358,18 @@ internal static class GitService
         try
         {
             if (!File.Exists(fullPath)) return Blob.Empty;
-            var info = new FileInfo(fullPath);
-            if (info.Length > MaxDiffBytes) return new Blob(true, new byte[MaxDiffBytes + 1]);
-            return new Blob(true, File.ReadAllBytes(fullPath));
+            // Read at most one byte past the limit rather than trusting a size checked earlier: the session may be
+            // writing the file at this moment.
+            using var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var content = new MemoryStream();
+            var chunk = new byte[81920];
+            int read;
+            while ((read = stream.Read(chunk, 0, chunk.Length)) > 0)
+            {
+                if (content.Length + read > MaxDiffBytes) return Blob.Large;
+                content.Write(chunk, 0, read);
+            }
+            return new Blob(true, content.ToArray());
         }
         catch (IOException)
         {
@@ -319,7 +383,7 @@ internal static class GitService
 
     private static DiffContent Build(Blob original, Blob modified, string originalLabel, string modifiedLabel)
     {
-        if (original.Bytes.Length > MaxDiffBytes || modified.Bytes.Length > MaxDiffBytes)
+        if (original.TooLarge || modified.TooLarge || original.Bytes.Length > MaxDiffBytes || modified.Bytes.Length > MaxDiffBytes)
             return new DiffContent("", "", originalLabel, modifiedLabel, "File is too large to compare.");
         if (IsBinary(original.Bytes) || IsBinary(modified.Bytes))
             return new DiffContent("", "", originalLabel, modifiedLabel, "Binary files differ.");
@@ -376,9 +440,24 @@ internal static class GitService
     public static async Task<GitResult> UnstageAsync(string dir, IEnumerable<string> paths)
     {
         var list = paths.ToList();
-        return await HasHeadAsync(dir)
-            ? await RunWithPathsAsync(dir, ["restore", "--staged"], list)
-            : await RunWithPathsAsync(dir, ["rm", "--cached", "-r", "-q"], list);
+        if (!await HasHeadAsync(dir)) return await RunWithPathsAsync(dir, ["rm", "--cached", "-r", "-q"], list);
+        return await UnstageAgainstAsync(dir, list, await GetStatusAsync(dir));
+    }
+
+    /// <summary><see cref="UnstageAsync"/> on a repository with commits, against a status already read (tests supply broken ones).</summary>
+    internal static async Task<GitResult> UnstageAgainstAsync(string dir, List<string> list, GitStatus status)
+    {
+        // Without a complete status we can't tell which selected files are renames, and unstaging only their new
+        // side would leave the old side's deletion staged: stop instead.
+        if (!status.IsRepo || !status.WellFormed)
+            return new GitResult(1, [], "Couldn't read the repository's status, so nothing was unstaged. Try again.");
+        // A staged rename is two index changes: the old path deleted and the new one added. Unstaging only the new path
+        // would leave the deletion staged for the next commit, so the old path is restored to the index too.
+        var selected = list.ToHashSet(StringComparer.Ordinal);
+        list.AddRange(status.Staged
+            .Where(f => f.Status == "R" && f.OrigPath != null && selected.Contains(f.Path) && !selected.Contains(f.OrigPath))
+            .Select(f => f.OrigPath!));
+        return await RunWithPathsAsync(dir, ["restore", "--staged"], list);
     }
 
     private static async Task<bool> HasHeadAsync(string dir) =>
