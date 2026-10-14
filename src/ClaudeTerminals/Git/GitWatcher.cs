@@ -9,12 +9,19 @@ internal sealed class GitWatcher : IDisposable
     private readonly List<FileSystemWatcher> watchers = [];
     private readonly System.Threading.Timer debounce;
     private readonly System.Threading.Timer poll;
-    private bool disposed;
+    private volatile bool disposed;
+    private int disposeStarted;
 
     public event Action? Changed;
 
+    private static int live;
+
+    /// <summary>Watchers created and not yet disposed (lets tests detect a leaked watcher).</summary>
+    internal static int Live => Volatile.Read(ref live);
+
     public GitWatcher(string worktree, string? externalGitDir)
     {
+        Interlocked.Increment(ref live);
         debounce = new System.Threading.Timer(_ => Raise(), null, Timeout.Infinite, Timeout.Infinite);
         poll = new System.Threading.Timer(_ => Raise(), null, 15000, 15000);
         TryWatch(worktree, true);
@@ -69,6 +76,10 @@ internal sealed class GitWatcher : IDisposable
 
     public void Dispose()
     {
+        // Atomic test-and-set: a superseded InitGitAsync and session removal can dispose concurrently, and both
+        // passing a plain check would decrement the live count twice.
+        if (Interlocked.Exchange(ref disposeStarted, 1) != 0) return;
+        Interlocked.Decrement(ref live);
         disposed = true;
         Changed = null;
         foreach (var w in watchers) w.Dispose();

@@ -531,6 +531,9 @@ function terminalKey(s, e) {
     return false;
   }
   if (e.type !== 'keydown') return true;
+  // Ctrl+V pastes. Left to xterm it becomes ^V and the event is cancelled, so the browser's paste never happens; returning
+  // false without cancelling lets the native paste reach xterm's paste handler (bracketed paste included).
+  if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && (e.key === 'v' || e.key === 'V')) return false;
   // Ctrl+C copies when there is a selection, otherwise it is sent as an interrupt.
   if (e.ctrlKey && !e.shiftKey && (e.key === 'c' || e.key === 'C') && s.term.hasSelection()) {
     navigator.clipboard.writeText(s.term.getSelection());
@@ -741,11 +744,13 @@ function showAddDialog(mode = 'new') {
     if (!d || mode !== 'new') return;
     let worktrees;
     try { worktrees = (await request('worktrees', { directory: d })) || []; } catch { worktrees = []; }
+    if (dir.value.trim() !== d || mode !== 'new') return;   // a slow reply for a folder no longer in the dialog
     const norm = (p) => p.replace(/[\\/]+$/, '').toLowerCase();
     const existing = new Set(state.sessions.map((s) => norm(s.directory)));
-    const others = worktrees.filter((w) => !w.bare && norm(w.path) !== norm(d));
+    const others = worktrees.filter((w) => !w.bare && !w.prunable && norm(w.path) !== norm(d));   // prunable: folder is gone
     if (!others.length || mode !== 'new') return;
     wtHost.hidden = false;
+    wtHost.dataset.for = d;
     wtHost.replaceChildren(
       h('label', {}, 'Other worktrees of this repository — add sessions for them too:'),
       h('div', { class: 'wt-list' }, others.map((w) => {
@@ -770,7 +775,7 @@ function showAddDialog(mode = 'new') {
     if (!d) { error.hidden = false; error.textContent = mode === 'resume' ? 'Choose a conversation.' : 'Choose a folder.'; return; }
     const cmd = command.value.trim() || 'claude';
     const list = [{ directory: d, name: name.value.trim(), command: cmd }];
-    if (mode === 'new') {
+    if (mode === 'new' && !wtHost.hidden && wtHost.dataset.for === d) {   // only ticks made for this folder
       for (const cb of wtHost.querySelectorAll('input[type=checkbox]:checked')) {
         list.push({ directory: cb.dataset.path, name: leafName(cb.dataset.path), command: cmd });
       }
@@ -902,15 +907,25 @@ $('#gitSession').addEventListener('change', (e) => showGit(e.target.value));
 function onGitStatus(m) {
   const s = state.byId.get(m.id);
   if (!s) return;
+  // A new last commit, or a push/pull changing what is outgoing, makes the cached history stale.
+  if (s.git && (s.git.head !== m.head || s.git.upstream !== m.upstream || s.git.ahead !== m.ahead)) invalidateLog(s);
   s.git = m;
   renderTileHeader(s);
-  if (s.id === state.currentId) {
-    if (state.gitTab === 'changes') renderGit();
-    refreshOpenDiff(s);
-  }
+  refreshOpenDiff(s);   // the visible diff follows its own session, whichever one the Git panel shows
+  const historyPending = !s.log && !logFailed(s);
+  if (s.id === state.currentId && (state.gitTab === 'changes' || historyPending)) renderGit();
 }
 
 const currentSession = () => state.byId.get(state.currentId);
+
+/** Drops the cached history; a history request already on its way is then not cached either (it may predate the change). */
+/** The last history load failed and nothing has changed since (logGen is undefined until the first invalidation). */
+const logFailed = (s) => s.logError != null && s.logError.gen === s.logGen;
+
+function invalidateLog(s) {
+  s.log = null;
+  s.logGen = (s.logGen || 0) + 1;
+}
 
 function renderGit() {
   if (!state.gitVisible) return;
@@ -940,44 +955,70 @@ function renderChanges(s, body) {
 
   const scroller = body.querySelector('.git-scroll');
   const scrollTop = scroller ? scroller.scrollTop : 0;
-  const hadFocus = document.activeElement?.classList.contains('commit-msg');
 
-  const msg = h('textarea', { class: 'commit-msg', placeholder: 'Enter a message <Required>', spellcheck: 'true' });
-  msg.value = s.commitDraft;
-  const total = g.staged.length + g.unstaged.length;
-  const commitBtn = h('button', { class: 'btn primary' }, g.staged.length ? 'Commit Staged' : 'Commit All');
-  const updateBtn = () => { commitBtn.disabled = !msg.value.trim() || total === 0; };
-  msg.addEventListener('input', () => { s.commitDraft = msg.value; updateBtn(); });
-  msg.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.ctrlKey && !commitBtn.disabled) commitBtn.click(); });
-  updateBtn();
-  commitBtn.addEventListener('click', () => doCommit(s, g.staged.length === 0));
+  const ui = commitArea(s);
+  ui.update();
 
   const scroll = h('div', { class: 'git-scroll' });
+  const total = g.staged.length + g.unstaged.length;
   if (total === 0) scroll.append(h('div', { class: 'git-message' }, 'No changes. The working tree is clean.'));
   if (g.staged.length) scroll.append(...fileSection(s, 'staged', 'Staged Changes', g.staged));
   if (g.unstaged.length) scroll.append(...fileSection(s, 'unstaged', 'Changes', g.unstaged));
 
-  fill(body,
-    branchLine(s),
-    h('div', { class: 'git-commit' }, msg, h('div', { class: 'git-commit-actions' }, commitBtn,
-      h('span', { class: 'dim' }, total ? `${total} change${total === 1 ? '' : 's'}` : ''))),
+  const before = branchLine(s);
+  const after = [
     s.info && h('div', { class: 'infobar' + (s.info.error ? ' error' : '') }, h('span', { class: 'msg' }, s.info.text),
       h('button', { class: 'icon-btn small', title: 'Dismiss', onclick: () => { s.info = null; renderGit(); } }, iconEl('close'))),
     scroll,
-  );
+  ].filter(Boolean);
+  if (ui.wrap.parentNode === body) {
+    // Rebuild everything around the commit box but leave the box itself in place: taking it out of the page, even
+    // briefly, drops its focus and any IME composition, and this runs on every status update.
+    for (const n of [...body.childNodes]) if (n !== ui.wrap) n.remove();
+    ui.wrap.before(before);
+    ui.wrap.after(...after);
+  } else {
+    fill(body, before, ui.wrap, ...after);
+  }
   scroll.scrollTop = scrollTop;
-  if (hadFocus) { msg.focus(); msg.setSelectionRange(msg.value.length, msg.value.length); }
+}
+
+/** The session's commit message box and button, created once so its text, caret, selection and focus survive refreshes. */
+function commitArea(s) {
+  if (s.commitUi) return s.commitUi;
+  const msg = h('textarea', { class: 'commit-msg', placeholder: 'Enter a message <Required>', spellcheck: 'true' });
+  msg.value = s.commitDraft;
+  const btn = h('button', { class: 'btn primary' });
+  const count = h('span', { class: 'dim' });
+  const wrap = h('div', { class: 'git-commit' }, msg, h('div', { class: 'git-commit-actions' }, btn, count));
+  const update = () => {
+    const g = s.git;
+    const total = g ? g.staged.length + g.unstaged.length : 0;
+    btn.textContent = g?.staged.length ? 'Commit Staged' : 'Commit All';
+    btn.disabled = !msg.value.trim() || total === 0;
+    count.textContent = total ? `${total} change${total === 1 ? '' : 's'}` : '';
+  };
+  msg.addEventListener('input', () => { s.commitDraft = msg.value; s.commitEdits = (s.commitEdits || 0) + 1; update(); });
+  msg.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.ctrlKey && !btn.disabled) btn.click(); });
+  btn.addEventListener('click', () => doCommit(s, !s.git?.staged.length));
+  s.commitUi = { wrap, msg, update };
+  return s.commitUi;
 }
 
 async function doCommit(s, all) {
-  const message = s.commitDraft.trim();
-  if (!message) return;
+  const submitted = s.commitDraft;
+  if (!submitted.trim()) return;
+  const edits = s.commitEdits;
   try {
-    const out = await request('git.commit', { id: s.id, message: s.commitDraft, all });
+    const out = await request('git.commit', { id: s.id, message: submitted, all });
     const sha = /\[[^\]]*?\s([0-9a-f]{7,})\]/.exec(out || '')?.[1];
-    s.commitDraft = '';
+    // Clear the box only if nobody typed in it while git ran (even retyping the same text counts as a new message).
+    if (s.commitEdits === edits) {
+      s.commitDraft = '';
+      if (s.commitUi) s.commitUi.msg.value = '';
+    }
     s.info = { text: sha ? `Commit ${sha} created locally.` : 'Commit created locally.' };
-    s.log = null;
+    invalidateLog(s);
   } catch (e) {
     s.info = { text: e.message, error: true };
   }
@@ -1170,10 +1211,34 @@ async function renderRepo(s, body) {
     body.replaceChildren(h('div', { class: 'git-message' }, s.git ? `${s.directory} is not inside a Git repository.` : 'Loading…'));
     return;
   }
+  // An unborn branch has no history to load, and git log would only fail.
+  if (s.git.head === '(initial)') {
+    body.replaceChildren(branchLine(s), h('div', { class: 'git-message' }, 'No commits yet.'));
+    return;
+  }
+  // A failure is kept until the history actually changes (invalidateLog bumps logGen), so status updates don't
+  // re-request a log that just failed, over and over while a session is editing files.
+  if (!s.log && logFailed(s)) {
+    body.replaceChildren(h('div', { class: 'git-message' }, `Could not load the history: ${s.logError.message} `,
+      h('button', { class: 'btn', onclick: () => { invalidateLog(s); renderGit(); } }, 'Retry')));
+    return;
+  }
   if (!s.log) {
     body.replaceChildren(h('div', { class: 'git-message' }, 'Loading history…'));
-    try { s.log = await request('git.log', { id: s.id }); } catch (e) { s.log = []; toast(e.message, true); }
-    if (currentSession() !== s || state.gitTab !== 'repo') return;
+    if (s.logLoading) return;   // already on its way; it renders when it arrives
+    s.logLoading = true;
+    const asked = s.logGen;
+    let log, failure;
+    try { log = await request('git.log', { id: s.id }); } catch (e) { failure = e.message; } finally { s.logLoading = false; }
+    const current = currentSession() === s && state.gitTab === 'repo';
+    if (s.logGen !== asked) { if (current) renderGit(); return; }   // the history changed while loading: ask again
+    if (failure) {   // not cached as an empty history; remembered for this generation, so Retry or a real change asks again
+      s.logError = { gen: asked, message: failure };
+      if (current) renderGit();
+      return;
+    }
+    s.log = log;
+    if (!current) return;
   }
   const logEl = h('div', { class: 'repo-log' });
   const outgoing = s.log.filter((c) => c.outgoing);
@@ -1235,14 +1300,14 @@ function renderCommitDetails(s, el) {
 document.querySelectorAll('.tw-tab').forEach((b) => b.addEventListener('click', () => {
   state.gitTab = b.dataset.tab;
   const s = currentSession();
-  if (s && state.gitTab === 'repo') s.log = null;   // refresh history whenever the tab is opened
+  if (s && state.gitTab === 'repo') invalidateLog(s);   // refresh history whenever the tab is opened
   renderGit();
 }));
 
 $('#gitRefresh').addEventListener('click', () => {
   const s = currentSession();
   if (!s) return;
-  s.log = null;
+  invalidateLog(s);
   request('git.refresh', { id: s.id }).catch((e) => toast(e.message, true));
   if (state.gitTab === 'repo') renderGit();
 });
@@ -1563,8 +1628,9 @@ $('#diffOpenFile').innerHTML = icon('openFile');
 
 $('#btnGrid').addEventListener('click', () => { showTerminalDoc(); collapse(); });
 $('#btnGit').addEventListener('click', toggleGit);
-$('#btnAdd').addEventListener('click', showAddDialog);
-$('#btnAddEmpty').addEventListener('click', showAddDialog);
+// Not addEventListener('click', showAddDialog): the click event would arrive as its `mode` argument.
+$('#btnAdd').addEventListener('click', () => showAddDialog());
+$('#btnAddEmpty').addEventListener('click', () => showAddDialog());
 
 applyGitVisibility();
 applyDiffOptions();

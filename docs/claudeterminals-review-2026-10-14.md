@@ -300,3 +300,45 @@ Not changed (recorded): **C1** content-level binding (an already-dirty file gain
 - **C14:** added tests for every Recycle Bin move failing after a staged unstage and after an unstaged restore.
 
 Tests 110/110. Sensitivity (literal harness): caught — head identity, recycle-partial, both case-identity guards; not caught — the explicit "dialog had no known commit" refusal (redundant: unknown never equals `(initial)`, and an unknown current commit is already refused as malformed) and the symlink entry identity (no symlink fixture). Real app: a normal Undo through the dialog still succeeds. **The four fixes above were made after `diffreview/a3` and have not been cross-reviewed.**
+
+## Implementation — P2 fixes (2026-10-14)
+
+Owner request: "fix the P2 issues". Base: `main` at `db0a042`.
+
+| Finding | Change |
+|---|---|
+| **F7** Ctrl+V sent ^V | `terminalKey` returns false for plain Ctrl+V without cancelling, so the browser's native paste reaches xterm's paste handler. |
+| **F8** New Session buttons | Both buttons call `showAddDialog()` instead of passing the click event as the mode. |
+| **F9** unstaging a rename | `UnstageAsync` adds a staged rename's old path whenever its new path is unstaged (single file, folder, Unstage All). |
+| **F10** stdin deadlock | `RunAsync` starts draining stdout/stderr before writing stdin, and tolerates git quitting before reading it all. |
+| **F11** session batches, worktrees | `addSessions` validates every folder before adding any. `GetWorktreesAsync` reports `prunable`; the dialog hides prunable worktrees, ignores a worktree reply for a folder no longer in the dialog, and only uses ticks made for the current folder. |
+| **F12** cmd fallback | `.cmd`/`.bat` shims are resolved on PATH (with PATHEXT) and handed to `cmd /d /s /c` by full path, so cmd never searches the repository; a bare name that is neither on PATH nor a cmd built-in is refused instead of searched for; relative PATH entries are skipped. |
+| **F13** commit box | The commit box is created once per session and left in place while the panel around it is rebuilt (focus, caret, selection and IME composition survive); a finished commit clears the box only if nobody typed in it meanwhile (an edit counter, so retyping the same text counts). |
+| **F14** watcher leak | `InitGitAsync` has a generation number and a disposed flag under a lock: a superseded setup or one finishing after removal installs no watcher. |
+| **F15** final output lost | On exit the host waits for the output reader to finish before reporting it. **Also fixed (review's suspected item, confirmed while testing this):** child processes are started with `STARTF_USESTDHANDLES` and no handles; without it, when this app's own output is redirected, the child wrote to that redirection instead of the pseudo console. |
+| **F16** diff cap | `git show` output is capped at the 4 MB limit (git is ended past it) and the side is marked too large without its bytes. |
+| **F17** live diff, history | Status updates refresh the open diff of their own session regardless of the Git panel's selection; history is invalidated when the last commit, upstream or ahead count changes (also amends), reloads on the next status if it was opened early, and a reply superseded while loading is not cached. |
+| **F18** small transcripts | First implemented as "only stop early when the file is larger than the head read", then (after `diffreview/a4`) as no early exit at all. The repository owner merged the same fix independently in #3 (`dc61d14`); this PR keeps the owner's version and adds the tests. |
+
+**Evidence.** Tests: 137/137 (was 110), written from Codex's `tests` call (a4, requirement only, 40 expectations; page-level ones driven in the real app). Host-side regression sensitivity (literal harness): all 12 guards caught, the `/s` switch only by the exact-command assertion (cmd strips the outer quotes the same way without it in every tested case). Real app (Debug build, isolated two-session profile, DevTools protocol), before = `main`'s `app.js`, after = this change: F7 `^V` → native paste; F8 no mode/no worktrees/command forgotten → all working, prunable worktree hidden; F13 focus and IME text lost → kept; F17 diff not following, history stale, "Loading…" stuck → all refresh; F11 all-or-nothing and F15 final output pass. Disabling the stale-worktree-reply guard and the commit-draft guard in the built page made those checks fail. Not automated: a real Windows IME candidate window (DevTools composition only), F16 in the page (unit-tested), the resume picker's display of F18's values (unit-tested extraction).
+
+**Codex review of the P2 diff (`diffreview/a4`, accepted).** Confirmed F7, F8, F13 and the `STARTF_USESTDHANDLES` change; F11, F14 and F17 largely; raised 11 findings, all accepted and fixed:
+- **F12:**
+  - a drive-relative PATH entry such as `C:tools` counted as rooted, so now only fully qualified locations are searched;
+  - cmd could expand a `%VAR%` inside a found path, so such a path is refused and cmd runs with `/v:off`;
+  - a dotted name such as `tool.v2` skipped PATHEXT, and now gets each extension.
+- **F9:** Unstage went ahead on a failed status lookup and now refuses.
+- **F15:** the reader wait was 5 s; it is now 30 s. *A bound, not a guarantee, and recorded as such.*
+- **Git I/O:**
+  - capped output combined with large stdin could deadlock, so git is now ended the moment the cap is crossed;
+  - cancellation now kills git.
+- **F16:** the working-file size check and read were separate steps; the read itself is now bounded.
+- **F14:** a superseded setup overwrote `RepoRoot`; the root is now recorded only by the current setup.
+- **F18:** files just over 96 KB lost early titles. There is no longer an early exit from the head read; this is identical to the owner's fix in #3, which is the version kept.
+- **F17:**
+  - an explicit refresh or tab reopen didn't invalidate an in-flight history load; every invalidation now bumps the history generation;
+  - a failed load was cached as empty history and is now shown as an error, then retried.
+
+Tests 144/144. All new guards with tests are caught by the literal harness. The output-cap kill is caught by the suite hanging on the 64 MB blob test. Untested: the `RepoRoot` race and cancellation. Real-app P2 checks pass again on the final build.
+
+**Not cross-reviewed:** these post-review fixes.

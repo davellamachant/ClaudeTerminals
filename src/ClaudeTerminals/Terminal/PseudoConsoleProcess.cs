@@ -20,6 +20,7 @@ internal sealed class PseudoConsoleProcess : IDisposable
     private FileStream? output;
     private RegisteredWaitHandle? exitWait;
     private ManualResetEvent? exitEvent;
+    private Thread? reader;
     private int disposed;
 
     public event Action<string>? Output;
@@ -57,6 +58,9 @@ internal sealed class PseudoConsoleProcess : IDisposable
 
             var si = new STARTUPINFOEX { lpAttributeList = attrList };
             si.StartupInfo.cb = Marshal.SizeOf<STARTUPINFOEX>();
+            // Explicitly no standard handles: otherwise a child started while this app's own output is redirected (from a
+            // script, a test runner) writes to that redirection instead of the pseudo console, and nothing shows.
+            si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
 
             if (!CreateProcessW(null, commandLine, IntPtr.Zero, IntPtr.Zero, false,
                     EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT | CREATE_SUSPENDED,
@@ -78,10 +82,14 @@ internal sealed class PseudoConsoleProcess : IDisposable
             Marshal.FreeHGlobal(envBlock);
         }
 
-        new Thread(ReadLoop) { IsBackground = true, Name = $"pty-read-{ProcessId}" }.Start();
+        reader = new Thread(ReadLoop) { IsBackground = true, Name = $"pty-read-{ProcessId}" };
+        reader.Start();
 
         exitEvent = new ManualResetEvent(false) { SafeWaitHandle = new SafeWaitHandle(hProcess, false) };
-        exitWait = ThreadPool.RegisterWaitForSingleObject(exitEvent, (_, _) => OnProcessExited(), null, -1, true);
+        // The exit handler waits for the reader to drain, so it gets its own thread rather than holding a thread-pool
+        // thread (shared with every async git call) while it waits.
+        exitWait = ThreadPool.RegisterWaitForSingleObject(exitEvent,
+            (_, _) => new Thread(OnProcessExited) { IsBackground = true, Name = $"pty-exit-{ProcessId}" }.Start(), null, -1, true);
     }
 
     public void Write(string text)
@@ -132,6 +140,12 @@ internal sealed class PseudoConsoleProcess : IDisposable
         // Closing the pseudo console flushes the remaining output and lets the reader hit EOF.
         // It can block until output is drained, so never call it on the UI thread.
         ClosePseudoConsoleOnce();
+        // Let the reader deliver that last output before reporting the exit: whoever handles Exited disposes this
+        // object, which would cut off a final error message (on Windows 11 24H2 ClosePseudoConsole no longer waits).
+        // Bounded so a pipe that never closes can't stop the exit from ever being reported; draining a final screen
+        // takes milliseconds, so output is only lost if the reader is stuck for this long. Kept short because the
+        // session shows no exit notice (and can't be restarted with Enter) until this returns.
+        reader?.Join(TimeSpan.FromSeconds(5));
         Exited?.Invoke(code);
     }
 
