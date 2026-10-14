@@ -64,6 +64,9 @@ svg.ic { width: 16px; height: 16px; flex: none; display: block; }
 .session-tab:hover { background: var(--hover); color: var(--text); }
 .session-tab.active { background: var(--panel-2); border-color: var(--border); color: var(--text); }
 .session-tab .key { color: var(--text-faint); font-size: 11px; }
+.session-tab { padding-right: 4px; user-select: none; }
+.session-tab .tab-close { visibility: hidden; margin-left: -2px; }
+.session-tab:hover .tab-close, .session-tab.active .tab-close { visibility: visible; }
 
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); flex: none; }
 .dot.running { background: var(--ok); }
