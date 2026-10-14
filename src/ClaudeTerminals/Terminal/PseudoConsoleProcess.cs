@@ -86,7 +86,10 @@ internal sealed class PseudoConsoleProcess : IDisposable
         reader.Start();
 
         exitEvent = new ManualResetEvent(false) { SafeWaitHandle = new SafeWaitHandle(hProcess, false) };
-        exitWait = ThreadPool.RegisterWaitForSingleObject(exitEvent, (_, _) => OnProcessExited(), null, -1, true);
+        // The exit handler waits for the reader to drain, so it gets its own thread rather than holding a thread-pool
+        // thread (shared with every async git call) while it waits.
+        exitWait = ThreadPool.RegisterWaitForSingleObject(exitEvent,
+            (_, _) => new Thread(OnProcessExited) { IsBackground = true, Name = $"pty-exit-{ProcessId}" }.Start(), null, -1, true);
     }
 
     public void Write(string text)
@@ -140,8 +143,9 @@ internal sealed class PseudoConsoleProcess : IDisposable
         // Let the reader deliver that last output before reporting the exit: whoever handles Exited disposes this
         // object, which would cut off a final error message (on Windows 11 24H2 ClosePseudoConsole no longer waits).
         // Bounded so a pipe that never closes can't stop the exit from ever being reported; draining a final screen
-        // takes milliseconds, so output is only lost if the reader is stuck for this long.
-        reader?.Join(TimeSpan.FromSeconds(30));
+        // takes milliseconds, so output is only lost if the reader is stuck for this long. Kept short because the
+        // session shows no exit notice (and can't be restarted with Enter) until this returns.
+        reader?.Join(TimeSpan.FromSeconds(5));
         Exited?.Invoke(code);
     }
 

@@ -9,7 +9,8 @@ internal sealed class GitWatcher : IDisposable
     private readonly List<FileSystemWatcher> watchers = [];
     private readonly System.Threading.Timer debounce;
     private readonly System.Threading.Timer poll;
-    private bool disposed;
+    private volatile bool disposed;
+    private int disposeStarted;
 
     public event Action? Changed;
 
@@ -75,7 +76,9 @@ internal sealed class GitWatcher : IDisposable
 
     public void Dispose()
     {
-        if (disposed) return;
+        // Atomic test-and-set: a superseded InitGitAsync and session removal can dispose concurrently, and both
+        // passing a plain check would decrement the live count twice.
+        if (Interlocked.Exchange(ref disposeStarted, 1) != 0) return;
         Interlocked.Decrement(ref live);
         disposed = true;
         Changed = null;

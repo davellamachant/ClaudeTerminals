@@ -315,26 +315,27 @@ internal static class GitService
         var oldPath = origPath ?? path;
         switch (mode)
         {
+            // The two sides are independent reads, each capped at MaxDiffBytes, so they run side by side.
             case "staged":
             {
-                var head = await ShowAsync(dir, $"HEAD:{oldPath}");
-                var index = await ShowAsync(dir, $":{path}");
-                return Build(head, index, $"{oldPath};HEAD", $"{path};Staged");
+                var head = ShowAsync(dir, $"HEAD:{oldPath}");
+                var index = ShowAsync(dir, $":{path}");
+                return Build(await head, await index, $"{oldPath};HEAD", $"{path};Staged");
             }
             case "commit":
             {
-                var before = parent == null ? Blob.Empty : await ShowAsync(dir, $"{parent}:{oldPath}");
-                var after = await ShowAsync(dir, $"{commit}:{path}");
+                var before = parent == null ? Task.FromResult(Blob.Empty) : ShowAsync(dir, $"{parent}:{oldPath}");
+                var after = ShowAsync(dir, $"{commit}:{path}");
                 var shortSha = commit?[..Math.Min(7, commit.Length)];
                 var shortParent = parent?[..Math.Min(7, parent.Length)];
-                return Build(before, after, $"{oldPath};{shortParent ?? "(none)"}", $"{path};{shortSha}");
+                return Build(await before, await after, $"{oldPath};{shortParent ?? "(none)"}", $"{path};{shortSha}");
             }
             default:
             {
+                var work = ReadWorkingFileAsync(Path.Combine(dir, path));
                 var index = await ShowAsync(dir, $":{path}");
                 if (!index.Exists) index = await ShowAsync(dir, $"HEAD:{path}");
-                var work = ReadWorkingFile(Path.Combine(dir, path));
-                return Build(index, work, $"{path};Index", name);
+                return Build(index, await work, $"{path};Index", name);
             }
         }
     }
@@ -353,22 +354,17 @@ internal static class GitService
         return r.Truncated ? Blob.Large : r.Ok ? new Blob(true, r.Output) : Blob.Empty;
     }
 
-    private static Blob ReadWorkingFile(string fullPath)
+    private static async Task<Blob> ReadWorkingFileAsync(string fullPath)
     {
         try
         {
             if (!File.Exists(fullPath)) return Blob.Empty;
-            // Read at most one byte past the limit rather than trusting a size checked earlier: the session may be
-            // writing the file at this moment.
-            using var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            // Read up to the limit rather than trusting a size checked earlier: the session may be writing the file
+            // at this moment. Same capped reader as git's output, so both sides of a diff apply the limit identically.
+            await using var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete,
+                81920, useAsync: true);
             using var content = new MemoryStream();
-            var chunk = new byte[81920];
-            int read;
-            while ((read = stream.Read(chunk, 0, chunk.Length)) > 0)
-            {
-                if (content.Length + read > MaxDiffBytes) return Blob.Large;
-                content.Write(chunk, 0, read);
-            }
+            if (await ReadOutputAsync(stream, content, MaxDiffBytes, static () => { }, CancellationToken.None)) return Blob.Large;
             return new Blob(true, content.ToArray());
         }
         catch (IOException)
@@ -383,7 +379,8 @@ internal static class GitService
 
     private static DiffContent Build(Blob original, Blob modified, string originalLabel, string modifiedLabel)
     {
-        if (original.TooLarge || modified.TooLarge || original.Bytes.Length > MaxDiffBytes || modified.Bytes.Length > MaxDiffBytes)
+        // Both readers stop at MaxDiffBytes and report TooLarge, so oversized bytes never get this far.
+        if (original.TooLarge || modified.TooLarge)
             return new DiffContent("", "", originalLabel, modifiedLabel, "File is too large to compare.");
         if (IsBinary(original.Bytes) || IsBinary(modified.Bytes))
             return new DiffContent("", "", originalLabel, modifiedLabel, "Binary files differ.");

@@ -49,6 +49,23 @@ public sealed class SessionP2Tests : IDisposable
     }
 
     [Fact]
+    public void Disposing_a_watcher_from_several_threads_at_once_counts_it_once()
+    {
+        var baseline = GitWatcher.Live;
+        for (var round = 0; round < 50; round++)
+        {
+            var watcher = new GitWatcher(repo.Root, null);
+            using var start = new Barrier(8);
+            Parallel.For(0, 8, new ParallelOptions { MaxDegreeOfParallelism = 8 }, _ =>
+            {
+                start.SignalAndWait();   // release every Dispose together to widen the race
+                watcher.Dispose();
+            });
+            Assert.Equal(baseline, GitWatcher.Live);
+        }
+    }
+
+    [Fact]
     public async Task Removing_a_session_while_git_setup_is_running_leaves_no_watcher()
     {
         var baseline = GitWatcher.Live;

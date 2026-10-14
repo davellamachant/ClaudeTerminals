@@ -912,12 +912,16 @@ function onGitStatus(m) {
   s.git = m;
   renderTileHeader(s);
   refreshOpenDiff(s);   // the visible diff follows its own session, whichever one the Git panel shows
-  if (s.id === state.currentId && (state.gitTab === 'changes' || !s.log)) renderGit();
+  const historyPending = !s.log && !logFailed(s);
+  if (s.id === state.currentId && (state.gitTab === 'changes' || historyPending)) renderGit();
 }
 
 const currentSession = () => state.byId.get(state.currentId);
 
 /** Drops the cached history; a history request already on its way is then not cached either (it may predate the change). */
+/** The last history load failed and nothing has changed since (logGen is undefined until the first invalidation). */
+const logFailed = (s) => s.logError != null && s.logError.gen === s.logGen;
+
 function invalidateLog(s) {
   s.log = null;
   s.logGen = (s.logGen || 0) + 1;
@@ -1207,6 +1211,18 @@ async function renderRepo(s, body) {
     body.replaceChildren(h('div', { class: 'git-message' }, s.git ? `${s.directory} is not inside a Git repository.` : 'Loading…'));
     return;
   }
+  // An unborn branch has no history to load, and git log would only fail.
+  if (s.git.head === '(initial)') {
+    body.replaceChildren(branchLine(s), h('div', { class: 'git-message' }, 'No commits yet.'));
+    return;
+  }
+  // A failure is kept until the history actually changes (invalidateLog bumps logGen), so status updates don't
+  // re-request a log that just failed, over and over while a session is editing files.
+  if (!s.log && logFailed(s)) {
+    body.replaceChildren(h('div', { class: 'git-message' }, `Could not load the history: ${s.logError.message} `,
+      h('button', { class: 'btn', onclick: () => { invalidateLog(s); renderGit(); } }, 'Retry')));
+    return;
+  }
   if (!s.log) {
     body.replaceChildren(h('div', { class: 'git-message' }, 'Loading history…'));
     if (s.logLoading) return;   // already on its way; it renders when it arrives
@@ -1216,8 +1232,9 @@ async function renderRepo(s, body) {
     try { log = await request('git.log', { id: s.id }); } catch (e) { failure = e.message; } finally { s.logLoading = false; }
     const current = currentSession() === s && state.gitTab === 'repo';
     if (s.logGen !== asked) { if (current) renderGit(); return; }   // the history changed while loading: ask again
-    if (failure) {   // not cached as an empty history: the next status update or refresh tries again
-      if (current) body.replaceChildren(h('div', { class: 'git-message' }, `Could not load the history: ${failure}`));
+    if (failure) {   // not cached as an empty history; remembered for this generation, so Retry or a real change asks again
+      s.logError = { gen: asked, message: failure };
+      if (current) renderGit();
       return;
     }
     s.log = log;

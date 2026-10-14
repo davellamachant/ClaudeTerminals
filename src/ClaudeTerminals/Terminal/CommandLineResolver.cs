@@ -15,7 +15,10 @@ internal static class CommandLineResolver
         if (command.Length == 0) command = "claude";
 
         var (program, rest) = SplitFirstToken(command);
-        var found = FindProgram(program, env.GetValueOrDefault("PATH") ?? "", env.GetValueOrDefault("PATHEXT") ?? DefaultPathExt);
+        var path = env.GetValueOrDefault("PATH") ?? "";
+        // A blank PATHEXT would mean no extensions at all, so nothing - not even claude.exe - could be found.
+        var pathExt = env.GetValueOrDefault("PATHEXT") is { } ext && !string.IsNullOrWhiteSpace(ext) ? ext : DefaultPathExt;
+        var found = FindProgram(program, path, pathExt);
         if (found != null && IsExe(found))
             return Quote(found) + rest;
 
@@ -25,7 +28,7 @@ internal static class CommandLineResolver
         // built-in is not handed to cmd at all. /s makes cmd strip only the outer quotes added here, so quoted paths
         // and arguments inside the command survive.
         if (found == null && IsBareName(program) && !CmdBuiltIns.Contains(program))
-            throw new FileNotFoundException($"'{program}' was not found on PATH.");
+            throw new FileNotFoundException(NotFoundMessage(program, path));
         // Quotes don't stop cmd expanding %NAME% (or !NAME! with delayed expansion, turned off below), so a path containing
         // them could launch something other than the file that was checked.
         if (found != null && found.Contains('%'))
@@ -41,6 +44,24 @@ internal static class CommandLineResolver
         "exit", "for", "ftype", "goto", "if", "md", "mkdir", "mklink", "move", "path", "pause", "popd", "prompt", "pushd",
         "rd", "rem", "ren", "rename", "rmdir", "set", "setlocal", "shift", "start", "time", "title", "type", "ver", "verify", "vol",
     };
+
+    /// <summary>
+    /// Names the PATH entries that were ignored, since cmd would have searched them and the user otherwise can't tell
+    /// why a program that works in a terminal isn't found here.
+    /// </summary>
+    internal static string NotFoundMessage(string program, string path)
+    {
+        var skipped = path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
+            .Select(e => e.Trim().Trim('"'))
+            .Where(e => e.Length > 0 && !Path.IsPathFullyQualified(e))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var message = $"'{program}' was not found on PATH.";
+        if (skipped.Count > 0)
+            message += " These PATH entries were not searched because they aren't full paths (relative, or containing an " +
+                       "unexpanded %VARIABLE%): " + string.Join("; ", skipped) + ". Use the program's full path as the command, or fix PATH.";
+        return message;
+    }
 
     private static bool IsBareName(string program) =>
         !Path.IsPathRooted(program) && !program.Contains('\\') && !program.Contains('/');

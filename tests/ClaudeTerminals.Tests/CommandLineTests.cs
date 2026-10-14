@@ -145,6 +145,34 @@ public sealed class CommandLineTests : IDisposable
     }
 
     [Fact]
+    public void A_blank_PATHEXT_falls_back_to_the_default_extensions()
+    {
+        File.WriteAllText(Path.Combine(onPath, "claude.exe"), "");
+        var env = Env(onPath);
+        env["PATHEXT"] = "  ";
+
+        Assert.Contains(Path.Combine(onPath, "claude.exe"), CommandLineResolver.Resolve("claude", env), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Not_found_names_the_PATH_entries_that_were_skipped()
+    {
+        var env = Env(onPath, @"%USERPROFILE%\.local\bin", @"tools\bin");
+
+        var error = Assert.Throws<FileNotFoundException>(() => CommandLineResolver.Resolve("no-such-tool", env));
+
+        Assert.Contains("'no-such-tool' was not found on PATH", error.Message);
+        Assert.Contains(@"%USERPROFILE%\.local\bin", error.Message);
+        Assert.Contains(@"tools\bin", error.Message);
+        Assert.DoesNotContain(onPath, error.Message);   // fully qualified entries were searched, so aren't listed
+    }
+
+    [Fact]
+    public void Not_found_with_a_clean_PATH_keeps_the_short_message() =>
+        Assert.Equal("'no-such-tool' was not found on PATH.",
+            Assert.Throws<FileNotFoundException>(() => CommandLineResolver.Resolve("no-such-tool", Env(onPath))).Message);
+
+    [Fact]
     public void Cmd_built_ins_still_run_through_cmd() =>
         Assert.Contains("/d /v:off /s /c \"echo hi\"", CommandLineResolver.Resolve("echo hi", Env(onPath)));
 }
