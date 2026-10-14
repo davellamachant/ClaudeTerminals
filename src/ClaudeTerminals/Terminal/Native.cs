@@ -158,10 +158,15 @@ internal static class Native
     /// The path Windows actually opens for an existing file or folder, with junctions and symbolic links resolved
     /// (e.g. <c>\\?\C:\real\folder\file.txt</c>), or null if it can't be opened.
     /// </summary>
-    public static string? FinalPath(string path)
+    /// <param name="followFinalLink">
+    /// False to identify the directory entry itself when the last component is a symbolic link or junction (folders above
+    /// it are still resolved): two different links to one file are then two different entries.
+    /// </param>
+    public static string? FinalPath(string path, bool followFinalLink = true)
     {
-        const uint shareAll = 7, openExisting = 3, backupSemantics = 0x02000000;   // backup semantics lets folders be opened
-        using var handle = CreateFileW(path, 0, shareAll, IntPtr.Zero, openExisting, backupSemantics, IntPtr.Zero);
+        const uint shareAll = 7, openExisting = 3, backupSemantics = 0x02000000, openReparsePoint = 0x00200000;   // backup semantics lets folders be opened
+        var flags = followFinalLink ? backupSemantics : backupSemantics | openReparsePoint;
+        using var handle = CreateFileW(path, 0, shareAll, IntPtr.Zero, openExisting, flags, IntPtr.Zero);
         if (handle.IsInvalid) return null;
         var buffer = new char[1024];
         var length = GetFinalPathNameByHandleW(handle, buffer, (uint)buffer.Length, 0);

@@ -267,7 +267,7 @@ Owner request, verbatim: "fix the P1 issues". Base `61d45db`; 8 tracked files ch
 
 - Build: `dotnet build ClaudeTerminals.slnx` — 0 warnings, 0 errors (compiles; not that paths run).
 - Tests: 77/77 pass (`tests/ClaudeTerminals.Tests`), against real temporary git repositories (Undo), a real pseudo console (Stop/exit), real junctions (containment) and pure functions (runnable classification, page origin).
-- Regression sensitivity: each guard disabled in turn, full suite run, file restored byte-identical — 14 of 15 guards are caught (by 1–11 failing tests each). **Not caught:** the compare-exchange guard on a superseded process's exit (a race no test can force); the UI-thread generation check that now carries that protection is caught.
+- Regression sensitivity: each guard disabled in turn, full suite run, file restored byte-identical — 14 of 15 mutations are caught (by 1–11 failing tests each). **Not caught:** the compare-exchange guard on a superseded process's exit (a race no test can force). *Correction (follow-up below): the earlier wording said the UI-thread generation check "is caught"; it is not — the caught mutation was the generation counter in `TerminalSession`; disabling `MainForm`'s comparison fails no test.*
 - Real app (Debug build, isolated profile, driven over CDP): with HEAD's `app.js`, one Shift+Enter posted `1b 0d` **and** `0d`; with the fix, `1b 0d` only. Stop → "[Process stopped — press Enter to restart]", Enter restarts. `Page.navigate` to `https://example.com/` and `file:///C:/Windows/win.ini` → `net::ERR_ABORTED`, app page intact. Undo through the real confirm dialog restored a staged file (payload with `head`/`inHead` accepted). "Open" on a `.cmd` that writes a marker: no marker; a `..\` path refused.
 - **Not verified:** OS-level drag-and-drop (CDP can't inject an OLE drop); a message from a non-app document (none can be loaded any more); that "Open" actually displayed the `.cmd` (no new editor process was seen — probably a tab in an already-open Notepad); IME composition and key repeat with Shift+Enter; real Recycle Bin behaviour (tests substitute a recorder).
 
@@ -276,3 +276,27 @@ Owner request, verbatim: "fix the P1 issues". Base `61d45db`; 8 tracked files ch
 **Not cross-reviewed:** everything changed after `diffreview/a1` — `GitService.cs`, `MainForm.cs`, `TerminalSession.cs`, `Native.cs`, `app.js` and the tests (the C1–C9 fixes). A delta review is the owner's call (D5). KB logging (`log_new_fix`) — not applicable to this repo.
 
 **Hand-off:** committing is git-committer's (on a topic branch, not `main`); there is no deploy step until the owner asks for a release.
+
+## Implementation — follow-up to the second review (2026-10-14)
+
+PR #1 (the P1 fixes) was merged as `a866a13`. The owner then asked for a delta review of the changes made after the first diff review (`diffreview/a2`), and on its findings: "fix C10 and the small items in a new PR".
+
+| Delta-review finding | Change |
+|---|---|
+| **C10** (new): the Undo dialog sent the commit current at the *click*, not at opening, defeating the "commit changed" check | `app.js` `confirmUndo` captures `head` when the dialog is built. Real app, before/after: HEAD moved and the view refreshed while the dialog was open → before, Undo restored `t.txt` from the unconfirmed commit; after, "The last commit changed after you chose Undo", nothing changed. |
+| **C2** case-only exemption by spelling | Decided by file identity (`GetFinalPathNameByHandle` of both names), for the occupied-name check and for not recycling the restored file. In a case-sensitive folder `a.txt`/`A.txt` are now treated as two files. |
+| **C6** case-insensitive containment comparison | Exact (ordinal) comparison of the resolved paths, and of the lexical check. |
+| **C3** unborn vs unknown commit; malformed status | `ParseStatus` records `Unborn` (only `# branch.oid (initial)`) and `WellFormed` (NUL-terminated, valid commit header or `(initial)`, only known entry types, renames with their old name). Undo refuses unless well-formed; the Git panel still displays what it can. |
+| **C11** partial completion | If a later git step fails (including git failing to start) after an earlier one changed files, the error says "Undo was only partly applied" and what was done; likewise for Recycle Bin failures after other work. |
+
+Not changed (recorded): **C1** content-level binding (an already-dirty file gaining more edits; the index changing under an equal record), **C7** the runnable-file classifier's design (owner decision), the remaining millisecond races (C2 restore window, C6 junction swap).
+
+**Evidence.** Tests: 106/106 (was 77), written from Codex's `tests` call (a3, requirement only; 30 expectations — automated C3, C5, C6, C8–C25 (C14's symbolic-link variants need elevation here; junctions, chained junctions and a case-sensitive parent are covered), C27–C30; UI-only C4, C7, C26 by code reading; C1/C2 by the real-app run). One faulty test fixture (an illegal Windows file name) was corrected. Regression sensitivity with a literal, byte-preserving mutation harness: all 10 new guards are caught; the earlier `sed` harness rewrote CRLF to LF, which hid a non-applying substitution (N7a) — re-run, it is caught. Not caught, confirmed: the stale-exit compare-exchange (M7) and `MainForm`'s generation comparison (no test drives `MainForm`). Real app: a normal Undo through the dialog still succeeds; F1, F2 unchanged.
+
+**Codex review of this follow-up (`diffreview/a3`, accepted).** Resolved: C10, C6, C11; C2 and C3 partial, with one new defect and one remaining case — both fixed afterwards:
+- **C12 (new):** the "same file" test followed symbolic links, so a symlink re-created at a rename's old name and pointing at the new name counted as the renamed file. Now the directory entries themselves are compared (`FILE_FLAG_OPEN_REPARSE_POINT`). *Untested by automation: creating symbolic links needs elevation on this machine.*
+- **C3 (remaining):** "unknown commit" and "no commits yet" both reached the dialog as null. The page now receives `(initial)` for an unborn branch, and a staged Undo whose dialog had no known commit is refused.
+- **C13:** the test `Snapshot()` skipped `.gitignore`-like files; now only the `.git` folder.
+- **C14:** added tests for every Recycle Bin move failing after a staged unstage and after an unstaged restore.
+
+Tests 110/110. Sensitivity (literal harness): caught — head identity, recycle-partial, both case-identity guards; not caught — the explicit "dialog had no known commit" refusal (redundant: unknown never equals `(initial)`, and an unknown current commit is already refused as malformed) and the symlink entry identity (no symlink fixture). Real app: a normal Undo through the dialog still succeeds. **The four fixes above were made after `diffreview/a3` and have not been cross-reviewed.**

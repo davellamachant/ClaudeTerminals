@@ -14,10 +14,19 @@ internal sealed record GitResult(int ExitCode, byte[] Output, string Error)
 /// <param name="InHead">Path exists in HEAD (status reports a non-zero HEAD mode); a staged undo restores it rather than deleting it.</param>
 internal sealed record FileChange(string Path, string? OrigPath, string Status, bool Untracked = false, bool InHead = false);
 
-/// <param name="HeadOid">The commit HEAD pointed at when this status was taken; null on an unborn branch.</param>
+/// <param name="HeadOid">The commit HEAD pointed at when this status was taken; null if there is none (see <paramref name="Unborn"/>).</param>
+/// <param name="Unborn">Git positively reported a branch with no commits yet ("# branch.oid (initial)").</param>
+/// <param name="WellFormed">
+/// The output had everything expected: NUL-terminated, a commit header that is a commit id or "(initial)", and only
+/// entry types this parser knows. Display tolerates less; anything that changes files (Undo) requires it.
+/// </param>
 internal sealed record GitStatus(
     bool IsRepo, string? Error, string? Branch, string? Upstream, int Ahead, int Behind,
-    List<FileChange> Staged, List<FileChange> Unstaged, string? HeadOid = null);
+    List<FileChange> Staged, List<FileChange> Unstaged, string? HeadOid = null, bool Unborn = false, bool WellFormed = false)
+{
+    /// <summary>What the page shows and sends back for the last commit: its id, "(initial)" on an unborn branch, or null when unknown.</summary>
+    public string? HeadId => HeadOid ?? (Unborn ? "(initial)" : null);
+}
 
 internal sealed record CommitInfo(string Sha, string ShortSha, string Author, string Date, string Subject, string Refs, bool Outgoing);
 
@@ -76,12 +85,18 @@ internal static class GitService
             var notRepo = r.Error.Contains("not a git repository", StringComparison.OrdinalIgnoreCase);
             return new GitStatus(false, notRepo ? null : r.Error, null, null, 0, 0, [], []);
         }
+        return ParseStatus(r.Text);
+    }
 
+    /// <summary>Parses <c>git status --porcelain=v2 --branch -z</c> output.</summary>
+    internal static GitStatus ParseStatus(string text)
+    {
         string? branch = null, upstream = null, oid = null;
         int ahead = 0, behind = 0;
         var staged = new List<FileChange>();
         var unstaged = new List<FileChange>();
-        var entries = r.Text.Split('\0');
+        var wellFormed = text.Length == 0 || text.EndsWith('\0');
+        var entries = text.Split('\0');
 
         for (var i = 0; i < entries.Length; i++)
         {
@@ -111,6 +126,7 @@ internal static class GitService
                     // The new side of a rename or copy is never in HEAD (f[3] is the original path's HEAD mode).
                     var f = e.Split(' ', 10);
                     var orig = i + 1 < entries.Length ? entries[++i] : null;
+                    if (string.IsNullOrEmpty(orig)) wellFormed = false;
                     AddChange(f[1], f[9], orig, false, staged, unstaged);
                     break;
                 }
@@ -123,12 +139,19 @@ internal static class GitService
                 case '?':
                     unstaged.Add(new FileChange(e[2..], null, "A", Untracked: true));
                     break;
+                case '!':   // ignored files (not requested)
+                    break;
+                default:
+                    wellFormed = false;
+                    break;
             }
         }
 
         if (branch == "(detached)" && oid != null) branch = $"(detached {oid[..Math.Min(8, oid.Length)]})";
-        var headOid = oid is { Length: 40 or 64 } && oid.AsSpan().IndexOfAnyExcept("0123456789abcdef") < 0 ? oid : null;   // "(initial)" when unborn
-        return new GitStatus(true, null, branch, upstream, ahead, behind, staged, unstaged, headOid);
+        var headOid = oid is { Length: 40 or 64 } && oid.AsSpan().IndexOfAnyExcept("0123456789abcdef") < 0 ? oid : null;
+        var unborn = oid == "(initial)";
+        return new GitStatus(true, null, branch, upstream, ahead, behind, staged, unstaged, headOid, unborn,
+            WellFormed: wellFormed && (headOid != null || unborn));
     }
 
     private static void AddChange(string xy, string path, string? orig, bool inHead, List<FileChange> staged, List<FileChange> unstaged)
@@ -341,6 +364,10 @@ internal static class GitService
     private static string NulList(IEnumerable<string> paths) => string.Join('\0', paths) + '\0';
 
     private static Task<GitResult> RunWithPathsAsync(string dir, IEnumerable<string> args, IReadOnlyCollection<string> paths) =>
+        RunWithPaths(dir, args, paths);
+
+    /// <summary>Runs one path-list git command. Replaceable so tests can make a single step of Undo fail.</summary>
+    internal static Func<string, IEnumerable<string>, IReadOnlyCollection<string>, Task<GitResult>> RunWithPaths = (dir, args, paths) =>
         RunAsync(dir, ["--literal-pathspecs", .. args, .. PathsFromStdin], NulList(paths));
 
     public static Task<GitResult> StageAsync(string dir, IEnumerable<string> paths) =>
@@ -367,15 +394,25 @@ internal static class GitService
     /// <param name="confirmedAlsoUnstaged">Selected files the dialog said also had unstaged edits.</param>
     /// <returns>The number of files undone.</returns>
     public static async Task<int> UndoConfirmedAsync(string root, bool staged, IReadOnlyList<FileChange> confirmed,
-        string? confirmedHead = null, IReadOnlyCollection<string>? confirmedAlsoUnstaged = null)
+        string? confirmedHead = null, IReadOnlyCollection<string>? confirmedAlsoUnstaged = null) =>
+        await UndoAgainstAsync(root, await GetStatusAsync(root), staged, confirmed, confirmedHead, confirmedAlsoUnstaged);
+
+    /// <summary><see cref="UndoConfirmedAsync"/> against a status already read (tests supply malformed ones).</summary>
+    internal static async Task<int> UndoAgainstAsync(string root, GitStatus status, bool staged, IReadOnlyList<FileChange> confirmed,
+        string? confirmedHead, IReadOnlyCollection<string>? confirmedAlsoUnstaged)
     {
-        var status = await GetStatusAsync(root);
         if (!status.IsRepo) throw new InvalidOperationException(status.Error ?? "Not a Git repository.");
+        // Only act on a complete answer: a branch with no commits must be reported as such, not inferred from a missing
+        // commit header, and output that is cut short or holds entries this parser doesn't know could misclassify files.
+        if (!status.WellFormed) throw new InvalidOperationException("Git's status output was incomplete or unexpected. Nothing was changed.");
         var items = SelectConfirmed(staged ? status.Staged : status.Unstaged, confirmed);
         if (items.Count == 0) return 0;
         if (staged)
         {
-            if (status.HeadOid != confirmedHead)
+            // The dialog must have shown a known commit (or a positively unborn branch), and it must still be the current one.
+            if (confirmedHead == null)
+                throw new InvalidOperationException("The view didn't know the last commit when you chose Undo. Refresh and try again.");
+            if (status.HeadId != confirmedHead)
                 throw new InvalidOperationException("The last commit changed after you chose Undo. Review the changes and try again.");
             var unstagedNow = status.Unstaged.Select(f => f.Path).ToHashSet(StringComparer.Ordinal);
             var warned = (confirmedAlsoUnstaged ?? []).ToHashSet(StringComparer.Ordinal);
@@ -445,15 +482,17 @@ internal static class GitService
                 return new GitResult(1, [], "Could not tell which commit to restore from. Nothing was changed.");
 
             // Restoring a path the index has deleted (the old side of a rename, or a staged deletion) writes HEAD's version
-            // over whatever is on disk there. If a file exists there again, refuse rather than overwrite it. A case-only
-            // rename is exempt: on a case-insensitive disk the file found at the old name is the renamed file itself
-            // (whose unstaged edits the confirmation covers).
+            // over whatever is on disk there. If a file exists there again, refuse rather than overwrite it. The one
+            // exception is a case-only rename in a case-insensitive folder, where the file found at the old name is the
+            // renamed file itself (whose unstaged edits the confirmation covers); that is decided by the file system's
+            // identity of the two names, not by their spelling, because folders can be case-sensitive.
             var occupied = new List<string>();
             foreach (var item in items)
             {
                 var removed = item.Status == "R" ? item.OrigPath : item.Status == "D" ? item.Path : null;
-                if (removed == null || (item.Status == "R" && string.Equals(removed, item.Path, StringComparison.OrdinalIgnoreCase))) continue;
-                if (ExistsInWorkingTree(root, removed)) occupied.Add(removed);
+                if (removed == null || !ExistsInWorkingTree(root, removed)) continue;
+                if (item.Status == "R" && SameFile(root, removed, item.Path)) continue;
+                occupied.Add(removed);
             }
             if (occupied.Count > 0)
                 return new GitResult(1, [], "Undo would overwrite a file that now exists at the original name. Move or rename it first:\n" + string.Join('\n', occupied));
@@ -467,27 +506,53 @@ internal static class GitService
             }
             if (delete.Count > 0)
             {
-                var r = await RunWithPathsAsync(root, ["rm", "--cached", "-q", "-f", "--ignore-unmatch"], delete);
-                if (!r.Ok) return r;
+                GitResult r;
+                try
+                {
+                    r = await RunWithPathsAsync(root, ["rm", "--cached", "-q", "-f", "--ignore-unmatch"], delete);
+                }
+                catch (Exception ex) when (restore.Count > 0)   // e.g. git could not be started: the restore still happened
+                {
+                    r = new GitResult(-1, [], ex.Message);
+                }
+                if (!r.Ok)
+                    return restore.Count == 0 ? r : PartlyApplied(
+                        $"{restore.Count} file(s) were restored from the last commit, but these could not be unstaged:\n{string.Join('\n', delete)}" +
+                        (string.IsNullOrWhiteSpace(r.Error) ? "" : "\n" + r.Error));
             }
-            // After a case-only rename the file just restored is the one on disk, so it must not go to the Recycle Bin.
-            delete.RemoveAll(d => restore.Contains(d, StringComparer.OrdinalIgnoreCase));
+            // After a case-only rename in a case-insensitive folder, the file just restored is also the one at the new
+            // name, so it must not go to the Recycle Bin.
+            delete.RemoveAll(d => restore.Any(r => string.Equals(r, d, StringComparison.OrdinalIgnoreCase) && SameFile(root, r, d)));
         }
 
         var failed = new List<string>();
         foreach (var path in delete)
             if (!TryRecycle(root, path)) failed.Add(path);
-        return failed.Count == 0
-            ? new GitResult(0, [], "")
-            : new GitResult(1, [], "Could not move to the Recycle Bin:\n" + string.Join('\n', failed));
+        if (failed.Count == 0) return new GitResult(0, [], "");
+        var notMoved = "Could not move to the Recycle Bin:\n" + string.Join('\n', failed);
+        // A staged undo has already unstaged these files; otherwise something was done unless every step was a failed move.
+        var nothingElseDone = !staged && restore.Count == 0 && failed.Count == delete.Count;
+        return nothingElseDone ? new GitResult(1, [], notMoved) : PartlyApplied(notMoved);
     }
 
+    private static GitResult PartlyApplied(string detail) => new(1, [], "Undo was only partly applied. " + detail);
+
+    /// <summary>
+    /// True if two repository-relative names are the same existing directory entry (e.g. a.txt and A.txt in a
+    /// case-insensitive folder). A link is not followed: a symbolic link at one name pointing at the other is a different entry.
+    /// </summary>
+    private static bool SameFile(string root, string a, string b) =>
+        FullPathInRepo(root, a) is { } fa && FullPathInRepo(root, b) is { } fb &&
+        Native.FinalPath(fa, followFinalLink: false) is { } finalA &&
+        string.Equals(finalA, Native.FinalPath(fb, followFinalLink: false), StringComparison.Ordinal);
+
     /// <summary>Full path of a repository-relative path, or null unless it names something inside <paramref name="root"/>.</summary>
+    /// <remarks>Ordinal: a path that leaves the repository and comes back with different casing may be another folder.</remarks>
     public static string? FullPathInRepo(string root, string relativePath)
     {
         var fullRoot = Path.GetFullPath(root).TrimEnd('\\') + "\\";
         var full = Path.GetFullPath(Path.Combine(fullRoot, relativePath));
-        return full.Length > fullRoot.Length && full.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase) ? full : null;
+        return full.Length > fullRoot.Length && full.StartsWith(fullRoot, StringComparison.Ordinal) ? full : null;
     }
 
     /// <summary>
@@ -499,7 +564,9 @@ internal static class GitService
         var full = FullPathInRepo(root, relativePath);
         if (full == null || Native.FinalPath(root) is not { } finalRoot || Native.FinalPath(full) is not { } final) return null;
         finalRoot = finalRoot.TrimEnd('\\') + "\\";
-        return final.Length > finalRoot.Length && final.StartsWith(finalRoot, StringComparison.OrdinalIgnoreCase) ? full : null;
+        // Both paths come back in the file system's own casing, so compare exactly: in a case-sensitive parent,
+        // C:\work\Repo is a different folder from C:\work\repo.
+        return final.Length > finalRoot.Length && final.StartsWith(finalRoot, StringComparison.Ordinal) ? full : null;
     }
 
     private static bool ExistsInWorkingTree(string root, string relativePath) =>

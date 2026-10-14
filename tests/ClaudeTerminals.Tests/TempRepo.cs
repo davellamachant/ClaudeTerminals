@@ -53,16 +53,27 @@ internal sealed class TempRepo : IDisposable
         Git("commit", "-q", "-m", "commit");
     }
 
-    /// <summary>The index and working tree as git sees them, for "nothing changed" assertions.</summary>
-    public string Snapshot() => Git("status", "--porcelain=v2", "--untracked-files=all") + Git("ls-files", "-s");
+    /// <summary>
+    /// HEAD, the index, git's view of the working tree, and the exact name and bytes of every working file, for
+    /// "nothing changed" assertions.
+    /// </summary>
+    public string Snapshot()
+    {
+        string head;
+        try { head = Git("rev-parse", "-q", "--verify", "HEAD"); }
+        catch (InvalidOperationException) { head = "(none)"; }
+        var files = new DirectoryInfo(Root).EnumerateFiles("*", SearchOption.AllDirectories)
+            .Where(f => Path.GetRelativePath(Root, f.FullName).Split(Path.DirectorySeparatorChar)[0] != ".git")   // the metadata folder only, not .gitignore etc.
+            .Select(f => Path.GetRelativePath(Root, f.FullName) + " " + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(f.FullName))))
+            .Order(StringComparer.Ordinal);
+        return head + Git("status", "--porcelain=v2", "--untracked-files=all") + Git("ls-files", "-s") + string.Join("\n", files);
+    }
 
     public void Dispose()
     {
         try
         {
-            foreach (var f in Directory.EnumerateFiles(Root, "*", SearchOption.AllDirectories))
-                File.SetAttributes(f, FileAttributes.Normal);   // git objects are read-only
-            Directory.Delete(Root, true);
+            FileSystemFixtures.DeleteTree(Root);   // also clears the read-only flag on git objects
         }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
