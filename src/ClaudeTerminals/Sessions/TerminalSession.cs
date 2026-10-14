@@ -18,20 +18,27 @@ internal sealed class TerminalSession : IDisposable
     public bool IsRunning => process != null;
     public string? RepoRoot { get; private set; }
 
+    /// <summary>Counts processes started; <see cref="Exited"/> carries the number of the one that exited.</summary>
+    public int Generation { get; private set; }
+
     /// <summary>Raised on a background thread.</summary>
     public event Action<TerminalSession, string>? Output;
-    public event Action<TerminalSession, int>? Exited;
+    /// <summary>(session, exit code, generation of the process that exited). Raised on a background thread.</summary>
+    public event Action<TerminalSession, int, int>? Exited;
     public event Action<TerminalSession, GitStatus>? StatusChanged;
 
     public void Start(int cols, int rows)
     {
         if (process != null) return;
+        var generation = ++Generation;
         var p = new PseudoConsoleProcess();
         p.Output += text => Output?.Invoke(this, text);
         p.Exited += code =>
         {
-            if (Interlocked.CompareExchange(ref process, null, p) == p) p.Dispose();
-            Exited?.Invoke(this, code);
+            // If Stop/restart already took this process, its late exit must not be reported against the next one.
+            if (Interlocked.CompareExchange(ref process, null, p) != p) return;
+            p.Dispose();
+            Exited?.Invoke(this, code, generation);
         };
         process = p;
         try
@@ -51,10 +58,13 @@ internal sealed class TerminalSession : IDisposable
 
     public void Resize(int cols, int rows) => process?.Resize(cols, rows);
 
-    public void Stop()
+    /// <summary>Kills the running process, if any. Does not raise <see cref="Exited"/>.</summary>
+    /// <returns>False if nothing was running (it had already exited).</returns>
+    public bool Stop()
     {
         var p = Interlocked.Exchange(ref process, null);
         p?.Dispose();
+        return p != null;
     }
 
     public async Task InitGitAsync()

@@ -287,7 +287,8 @@ function onExited(id, code) {
   s.running = false;
   s.exitCode = code;
   s.act.state = 'idle';
-  s.term.write(`\r\n\x1b[90m[Process exited with code ${code} — press Enter to restart]\x1b[0m\r\n`);
+  const what = code == null ? 'Process stopped' : `Process exited with code ${code}`;   // null: stopped from the menu
+  s.term.write(`\r\n\x1b[90m[${what} — press Enter to restart]\x1b[0m\r\n`);
   renderTileHeader(s);
   renderSessionTabs();
 }
@@ -522,6 +523,13 @@ function handleShortcut(e) {
 
 function terminalKey(s, e) {
   if (handleShortcut(e)) { e.preventDefault(); e.stopPropagation(); return false; }
+  // Shift+Enter inserts a newline in Claude Code's prompt (same as Alt+Enter). Cancel the keydown and swallow the
+  // keypress as well: xterm turns an uncancelled Enter keypress into a second CR, which submits the prompt.
+  if (e.key === 'Enter' && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+    if (e.type === 'keydown' && s.running) post({ type: 'input', id: s.id, data: '\x1b\r' });
+    e.preventDefault();
+    return false;
+  }
   if (e.type !== 'keydown') return true;
   // Ctrl+C copies when there is a selection, otherwise it is sent as an interrupt.
   if (e.ctrlKey && !e.shiftKey && (e.key === 'c' || e.key === 'C') && s.term.hasSelection()) {
@@ -535,11 +543,6 @@ function terminalKey(s, e) {
   }
   if (e.ctrlKey && e.shiftKey && (e.key === 'V' || e.key === 'v')) {
     navigator.clipboard.readText().then((t) => t && s.term.paste(t));
-    return false;
-  }
-  // Shift+Enter inserts a newline in Claude Code's prompt (same as Alt+Enter).
-  if (e.key === 'Enter' && e.shiftKey && !e.ctrlKey && !e.altKey) {
-    if (s.running) post({ type: 'input', id: s.id, data: '\x1b\r' });
     return false;
   }
   return true;
@@ -1073,7 +1076,9 @@ function confirmUndo(s, kind, files, folder) {
     'Undo Changes', true,
     async () => {
       try {
-        await request('git.undo', { id: s.id, staged, paths: files.map((f) => f.path) });
+        // Send what this dialog showed (the files, the commit, which ones had unstaged edits); the host refuses if any changed since.
+        await request('git.undo', { id: s.id, staged, head: s.git?.head ?? null, alsoUnstaged: alsoUnstaged.map((f) => f.path),
+          files: files.map(({ path, origPath, status, untracked, inHead }) => ({ path, origPath, status, untracked, inHead })) });
       } catch (e) {
         s.info = { text: e.message, error: true };
         renderGit();

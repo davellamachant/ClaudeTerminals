@@ -128,4 +128,48 @@ internal static class Native
 
     [DllImport("dwmapi.dll")]
     public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
+
+    /// <summary>Windows' own test for file types that are a risk to open (executables, scripts...); takes an extension such as ".js".</summary>
+    [DllImport("shlwapi.dll", CharSet = CharSet.Unicode)]
+    public static extern bool AssocIsDangerous(string pszAssoc);
+
+    public const uint ASSOCSTR_COMMAND = 1;
+    public const uint ASSOCSTR_EXECUTABLE = 2;
+
+    [DllImport("shlwapi.dll", CharSet = CharSet.Unicode)]
+    private static extern int AssocQueryStringW(uint flags, uint str, string pszAssoc, string? pszExtra, [Out] char[]? pszOut, ref uint pcchOut);
+
+    /// <summary>The default verb's command line or program for an extension such as ".py", or null if none is registered.</summary>
+    public static string? AssocQuery(uint what, string extension)
+    {
+        var buffer = new char[2048];
+        var size = (uint)buffer.Length;
+        return AssocQueryStringW(0, what, extension, null, buffer, ref size) == 0 && size > 1 ? new string(buffer, 0, (int)size - 1) : null;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern SafeFileHandle CreateFileW(string lpFileName, uint dwDesiredAccess, uint dwShareMode, IntPtr lpSecurityAttributes,
+        uint dwCreationDisposition, uint dwFlagsAndAttributes, IntPtr hTemplateFile);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern uint GetFinalPathNameByHandleW(SafeFileHandle hFile, [Out] char[] lpszFilePath, uint cchFilePath, uint dwFlags);
+
+    /// <summary>
+    /// The path Windows actually opens for an existing file or folder, with junctions and symbolic links resolved
+    /// (e.g. <c>\\?\C:\real\folder\file.txt</c>), or null if it can't be opened.
+    /// </summary>
+    public static string? FinalPath(string path)
+    {
+        const uint shareAll = 7, openExisting = 3, backupSemantics = 0x02000000;   // backup semantics lets folders be opened
+        using var handle = CreateFileW(path, 0, shareAll, IntPtr.Zero, openExisting, backupSemantics, IntPtr.Zero);
+        if (handle.IsInvalid) return null;
+        var buffer = new char[1024];
+        var length = GetFinalPathNameByHandleW(handle, buffer, (uint)buffer.Length, 0);
+        if (length > buffer.Length)
+        {
+            buffer = new char[length];
+            length = GetFinalPathNameByHandleW(handle, buffer, (uint)buffer.Length, 0);
+        }
+        return length == 0 || length > buffer.Length ? null : new string(buffer, 0, (int)length);
+    }
 }
