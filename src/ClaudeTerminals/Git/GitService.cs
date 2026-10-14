@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using ClaudeTerminals.Terminal;
 
 namespace ClaudeTerminals.Git;
 
@@ -10,11 +11,13 @@ internal sealed record GitResult(int ExitCode, byte[] Output, string Error)
 }
 
 /// <param name="Untracked">Not known to git at all ("?" in status); undoing it means deleting the file.</param>
-internal sealed record FileChange(string Path, string? OrigPath, string Status, bool Untracked = false);
+/// <param name="InHead">Path exists in HEAD (status reports a non-zero HEAD mode); a staged undo restores it rather than deleting it.</param>
+internal sealed record FileChange(string Path, string? OrigPath, string Status, bool Untracked = false, bool InHead = false);
 
+/// <param name="HeadOid">The commit HEAD pointed at when this status was taken; null on an unborn branch.</param>
 internal sealed record GitStatus(
     bool IsRepo, string? Error, string? Branch, string? Upstream, int Ahead, int Behind,
-    List<FileChange> Staged, List<FileChange> Unstaged);
+    List<FileChange> Staged, List<FileChange> Unstaged, string? HeadOid = null);
 
 internal sealed record CommitInfo(string Sha, string ShortSha, string Author, string Date, string Subject, string Refs, bool Outgoing);
 
@@ -100,14 +103,15 @@ internal static class GitService
                 case '1':
                 {
                     var f = e.Split(' ', 9);
-                    AddChange(f[1], f[8], null, staged, unstaged);
+                    AddChange(f[1], f[8], null, f[3] != "000000", staged, unstaged);
                     break;
                 }
                 case '2':
                 {
+                    // The new side of a rename or copy is never in HEAD (f[3] is the original path's HEAD mode).
                     var f = e.Split(' ', 10);
                     var orig = i + 1 < entries.Length ? entries[++i] : null;
-                    AddChange(f[1], f[9], orig, staged, unstaged);
+                    AddChange(f[1], f[9], orig, false, staged, unstaged);
                     break;
                 }
                 case 'u':
@@ -123,13 +127,14 @@ internal static class GitService
         }
 
         if (branch == "(detached)" && oid != null) branch = $"(detached {oid[..Math.Min(8, oid.Length)]})";
-        return new GitStatus(true, null, branch, upstream, ahead, behind, staged, unstaged);
+        var headOid = oid is { Length: 40 or 64 } && oid.AsSpan().IndexOfAnyExcept("0123456789abcdef") < 0 ? oid : null;   // "(initial)" when unborn
+        return new GitStatus(true, null, branch, upstream, ahead, behind, staged, unstaged, headOid);
     }
 
-    private static void AddChange(string xy, string path, string? orig, List<FileChange> staged, List<FileChange> unstaged)
+    private static void AddChange(string xy, string path, string? orig, bool inHead, List<FileChange> staged, List<FileChange> unstaged)
     {
-        if (xy[0] != '.') staged.Add(new FileChange(path, xy[0] is 'R' or 'C' ? orig : null, Letter(xy[0])));
-        if (xy[1] != '.') unstaged.Add(new FileChange(path, null, Letter(xy[1])));
+        if (xy[0] != '.') staged.Add(new FileChange(path, xy[0] is 'R' or 'C' ? orig : null, Letter(xy[0]), InHead: inHead));
+        if (xy[1] != '.') unstaged.Add(new FileChange(path, null, Letter(xy[1]), InHead: inHead));
     }
 
     private static string Letter(char c) => c switch
@@ -353,12 +358,63 @@ internal static class GitService
         (await RunAsync(dir, ["rev-parse", "--verify", "-q", "HEAD"])).Ok;
 
     /// <summary>
+    /// Undo for the files the user confirmed. Status is re-read rather than trusting the page, and the undo is refused if
+    /// a file no longer matches what was confirmed (see <see cref="SelectConfirmed"/>). For a staged undo, which restores
+    /// from the last commit and also discards unstaged edits, the confirmation must also still describe the same commit
+    /// and the same set of files with unstaged edits (the dialog warns about those).
+    /// </summary>
+    /// <param name="confirmedHead">The <see cref="GitStatus.HeadOid"/> the dialog was built from.</param>
+    /// <param name="confirmedAlsoUnstaged">Selected files the dialog said also had unstaged edits.</param>
+    /// <returns>The number of files undone.</returns>
+    public static async Task<int> UndoConfirmedAsync(string root, bool staged, IReadOnlyList<FileChange> confirmed,
+        string? confirmedHead = null, IReadOnlyCollection<string>? confirmedAlsoUnstaged = null)
+    {
+        var status = await GetStatusAsync(root);
+        if (!status.IsRepo) throw new InvalidOperationException(status.Error ?? "Not a Git repository.");
+        var items = SelectConfirmed(staged ? status.Staged : status.Unstaged, confirmed);
+        if (items.Count == 0) return 0;
+        if (staged)
+        {
+            if (status.HeadOid != confirmedHead)
+                throw new InvalidOperationException("The last commit changed after you chose Undo. Review the changes and try again.");
+            var unstagedNow = status.Unstaged.Select(f => f.Path).ToHashSet(StringComparer.Ordinal);
+            var warned = (confirmedAlsoUnstaged ?? []).ToHashSet(StringComparer.Ordinal);
+            if (items.FirstOrDefault(i => unstagedNow.Contains(i.Path) != warned.Contains(i.Path)) is { } changed)
+                throw new InvalidOperationException($"\"{changed.Path}\" changed after you chose Undo. Review the changes and try again.");
+        }
+        var r = await UndoAsync(root, staged, items, status.HeadOid);
+        if (!r.Ok) throw new InvalidOperationException(string.IsNullOrEmpty(r.Error) ? "Undo failed" : r.Error);
+        return items.Count;
+    }
+
+    /// <summary>
+    /// Matches the files the user confirmed for Undo against a fresh status, so Undo performs the action the user saw.
+    /// If a confirmed file's state has changed since (e.g. a tracked edit is now an untracked file, which undo deletes),
+    /// this throws rather than silently doing something else. Files with no change any more, or now conflicted, are skipped.
+    /// </summary>
+    public static List<FileChange> SelectConfirmed(IEnumerable<FileChange> current, IEnumerable<FileChange> confirmed)
+    {
+        var now = new Dictionary<string, FileChange>(StringComparer.Ordinal);
+        foreach (var f in current) now.TryAdd(f.Path, f);
+        var items = new List<FileChange>();
+        foreach (var c in confirmed)
+        {
+            if (!now.TryGetValue(c.Path, out var f) || f.Status == "U") continue;
+            if (f != c) throw new InvalidOperationException($"\"{c.Path}\" changed after you chose Undo. Review the changes and try again.");
+            items.Add(f);
+        }
+        return items;
+    }
+
+    /// <summary>
     /// Visual Studio's "Undo Changes". Unstaged: tracked files go back to their staged (index) version and untracked
     /// files are deleted. Staged: files go back to HEAD in both index and working tree, which also discards any
     /// unstaged edits to them; files that don't exist in HEAD (added, or the new side of a rename) are deleted.
     /// Deleted files go to the Recycle Bin rather than being removed outright.
     /// </summary>
-    public static async Task<GitResult> UndoAsync(string root, bool staged, IReadOnlyList<FileChange> items)
+    /// <param name="items">Entries from the status the user confirmed (see <see cref="SelectConfirmed"/>).</param>
+    /// <param name="headOid">That status's <see cref="GitStatus.HeadOid"/>: staged files are restored from this commit, not whatever HEAD is by now.</param>
+    public static async Task<GitResult> UndoAsync(string root, bool staged, IReadOnlyList<FileChange> items, string? headOid = null)
     {
         var restore = new List<string>();
         var delete = new List<string>();
@@ -375,14 +431,38 @@ internal static class GitService
         }
         else
         {
-            var candidates = items.SelectMany(i => i.OrigPath != null ? new[] { i.OrigPath, i.Path } : [i.Path]).Distinct().ToList();
-            var inHead = await PathsInHeadAsync(root, candidates);
-            foreach (var path in candidates)
-                (inHead.Contains(path) ? restore : delete).Add(path);
+            // Whether a path is in HEAD comes from the status snapshot itself, never from a second lookup: a lookup that
+            // fails or comes back partial must not turn "restore" into "delete".
+            foreach (var item in items)
+            {
+                // Undoing a rename restores the old name. A copy's source was not changed by the copy, so it is left alone.
+                if (item.Status == "R" && item.OrigPath != null) restore.Add(item.OrigPath);
+                (item.InHead ? restore : delete).Add(item.Path);
+            }
+            restore = restore.Distinct().ToList();
+            delete = delete.Distinct().ToList();
+            if (restore.Count > 0 && headOid == null)
+                return new GitResult(1, [], "Could not tell which commit to restore from. Nothing was changed.");
 
+            // Restoring a path the index has deleted (the old side of a rename, or a staged deletion) writes HEAD's version
+            // over whatever is on disk there. If a file exists there again, refuse rather than overwrite it. A case-only
+            // rename is exempt: on a case-insensitive disk the file found at the old name is the renamed file itself
+            // (whose unstaged edits the confirmation covers).
+            var occupied = new List<string>();
+            foreach (var item in items)
+            {
+                var removed = item.Status == "R" ? item.OrigPath : item.Status == "D" ? item.Path : null;
+                if (removed == null || (item.Status == "R" && string.Equals(removed, item.Path, StringComparison.OrdinalIgnoreCase))) continue;
+                if (ExistsInWorkingTree(root, removed)) occupied.Add(removed);
+            }
+            if (occupied.Count > 0)
+                return new GitResult(1, [], "Undo would overwrite a file that now exists at the original name. Move or rename it first:\n" + string.Join('\n', occupied));
+
+            // Restore straight after that check, then unstage the new files (with --literal-pathspecs this removes only the
+            // exact index entry, so a case-only rename's restored name survives).
             if (restore.Count > 0)
             {
-                var r = await RunWithPathsAsync(root, ["restore", "--source=HEAD", "--staged", "--worktree"], restore);
+                var r = await RunWithPathsAsync(root, ["restore", $"--source={headOid}", "--staged", "--worktree"], restore);
                 if (!r.Ok) return r;
             }
             if (delete.Count > 0)
@@ -390,6 +470,8 @@ internal static class GitService
                 var r = await RunWithPathsAsync(root, ["rm", "--cached", "-q", "-f", "--ignore-unmatch"], delete);
                 if (!r.Ok) return r;
             }
+            // After a case-only rename the file just restored is the one on disk, so it must not go to the Recycle Bin.
+            delete.RemoveAll(d => restore.Contains(d, StringComparer.OrdinalIgnoreCase));
         }
 
         var failed = new List<string>();
@@ -400,29 +482,43 @@ internal static class GitService
             : new GitResult(1, [], "Could not move to the Recycle Bin:\n" + string.Join('\n', failed));
     }
 
-    private static async Task<HashSet<string>> PathsInHeadAsync(string root, IReadOnlyCollection<string> paths)
-    {
-        var set = new HashSet<string>(StringComparer.Ordinal);
-        if (paths.Count == 0 || !await HasHeadAsync(root)) return set;
-        // One line out per line in: "<sha> <type> <size>" when HEAD has the path, "<spec> missing" when it doesn't.
-        var list = paths.ToList();
-        var r = await RunAsync(root, ["cat-file", "--batch-check"], string.Concat(list.Select(p => $"HEAD:{p}\n")));
-        var lines = r.Text.Split('\n');
-        for (var i = 0; i < list.Count && i < lines.Length; i++)
-            if (!lines[i].TrimEnd('\r').EndsWith(" missing", StringComparison.Ordinal)) set.Add(list[i]);
-        return set;
-    }
-
-    private static bool TryRecycle(string root, string relativePath)
+    /// <summary>Full path of a repository-relative path, or null unless it names something inside <paramref name="root"/>.</summary>
+    public static string? FullPathInRepo(string root, string relativePath)
     {
         var fullRoot = Path.GetFullPath(root).TrimEnd('\\') + "\\";
         var full = Path.GetFullPath(Path.Combine(fullRoot, relativePath));
-        if (!full.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase)) return false;   // never touch anything outside the repo
+        return full.Length > fullRoot.Length && full.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase) ? full : null;
+    }
+
+    /// <summary>
+    /// Like <see cref="FullPathInRepo"/>, but also follows junctions and symbolic links: null unless the existing file or
+    /// folder the path really names is inside the repository (whose own path may itself go through a link).
+    /// </summary>
+    public static string? ExistingPathInRepo(string root, string relativePath)
+    {
+        var full = FullPathInRepo(root, relativePath);
+        if (full == null || Native.FinalPath(root) is not { } finalRoot || Native.FinalPath(full) is not { } final) return null;
+        finalRoot = finalRoot.TrimEnd('\\') + "\\";
+        return final.Length > finalRoot.Length && final.StartsWith(finalRoot, StringComparison.OrdinalIgnoreCase) ? full : null;
+    }
+
+    private static bool ExistsInWorkingTree(string root, string relativePath) =>
+        FullPathInRepo(root, relativePath) is { } full && (File.Exists(full) || Directory.Exists(full));
+
+    /// <summary>Moves one file to the Recycle Bin. Replaceable so tests don't fill the real Recycle Bin.</summary>
+    internal static Action<string> SendToRecycleBin = full =>
+        Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(full,
+            Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs, Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
+
+    private static bool TryRecycle(string root, string relativePath)
+    {
+        var full = FullPathInRepo(root, relativePath);
+        if (full == null) return false;   // never touch anything outside the repo
         try
         {
-            if (File.Exists(full))
-                Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(full,
-                    Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs, Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
+            if (!File.Exists(full)) return true;
+            if (ExistingPathInRepo(root, relativePath) == null) return false;   // ...including through a junction or link
+            SendToRecycleBin(full);
             return true;
         }
         catch (Exception)

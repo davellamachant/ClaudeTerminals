@@ -59,7 +59,7 @@ Plain `Esc` always goes to the terminal, because Claude Code uses it to interrup
 
 **Tile status dots:** green = idle, pulsing blue = working, orange = finished working while you weren't watching (or rang the bell).
 
-**Git panel:** shows the selected session's repository. *Git Changes* has staged/unstaged trees, stage/unstage, commit, and VS-style **Undo Changes** (right-click a file or folder, or the ↶ on a section header; new files go to the Recycle Bin). *Git Repository* has outgoing commits and history, plus each commit's files. Click any file to open a diff. Open diffs refresh as the session edits the file.
+**Git panel:** shows the selected session's repository. *Git Changes* has staged/unstaged trees, stage/unstage, commit, and VS-style **Undo Changes** (right-click a file or folder, or the ↶ on a section header; new files go to the Recycle Bin; it refuses rather than guesses if the files changed after you confirmed, or if restoring would overwrite a file that now exists at a deleted or renamed file's old name). *Git Repository* has outgoing commits and history, plus each commit's files. Click any file to open a diff. Open diffs refresh as the session edits the file.
 
 **Resuming:** the picker reads Claude Code's saved conversations from `~/.claude/projects`. A resumed session keeps `claude --resume <id>` as its command, so it reopens the same conversation every time the app starts. Close the conversation in any other terminal first. Conversations updated in the last few minutes are tagged *active now* as a reminder.
 

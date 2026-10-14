@@ -16,6 +16,9 @@ internal sealed class MainForm : Form
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
+    /// <summary>The only document allowed in the WebView, and the only one whose messages the host acts on.</summary>
+    private const string AppPage = "https://app.local/index.html";
+
     private readonly WebView2 webView = new() { Dock = DockStyle.Fill, DefaultBackgroundColor = Color.FromArgb(0x1f, 0x1f, 0x1f) };
     private readonly Dictionary<string, TerminalSession> sessions = [];
     private readonly List<string> order = [];
@@ -68,11 +71,14 @@ internal sealed class MainForm : Form
 #else
             core.Settings.AreDevToolsEnabled = false;
 #endif
+            // A file or link dropped on the window would otherwise replace the app page (and could then talk to the host).
+            webView.AllowExternalDrop = false;
+            core.NavigationStarting += (_, args) => { if (!IsAppUri(args.Uri)) args.Cancel = true; };
             var root = Path.Combine(AppContext.BaseDirectory, "wwwroot");
             core.SetVirtualHostNameToFolderMapping("app.local", root, CoreWebView2HostResourceAccessKind.Allow);
             core.WebMessageReceived += OnWebMessage;
             core.NewWindowRequested += (_, args) => args.Handled = true;
-            core.Navigate("https://app.local/index.html");
+            core.Navigate(AppPage);
         }
         catch (Exception ex)
         {
@@ -108,8 +114,11 @@ internal sealed class MainForm : Form
                 sb.Append(text);
             }
         };
-        s.Exited += (session, code) => RunOnUi(() =>
+        s.Exited += (session, code, generation) => RunOnUi(() =>
         {
+            // A process that exited just as the session was restarted must not mark the new one as exited. Both this
+            // check and restart run on the UI thread, so the comparison can't race a Start.
+            if (generation != session.Generation) return;
             FlushOutput();
             Post(new { type = "exited", id = session.Id, code });
         });
@@ -142,6 +151,7 @@ internal sealed class MainForm : Form
         isRepo = st.IsRepo,
         error = st.Error,
         root = s.RepoRoot,
+        head = st.HeadOid,
         branch = st.Branch,
         upstream = st.Upstream,
         ahead = st.Ahead,
@@ -167,9 +177,13 @@ internal sealed class MainForm : Form
 
     private void Post(object message)
     {
-        if (webView.CoreWebView2 == null) return;
-        webView.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(message, JsonOptions));
+        if (webView.CoreWebView2 is not { } core || !IsAppUri(core.Source)) return;
+        core.PostWebMessageAsJson(JsonSerializer.Serialize(message, JsonOptions));
     }
+
+    /// <summary>True for the app page itself (ignoring any query or fragment); false for every other document, including others under app.local.</summary>
+    internal static bool IsAppUri(string? uri) =>
+        uri != null && string.Equals(uri.Split('#', '?')[0], AppPage, StringComparison.OrdinalIgnoreCase);
 
     private void RunOnUi(Action action)
     {
@@ -180,6 +194,7 @@ internal sealed class MainForm : Form
 
     private async void OnWebMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
+        if (!IsAppUri(e.Source)) return;
         JsonElement msg;
         try
         {
@@ -235,8 +250,16 @@ internal sealed class MainForm : Form
                 return null;
             }
             case "stop":
-                Get(msg).Stop();
+            {
+                // Stopping disposes the process without raising Exited, so tell the page itself (code null = stopped).
+                var s = Get(msg);
+                if (s.Stop())
+                {
+                    FlushOutput();
+                    Post(new { type = "exited", id = s.Id, code = (int?)null });
+                }
                 return null;
+            }
 
             case "addSessions":
             {
@@ -345,17 +368,23 @@ internal sealed class MainForm : Form
             case "git.undo":
             {
                 var s = Get(msg);
-                var root = GitDir(msg);
                 var staged = msg.GetProperty("staged").GetBoolean();
-                var paths = msg.GetProperty("paths").EnumerateArray().Select(x => x.GetString()!).ToHashSet(StringComparer.Ordinal);
-                // Re-read status rather than trusting the page: whether a file is untracked (deleted on undo)
-                // or renamed must reflect the repository right now, not a view that may be seconds old.
-                var status = await GitService.GetStatusAsync(root);
-                var items = (staged ? status.Staged : status.Unstaged).Where(f => paths.Contains(f.Path) && f.Status != "U").ToList();
-                var result = items.Count > 0 ? await GitService.UndoAsync(root, staged, items) : null;
-                await s.RefreshStatusAsync();
-                if (result is { Ok: false }) throw new InvalidOperationException(string.IsNullOrEmpty(result.Error) ? "Undo failed" : result.Error);
-                return items.Count;
+                // The files as the confirmation dialog showed them: whether each is untracked (deleted on undo) or
+                // renamed may have changed while it was open, and then the undo is refused.
+                var confirmed = msg.GetProperty("files").EnumerateArray()
+                    .Select(f => new FileChange(Str(f, "path"), OptStr(f, "origPath"), Str(f, "status"), Bool(f, "untracked"), Bool(f, "inHead")))
+                    .ToList();
+                var alsoUnstaged = msg.TryGetProperty("alsoUnstaged", out var au) && au.ValueKind == JsonValueKind.Array
+                    ? au.EnumerateArray().Select(x => x.GetString() ?? "").ToList()
+                    : [];
+                try
+                {
+                    return await GitService.UndoConfirmedAsync(GitDir(msg), staged, confirmed, OptStr(msg, "head"), alsoUnstaged);
+                }
+                finally
+                {
+                    await s.RefreshStatusAsync();
+                }
             }
             case "git.commit":
             {
@@ -367,8 +396,13 @@ internal sealed class MainForm : Form
             }
             case "openFile":
             {
-                var full = Path.GetFullPath(Path.Combine(GitDir(msg), Str(msg, "path")));
-                if (File.Exists(full)) OpenExternal(full);
+                var root = GitDir(msg);
+                var path = Str(msg, "path");
+                var full = GitService.FullPathInRepo(root, path) ?? throw new InvalidOperationException("That file is outside the repository.");
+                if (!File.Exists(full)) return null;
+                if (GitService.ExistingPathInRepo(root, path) == null)
+                    throw new InvalidOperationException("That file is outside the repository (it is reached through a link).");
+                OpenFileForViewing(full);
                 return null;
             }
         }
@@ -392,6 +426,73 @@ internal sealed class MainForm : Form
 
     private static int Int(JsonElement e, string name) =>
         e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt32() : 0;
+
+    private static bool Bool(JsonElement e, string name) =>
+        e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.True;
+
+    // Script and interpreter types that Windows' own unsafe-type list (AssocIsDangerous) may not cover.
+    private static readonly HashSet<string> ScriptExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".ps1", ".psm1", ".py", ".pyw", ".pyz", ".sh", ".bash", ".rb", ".pl", ".jar",
+        ".appinstaller", ".appx", ".appxbundle", ".msix", ".msixbundle", ".application", ".appref-ms",
+    };
+
+    // Programs that run the file they are handed rather than display it.
+    private static readonly HashSet<string> ScriptHosts = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "cmd", "powershell", "pwsh", "wscript", "cscript", "mshta", "py", "pyw", "node", "deno", "bun", "bash", "sh", "git-bash",
+        "wsl", "java", "javaw", "perl", "ruby", "rubyw", "php", "lua", "tclsh", "wish", "rundll32", "regsvr32", "msiexec",
+        "regedit", "dotnet", "autohotkey", "autohotkey32", "autohotkey64", "autohotkeyu32", "autohotkeyu64",
+    };
+
+    /// <summary>True if the shell's default action for this file type runs it rather than showing it.</summary>
+    internal static bool IsRunnable(string path)
+    {
+        var ext = Path.GetExtension(path);
+        if (ext.Length <= 1) return false;
+        var pathExt = Environment.GetEnvironmentVariable("PATHEXT") ?? ".COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC";
+        return ScriptExtensions.Contains(ext)
+            || pathExt.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Contains(ext, StringComparer.OrdinalIgnoreCase)
+            || Native.AssocIsDangerous(ext)
+            || DefaultActionRuns(Native.AssocQuery(Native.ASSOCSTR_COMMAND, ext), Native.AssocQuery(Native.ASSOCSTR_EXECUTABLE, ext));
+    }
+
+    /// <summary>
+    /// Catches script types this machine has associated with an interpreter (or with the file itself, as for .exe)
+    /// even when the extension is on none of the lists above.
+    /// </summary>
+    /// <param name="command">The default verb's command line, e.g. <c>"%1" %*</c>.</param>
+    /// <param name="program">The program that command runs.</param>
+    internal static bool DefaultActionRuns(string? command, string? program)
+    {
+        var cmd = command?.TrimStart() ?? "";
+        if (cmd.StartsWith("\"%1\"", StringComparison.Ordinal) || cmd.StartsWith("%1", StringComparison.Ordinal)) return true;
+        if (string.IsNullOrEmpty(program)) return false;
+        var name = Path.GetFileNameWithoutExtension(program);
+        return ScriptHosts.Contains(name) || name.StartsWith("python", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Opens a changed file the way Explorer would, except that anything Windows would run (scripts, executables)
+    /// is opened for editing instead: "Open" must never execute a file Claude just wrote.
+    /// </summary>
+    private static void OpenFileForViewing(string path)
+    {
+        if (!IsRunnable(path))
+        {
+            OpenExternal(path);
+            return;
+        }
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true, Verb = "edit" });
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            // No "edit" verb for this type (e.g. .exe, .py).
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "notepad.exe")) { ArgumentList = { path } });
+        }
+    }
 
     private static void OpenExternal(string target)
     {

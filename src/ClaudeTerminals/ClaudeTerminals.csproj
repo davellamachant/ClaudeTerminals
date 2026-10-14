@@ -29,6 +29,10 @@
     <Content Include="wwwroot\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="ClaudeTerminals.Tests" />
+  </ItemGroup>
+
   <!-- Third-party front-end libraries come from web/node_modules (run `npm install` in /web). -->
   <ItemGroup>
     <XtermFiles Include="$(WebDir)\node_modules\@xterm\xterm\lib\xterm.js;$(WebDir)\node_modules\@xterm\xterm\css\xterm.css" />
