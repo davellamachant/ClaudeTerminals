@@ -2,6 +2,21 @@
 
 One window for many local Claude Code sessions, with a Visual Studio–style Git Changes / Git Repository view and diff viewer for each session's worktree.
 
+![All sessions at a glance, with Git Changes for the selected worktree](docs/images/overview.png)
+
+<table>
+  <tr>
+    <td width="50%"><a href="docs/images/session.png"><img src="docs/images/session.png" alt="An expanded session with its Git Changes"></a><br><sub>Click a tile to work in that session full-size; <code>Shift+Esc</code> goes back.</sub></td>
+    <td width="50%"><a href="docs/images/diff.png"><img src="docs/images/diff.png" alt="Side-by-side diff in a document tab"></a><br><sub>VS-style side-by-side diffs open in tabs next to the terminal.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="docs/images/history.png"><img src="docs/images/history.png" alt="Git Repository history with outgoing commits"></a><br><sub>Outgoing commits, history and each commit's changes.</sub></td>
+    <td width="50%"><a href="docs/images/resume.png"><img src="docs/images/resume.png" alt="Resuming a saved Claude Code conversation"></a><br><sub>Start fresh or resume any saved Claude Code conversation.</sub></td>
+  </tr>
+</table>
+
+<sub>Screenshots show a fictional demo project with simulated sessions; regenerate them with <code>tools\screenshots\run.ps1</code>.</sub>
+
 - **Host:** .NET 10 WinForms + WebView2 (`src/ClaudeTerminals`)
 - **Terminals:** real Windows pseudo consoles (ConPTY) rendered with xterm.js; child processes live in a kill-on-close job object
 - **Diffs:** Monaco diff editor themed to match VS dark
