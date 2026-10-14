@@ -105,8 +105,9 @@ internal static partial class ConversationIndex
                 if (branch == null && Str(e, "gitBranch") is { } b && b != "HEAD") branch = b;
                 if (firstPrompt == null && Str(e, "type") == "user" && !Bool(e, "isMeta") && !Bool(e, "isSidechain"))
                     firstPrompt = UserText(e);
+                // No early exit: titles can appear anywhere, and the tail read below only starts at HeadBytes,
+                // so stopping here would miss any title written between this line and HeadBytes.
                 CollectTitles(e, ref aiTitle, ref customTitle, ref lastPrompt);
-                if (cwd != null && firstPrompt != null && branch != null) break;
             }
 
             if (file.Length > HeadBytes)
