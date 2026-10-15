@@ -560,7 +560,10 @@ function noteActivity(s) {
     if (now - a.burstStart > 1200) {
       a.state = 'working';
       a.workingSince = a.burstStart;
-      renderTileState(s);
+      // Working again means it's no longer waiting for you, e.g. another session handed it a task. "Waiting" takes
+      // priority in statusClass, so without this the dot stayed yellow until the session was opened.
+      if (s.attention) setAttention(s, false);
+      else renderTileState(s);
     }
   }
   a.lastOut = now;
