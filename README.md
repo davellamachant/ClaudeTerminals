@@ -63,6 +63,7 @@ winget install JRSoftware.InnoSetup   # once
 | Toggle Git panel | `Ctrl+Shift+G` |
 | New session | `Ctrl+Shift+N`: start a new conversation (optionally one session per worktree) or **resume an existing conversation** |
 | Switch a session to another conversation | Session menu (⋯) → *Resume a different conversation…* |
+| Close a session | The × on its tab in the title bar, or middle-click the tab. After you confirm, the session is removed and its process stopped; the folder isn't touched |
 | Terminal font size | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
 | Newline in Claude prompt | `Shift+Enter` |
 | Copy / paste | `Ctrl+C` with a selection / `Ctrl+V` (or right-click when expanded) |

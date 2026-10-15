@@ -377,10 +377,10 @@ function renderTileHeader(s) {
 
 function renderSessionTabs() {
   const host = $('#sessionTabs');
-  // A div rather than a button, so the close button inside it is valid markup.
+  // The label and the close button are sibling buttons, since one button can't contain another: both stay reachable
+  // with Tab, and Enter or Space on the label switches sessions. A click elsewhere on the tab counts as the label's.
   host.replaceChildren(...state.sessions.map((s, i) => h('div', {
     class: 'session-tab' + (state.expandedId === s.id ? ' active' : ''),
-    role: 'button',
     'data-id': s.id,
     title: `${s.directory}\n${statusText(s)}\nMiddle-click to close`,
     onclick: (e) => {
@@ -390,7 +390,8 @@ function renderSessionTabs() {
     onmousedown: (e) => { if (e.button === 1) e.preventDefault(); },   // no autoscroll cursor
     onauxclick: (e) => { if (e.button === 1) confirmRemove(s); },
     oncontextmenu: (e) => { e.preventDefault(); sessionMenu(s, e.clientX, e.clientY); },
-  }, h('span', { class: 'dot ' + statusClass(s) }), s.name, i < 9 ? h('span', { class: 'key' }, `Ctrl+${i + 1}`) : null,
+  }, h('button', { class: 'tab-label' },
+    h('span', { class: 'dot ' + statusClass(s) }), s.name, i < 9 ? h('span', { class: 'key' }, `Ctrl+${i + 1}`) : null),
   // Closing a session tab removes the session, after the same confirmation as "Remove session…".
   h('button', { class: 'icon-btn small tab-close', title: 'Close session…', onclick: () => confirmRemove(s) }, iconEl('close')))));
   $('#btnGrid').classList.toggle('active', !state.expandedId);
@@ -927,10 +928,10 @@ function onGitStatus(m) {
 
 const currentSession = () => state.byId.get(state.currentId);
 
-/** Drops the cached history; a history request already on its way is then not cached either (it may predate the change). */
 /** The last history load failed and nothing has changed since (logGen is undefined until the first invalidation). */
 const logFailed = (s) => s.logError != null && s.logError.gen === s.logGen;
 
+/** Drops the cached history; a history request already on its way is then not cached either (it may predate the change). */
 function invalidateLog(s) {
   s.log = null;
   s.logGen = (s.logGen || 0) + 1;
