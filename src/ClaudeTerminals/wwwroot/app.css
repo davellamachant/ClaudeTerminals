@@ -376,3 +376,14 @@ textarea.commit-msg { resize: vertical; min-height: 54px; height: 54px; user-sel
 .tile.off-project { display: none; }
 .stack { display: flex; flex-direction: column; gap: 6px; }
 .field select { height: 28px; }
+
+/* Project tags: tell apart same-named sessions from different projects. */
+.proj-tag {
+  display: inline-flex; align-items: center; height: 17px; padding: 0 7px; border-radius: 9px; flex: none; white-space: nowrap;
+  font-size: 10.5px; font-weight: 600; color: var(--proj);
+  background: color-mix(in srgb, var(--proj) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--proj) 45%, transparent);
+}
+.doc-tab.active .proj-tag { color: #fff; background: color-mix(in srgb, var(--proj) 55%, transparent); }
+.project-tab.shown:not(.unknown) { border-color: var(--proj); }
+.project-tab.shown:not(.unknown) .project-check { color: var(--proj); }

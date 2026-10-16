@@ -155,6 +155,26 @@ const isVisible = (s) => state.projects.length === 0 || !state.hiddenProjects.ha
 /** Every toggleable group id, Unknown last. */
 const allGroups = () => [...state.projects.map((p) => p.id), UNKNOWN];
 
+const projectOf = (s) => state.projects.find((p) => p.id === s.project) || null;
+
+// A colour per project, from its id rather than its position, so reordering or renaming never changes it.
+const PROJECT_COLORS = ['#4f9cf5', '#e8a23b', '#5cc48a', '#d16fd6', '#e5675f', '#47c1c9', '#c9b641', '#9b8cf0'];
+function projectColor(id) {
+  let hash = 0;
+  for (const c of id) hash = (hash * 31 + c.charCodeAt(0)) >>> 0;
+  return PROJECT_COLORS[hash % PROJECT_COLORS.length];
+}
+
+/** Tags only earn their space when sessions from more than one group are on screen; otherwise they'd all say the same. */
+const showProjectTags = () => new Set(visibleSessions().map(groupOf)).size > 1;
+
+/** A coloured tag naming the session's project (none for Unknown, or when only one group is visible). */
+function projectTag(s, tagsShown = showProjectTags()) {
+  const p = projectOf(s);
+  if (!p || !tagsShown) return null;
+  return h('span', { class: 'proj-tag', style: `--proj:${projectColor(p.id)}`, title: `Project: ${p.name}` }, p.name);
+}
+
 /** Visible sessions, grouped by project in project order (no project last), keeping their own order within a group. */
 function visibleSessions() {
   return state.sessions
@@ -236,6 +256,7 @@ function renderProjectBar() {
     const what = p.unknown ? 'sessions with no project' : p.name;
     return h('div', {
       class: 'project-tab' + (shown ? ' shown' : '') + (p.unknown ? ' unknown' : ''),
+      style: p.unknown ? null : `--proj:${projectColor(p.id)}`,
       'data-id': p.id,
       oncontextmenu: (e) => { e.preventDefault(); projectMenu(p, e.clientX, e.clientY); },
     },
@@ -573,6 +594,7 @@ function renderTileHeader(s) {
   fill(s.header,
     h('span', { class: 'dot ' + statusClass(s), title: statusText(s) }),
     h('span', { class: 'tile-name' }, s.name),
+    projectTag(s),
     h('span', { class: 'tile-title', title: s.title }, s.title),
     gs && h('button', {
       class: 'chip', title: `${gs.count} changed file(s) on ${gs.branch} — show in Git Changes`,
@@ -592,6 +614,7 @@ function renderSessionTabs() {
   // with Tab, and Enter or Space on the label switches sessions. A click elsewhere on the tab counts as the label's.
   // Visible sessions only, grouped by project, with a divider wherever the project changes.
   const shown = visibleSessions();
+  const tagsShown = showProjectTags();
   const tabs = shown.map((s, i) => h('div', {
     class: 'session-tab' + (state.expandedId === s.id ? ' active' : ''),
     'data-id': s.id,
@@ -604,7 +627,7 @@ function renderSessionTabs() {
     onauxclick: (e) => { if (e.button === 1) confirmRemove(s); },
     oncontextmenu: (e) => { e.preventDefault(); sessionMenu(s, e.clientX, e.clientY); },
   }, h('button', { class: 'tab-label' },
-    h('span', { class: 'dot ' + statusClass(s) }), s.name, i < 9 ? h('span', { class: 'key' }, `Ctrl+${i + 1}`) : null),
+    h('span', { class: 'dot ' + statusClass(s) }), s.name, projectTag(s, tagsShown), i < 9 ? h('span', { class: 'key' }, `Ctrl+${i + 1}`) : null),
   // Closing a session tab removes the session, after the same confirmation as "Remove session…".
   h('button', { class: 'icon-btn small tab-close', title: 'Close session…', onclick: () => confirmRemove(s) }, iconEl('close'))));
   const withDividers = [];
@@ -1195,7 +1218,8 @@ function showGit(id) {
 
 function renderSessionPicker() {
   const sel = $('#gitSession');
-  sel.replaceChildren(...visibleSessions().map((s) => h('option', { value: s.id, selected: s.id === state.currentId }, `${s.name}  —  ${s.directory}`)));
+  sel.replaceChildren(...visibleSessions().map((s) => h('option', { value: s.id, selected: s.id === state.currentId },
+    `${s.name}${projectOf(s) ? ` [${projectOf(s).name}]` : ''}  —  ${s.directory}`)));
 }
 
 $('#gitSession').addEventListener('change', (e) => showGit(e.target.value));
@@ -1775,7 +1799,7 @@ function renderDocTabs() {
     class: 'doc-tab terminal' + (docs.active === 'terminal' ? ' active' : ''),
     title: 'Terminals (Shift+Esc from a diff, Ctrl+PgUp/PgDn to switch tabs)',
     onclick: showTerminalDoc,
-  }, iconEl('terminal'), h('span', { class: 'doc-title' }, ex ? ex.name : 'All sessions'),
+  }, iconEl('terminal'), h('span', { class: 'doc-title' }, ex ? ex.name : 'All sessions'), ex ? projectTag(ex) : null,
   waiting ? h('span', { class: 'badge', title: `${waiting} session(s) waiting for you` }, String(waiting)) : null);
 
   const tabs = docs.tabs.map((t) => {
