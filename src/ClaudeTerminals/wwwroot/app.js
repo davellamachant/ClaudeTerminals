@@ -137,13 +137,23 @@ const state = {
 
 // ------------------------------------------------------------------ projects: which sessions are visible
 
+/** The "Unknown" group: sessions with no project, shown and hidden like a project of their own. */
+const UNKNOWN = '__unknown__';
+const UNKNOWN_NAME = 'Unknown';
+
 const projectIndex = (s) => {
   const i = state.projects.findIndex((p) => p.id === s.project);
-  return i < 0 ? state.projects.length : i;   // no project (or an unknown one) sorts last
+  return i < 0 ? state.projects.length : i;   // no project (or one that no longer exists) sorts last, as Unknown
 };
 
-/** Sessions with no project are visible whichever projects are selected. */
-const isVisible = (s) => !s.project || projectIndex(s) === state.projects.length || !state.hiddenProjects.has(s.project);
+/** The group a session is shown and counted under: its project, or Unknown. */
+const groupOf = (s) => (projectIndex(s) === state.projects.length ? UNKNOWN : s.project);
+
+// With no projects the bar has nothing to untick (Unknown isn't shown), so nothing may be hidden either.
+const isVisible = (s) => state.projects.length === 0 || !state.hiddenProjects.has(groupOf(s));
+
+/** Every toggleable group id, Unknown last. */
+const allGroups = () => [...state.projects.map((p) => p.id), UNKNOWN];
 
 /** Visible sessions, grouped by project in project order (no project last), keeping their own order within a group. */
 function visibleSessions() {
@@ -173,7 +183,7 @@ function applyProjectFilter(instant = false) {
   $('#empty').hidden = shown.length > 0;
   $('#empty .empty-title').textContent = anySessions ? 'No sessions in the selected projects' : 'No sessions yet';
   $('#empty .empty-sub').textContent = anySessions
-    ? 'Tick a project above, or choose All.'
+    ? 'Tick a project above (Unknown holds sessions with no project), or choose All.'
     : 'Add a session for each worktree you want Claude to work in.';
   layout(instant);
   for (const s of state.sessions) renderTileHeader(s);
@@ -184,7 +194,7 @@ function applyProjectFilter(instant = false) {
 }
 
 function showOnlyProject(id) {
-  state.hiddenProjects = new Set(state.projects.filter((p) => p.id !== id).map((p) => p.id));
+  state.hiddenProjects = new Set(allGroups().filter((g) => g !== id));
   saveHiddenProjects();
   applyProjectFilter();
 }
@@ -201,45 +211,67 @@ function showAllProjects() {
   applyProjectFilter();
 }
 
+/** Hides every project, Unknown included. */
+function hideAllProjects() {
+  state.hiddenProjects = new Set(allGroups());
+  saveHiddenProjects();
+  applyProjectFilter();
+}
+
 /**
  * The project row: per project a checkbox (show or hide it alongside the others) and its name (show only it), with a
  * count of its sessions waiting for you and a dot while any of them is working, so a hidden project still gets noticed.
  */
 function renderProjectBar() {
   const bar = $('#projectBar');
-  const tabs = state.projects.map((p) => {
-    const members = state.sessions.filter((s) => s.project === p.id);
+  // With no projects there is nothing to toggle, so Unknown only appears once a project exists.
+  const groups = state.projects.length
+    ? [...state.projects, { id: UNKNOWN, name: UNKNOWN_NAME, unknown: true }]
+    : [];
+  const tabs = groups.map((p) => {
+    const members = state.sessions.filter((s) => groupOf(s) === p.id);
     const waiting = members.filter((s) => s.attention).length;
     const working = members.some((s) => s.running && s.act.state === 'working');
     const shown = !state.hiddenProjects.has(p.id);
+    const what = p.unknown ? 'sessions with no project' : p.name;
     return h('div', {
-      class: 'project-tab' + (shown ? ' shown' : ''),
+      class: 'project-tab' + (shown ? ' shown' : '') + (p.unknown ? ' unknown' : ''),
       'data-id': p.id,
       oncontextmenu: (e) => { e.preventDefault(); projectMenu(p, e.clientX, e.clientY); },
     },
     h('button', {
       class: 'project-check', role: 'checkbox', 'aria-checked': String(shown),
-      title: `${shown ? 'Hide' : 'Show'} ${p.name}, keeping the other projects as they are`,
+      title: `${shown ? 'Hide' : 'Show'} ${what}, keeping the others as they are`,
       onclick: () => toggleProject(p.id),
     }, iconEl(shown ? 'checkOn' : 'checkOff')),
     h('button', {
-      class: 'project-name', title: `Show only ${p.name}\n${members.length} session${members.length === 1 ? '' : 's'} · right-click for options`,
+      class: 'project-name',
+      title: `Show only ${what}\n${members.length} session${members.length === 1 ? '' : 's'} · right-click for options`,
       onclick: () => showOnlyProject(p.id),
     }, p.name,
     working ? h('span', { class: 'dot working', title: 'A session is working' }) : null,
     waiting ? h('span', { class: 'badge', title: `${waiting} session${waiting === 1 ? '' : 's'} waiting for you` }, String(waiting)) : null));
   });
-  const allShown = state.projects.length > 0 && state.projects.every((p) => !state.hiddenProjects.has(p.id));
+  const allShown = groups.length > 0 && groups.every((g) => !state.hiddenProjects.has(g.id));
+  const noneShown = groups.length > 0 && groups.every((g) => state.hiddenProjects.has(g.id));
   fill(bar,
     h('span', { class: 'project-bar-label' }, 'Projects'),
     ...tabs,
-    state.projects.length ? h('button', { class: 'project-all' + (allShown ? ' active' : ''), title: 'Show every project', onclick: showAllProjects }, 'All') : null,
+    groups.length ? h('button', { class: 'project-all' + (allShown ? ' active' : ''), title: 'Show every project, Unknown included', onclick: showAllProjects }, 'All') : null,
+    groups.length ? h('button', { class: 'project-all' + (noneShown ? ' active' : ''), title: 'Hide every project, Unknown included', onclick: hideAllProjects }, 'None') : null,
     h('button', { class: 'tb-btn text project-add', title: 'New project', onclick: showNewProjectDialog }, iconEl('plus'),
       state.projects.length ? 'Project' : 'New project (group sessions)'),
   );
 }
 
 function projectMenu(p, x, y) {
+  if (p.unknown) {   // a group, not a project: nothing to rename, move or delete
+    showMenu(x, y, [
+      { label: 'Show only sessions with no project', action: () => showOnlyProject(UNKNOWN) },
+      { label: state.hiddenProjects.has(UNKNOWN) ? 'Show alongside the others' : 'Hide', action: () => toggleProject(UNKNOWN) },
+    ]);
+    return;
+  }
   const i = state.projects.indexOf(p);
   showMenu(x, y, [
     { label: 'Show only this project', action: () => showOnlyProject(p.id) },
@@ -307,7 +339,7 @@ const TERM_THEME = {
 function syncSessions(list, projects) {
   state.projects = projects;
   // Forget hidden projects that no longer exist, so a recreated project with the same id can't start hidden.
-  const known = new Set(projects.map((p) => p.id));
+  const known = new Set([...projects.map((p) => p.id), UNKNOWN]);
   for (const id of [...state.hiddenProjects]) if (!known.has(id)) state.hiddenProjects.delete(id);
   saveHiddenProjects();
 
@@ -511,14 +543,14 @@ function renderTileState(s) {
   if (dot) { dot.className = 'dot ' + statusClass(s); dot.title = statusText(s); }
   const tab = $(`.session-tab[data-id="${s.id}"] .dot`);
   if (tab) { tab.className = 'dot ' + statusClass(s); tab.title = statusText(s); }
-  if (s.project) updateProjectIndicators(s.project);
+  updateProjectIndicators(groupOf(s));
 }
 
 /** Refreshes one project tab's working dot and waiting badge in place (rebuilding the bar would drop keyboard focus). */
 function updateProjectIndicators(projectId) {
   const name = document.querySelector(`.project-tab[data-id="${projectId}"] .project-name`);
   if (!name) return;
-  const members = state.sessions.filter((x) => x.project === projectId);
+  const members = state.sessions.filter((x) => groupOf(x) === projectId);
   const waiting = members.filter((x) => x.attention).length;
   const working = members.some((x) => x.running && x.act.state === 'working');
   name.querySelector('.dot')?.remove();
@@ -579,7 +611,7 @@ function renderSessionTabs() {
   shown.forEach((s, i) => {
     if (i > 0 && projectIndex(s) !== projectIndex(shown[i - 1])) {
       const p = state.projects[projectIndex(s)];
-      withDividers.push(h('span', { class: 'session-divider', title: p ? p.name : 'No project: shown with every project' }));
+      withDividers.push(h('span', { class: 'session-divider', title: p ? p.name : UNKNOWN_NAME + ': sessions with no project' }));
     }
     withDividers.push(tabs[i]);
   });
@@ -881,7 +913,7 @@ function field(label, input, help) {
 function projectField(selectedId) {
   const NEW = '__new__';
   const select = h('select', {},
-    h('option', { value: '' }, 'No project (shown with every project)'),
+    h('option', { value: '' }, `No project (shown under ${UNKNOWN_NAME})`),
     state.projects.map((p) => h('option', { value: p.id, selected: p.id === selectedId }, p.name)),
     h('option', { value: NEW }, 'New project…'));
   const newName = h('input', { placeholder: 'Project name', spellcheck: 'false', hidden: true, maxlength: '60' });
