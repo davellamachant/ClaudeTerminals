@@ -52,6 +52,8 @@ const PATHS = {
   terminal: 'M2 3h12v10H2zM4.5 6l2 2-2 2M8 10.5h3.5',
   restart: 'M3 8a5 5 0 1 0 1.5-3.6M3 2.5v2.5h2.5',
   undo: 'M3.5 6.5h6.5a3.25 3.25 0 0 1 0 6.5H7M3.5 6.5l3-3M3.5 6.5l3 3',
+  checkOn: 'M2.5 2.5h11v11h-11zM5 8.2l2 2 4-4.4',
+  checkOff: 'M2.5 2.5h11v11h-11z',
 };
 
 function icon(name, cls = '') {
@@ -110,7 +112,7 @@ host.addEventListener('message', (e) => {
       m.ok ? p.resolve(m.result) : p.reject(new Error(m.error));
       break;
     }
-    case 'sessions': syncSessions(m.sessions); break;
+    case 'sessions': syncSessions(m.sessions, m.projects || []); break;
     case 'output': onOutput(m.id, m.data); break;
     case 'exited': onExited(m.id, m.code); break;
     case 'git.status': onGitStatus(m); break;
@@ -129,7 +131,166 @@ const state = {
   gitTab: 'changes',
   fontSize: store.get('fontSize', 14),
   surface: { w: 0, h: 0 },
+  projects: [],                                        // [{ id, name }] in display order
+  hiddenProjects: new Set(store.get('hiddenProjects', [])),   // hidden rather than shown, so new projects start visible
 };
+
+// ------------------------------------------------------------------ projects: which sessions are visible
+
+const projectIndex = (s) => {
+  const i = state.projects.findIndex((p) => p.id === s.project);
+  return i < 0 ? state.projects.length : i;   // no project (or an unknown one) sorts last
+};
+
+/** Sessions with no project are visible whichever projects are selected. */
+const isVisible = (s) => !s.project || projectIndex(s) === state.projects.length || !state.hiddenProjects.has(s.project);
+
+/** Visible sessions, grouped by project in project order (no project last), keeping their own order within a group. */
+function visibleSessions() {
+  return state.sessions
+    .map((s, i) => ({ s, i }))
+    .filter(({ s }) => isVisible(s))
+    .sort((a, b) => projectIndex(a.s) - projectIndex(b.s) || a.i - b.i)
+    .map(({ s }) => s);
+}
+
+function saveHiddenProjects() {
+  store.set('hiddenProjects', [...state.hiddenProjects]);
+}
+
+/** Applies a change in which sessions are visible: a hidden session can't stay open or be the Git panel's. */
+function applyProjectFilter(instant = false) {
+  const shown = visibleSessions();
+  if (state.expandedId && !shown.some((s) => s.id === state.expandedId)) {
+    state.byId.get(state.expandedId)?.term.blur();
+    state.expandedId = null;
+  }
+  if (shown.length && !shown.some((s) => s.id === state.currentId)) {
+    state.currentId = shown[0].id;
+    store.set('currentId', state.currentId);
+  }
+  const anySessions = state.sessions.length > 0;
+  $('#empty').hidden = shown.length > 0;
+  $('#empty .empty-title').textContent = anySessions ? 'No sessions in the selected projects' : 'No sessions yet';
+  $('#empty .empty-sub').textContent = anySessions
+    ? 'Tick a project above, or choose All.'
+    : 'Add a session for each worktree you want Claude to work in.';
+  layout(instant);
+  for (const s of state.sessions) renderTileHeader(s);
+  renderProjectBar();
+  renderSessionTabs();
+  renderSessionPicker();
+  renderGit();
+}
+
+function showOnlyProject(id) {
+  state.hiddenProjects = new Set(state.projects.filter((p) => p.id !== id).map((p) => p.id));
+  saveHiddenProjects();
+  applyProjectFilter();
+}
+
+function toggleProject(id) {
+  state.hiddenProjects.has(id) ? state.hiddenProjects.delete(id) : state.hiddenProjects.add(id);
+  saveHiddenProjects();
+  applyProjectFilter();
+}
+
+function showAllProjects() {
+  state.hiddenProjects.clear();
+  saveHiddenProjects();
+  applyProjectFilter();
+}
+
+/**
+ * The project row: per project a checkbox (show or hide it alongside the others) and its name (show only it), with a
+ * count of its sessions waiting for you and a dot while any of them is working, so a hidden project still gets noticed.
+ */
+function renderProjectBar() {
+  const bar = $('#projectBar');
+  const tabs = state.projects.map((p) => {
+    const members = state.sessions.filter((s) => s.project === p.id);
+    const waiting = members.filter((s) => s.attention).length;
+    const working = members.some((s) => s.running && s.act.state === 'working');
+    const shown = !state.hiddenProjects.has(p.id);
+    return h('div', {
+      class: 'project-tab' + (shown ? ' shown' : ''),
+      'data-id': p.id,
+      oncontextmenu: (e) => { e.preventDefault(); projectMenu(p, e.clientX, e.clientY); },
+    },
+    h('button', {
+      class: 'project-check', role: 'checkbox', 'aria-checked': String(shown),
+      title: `${shown ? 'Hide' : 'Show'} ${p.name}, keeping the other projects as they are`,
+      onclick: () => toggleProject(p.id),
+    }, iconEl(shown ? 'checkOn' : 'checkOff')),
+    h('button', {
+      class: 'project-name', title: `Show only ${p.name}\n${members.length} session${members.length === 1 ? '' : 's'} · right-click for options`,
+      onclick: () => showOnlyProject(p.id),
+    }, p.name,
+    working ? h('span', { class: 'dot working', title: 'A session is working' }) : null,
+    waiting ? h('span', { class: 'badge', title: `${waiting} session${waiting === 1 ? '' : 's'} waiting for you` }, String(waiting)) : null));
+  });
+  const allShown = state.projects.length > 0 && state.projects.every((p) => !state.hiddenProjects.has(p.id));
+  fill(bar,
+    h('span', { class: 'project-bar-label' }, 'Projects'),
+    ...tabs,
+    state.projects.length ? h('button', { class: 'project-all' + (allShown ? ' active' : ''), title: 'Show every project', onclick: showAllProjects }, 'All') : null,
+    h('button', { class: 'tb-btn text project-add', title: 'New project', onclick: showNewProjectDialog }, iconEl('plus'),
+      state.projects.length ? 'Project' : 'New project (group sessions)'),
+  );
+}
+
+function projectMenu(p, x, y) {
+  const i = state.projects.indexOf(p);
+  showMenu(x, y, [
+    { label: 'Show only this project', action: () => showOnlyProject(p.id) },
+    { label: state.hiddenProjects.has(p.id) ? 'Show alongside the others' : 'Hide', action: () => toggleProject(p.id) },
+    '-',
+    { label: 'Rename…', action: () => showRenameProjectDialog(p) },
+    i > 0 && { label: 'Move left', action: () => moveProject(p, -1) },
+    i < state.projects.length - 1 && { label: 'Move right', action: () => moveProject(p, 1) },
+    '-',
+    { label: 'Delete project…', danger: true, action: () => confirmDeleteProject(p) },
+  ]);
+}
+
+function moveProject(p, delta) {
+  const ids = state.projects.map((x) => x.id);
+  const i = ids.indexOf(p.id), j = i + delta;
+  if (j < 0 || j >= ids.length) return;
+  [ids[i], ids[j]] = [ids[j], ids[i]];
+  request('projects.reorder', { ids }).catch((e) => toast(e.message, true));
+}
+
+function projectNameDialog(title, initial, okLabel, onOk) {
+  const name = h('input', { value: initial, placeholder: 'e.g. FiscFlow', spellcheck: 'false', maxlength: '60' });
+  const error = h('div', { class: 'form-error', hidden: true });
+  const ok = async () => {
+    if (!name.value.trim()) { error.hidden = false; error.textContent = 'Enter a name.'; return; }
+    try { await onOk(name.value.trim()); closeModal(); } catch (e) { error.hidden = false; error.textContent = e.message; }
+  };
+  name.addEventListener('keydown', (e) => { if (e.key === 'Enter') ok(); });
+  openModal(title, [field('Name', name), error],
+    [h('button', { class: 'btn', onclick: closeModal }, 'Cancel'), h('button', { class: 'btn primary', onclick: ok }, okLabel)]);
+}
+
+function showNewProjectDialog() {
+  projectNameDialog('New project', '', 'Create', async (name) => {
+    await request('projects.add', { name });
+    if (!state.sessions.length) return;
+    toast(`Project "${name}" created. Put sessions in it with right-click → Move to project…, or pick it when adding a session.`);
+  });
+}
+
+function showRenameProjectDialog(p) {
+  projectNameDialog('Rename project', p.name, 'Rename', (name) => request('projects.rename', { id: p.id, name }));
+}
+
+function confirmDeleteProject(p) {
+  const n = state.sessions.filter((s) => s.project === p.id).length;
+  confirmDialog('Delete project',
+    `Delete the project "${p.name}"?` + (n ? `\nIts ${n} session${n === 1 ? '' : 's'} will be kept and have no project, so ${n === 1 ? 'it shows' : 'they show'} with every project.` : ''),
+    'Delete', true, () => request('projects.remove', { id: p.id }).catch((e) => toast(e.message, true)));
+}
 
 const PAD = 8, GAP = 8, HEADER_H = 30;
 const MAX_WEBGL = 12;
@@ -143,7 +304,13 @@ const TERM_THEME = {
 
 // ------------------------------------------------------------------ sessions & tiles
 
-function syncSessions(list) {
+function syncSessions(list, projects) {
+  state.projects = projects;
+  // Forget hidden projects that no longer exist, so a recreated project with the same id can't start hidden.
+  const known = new Set(projects.map((p) => p.id));
+  for (const id of [...state.hiddenProjects]) if (!known.has(id)) state.hiddenProjects.delete(id);
+  saveHiddenProjects();
+
   const seen = new Set();
   for (const info of list) {
     seen.add(info.id);
@@ -154,6 +321,7 @@ function syncSessions(list) {
     } else {
       Object.assign(s, { name: info.name, directory: info.directory, command: info.command });
     }
+    s.project = info.project || null;
     s.running = info.running || s.running;
   }
   for (const s of [...state.byId.values()]) {
@@ -165,15 +333,12 @@ function syncSessions(list) {
   if (!state.byId.has(state.currentId)) state.currentId = state.sessions[0]?.id ?? null;
   if (state.expandedId && !state.byId.has(state.expandedId)) state.expandedId = null;
 
-  $('#empty').hidden = state.sessions.length > 0;
   layout(true);
+  // Every session starts, visible or not: a project being hidden only hides it from view.
   for (const s of state.sessions) {
-    renderTileHeader(s);
     if (!s.running && !s.started) startSession(s);
   }
-  renderSessionTabs();
-  renderSessionPicker();
-  renderGit();
+  applyProjectFilter(true);
 }
 
 function createSession(info) {
@@ -346,6 +511,20 @@ function renderTileState(s) {
   if (dot) { dot.className = 'dot ' + statusClass(s); dot.title = statusText(s); }
   const tab = $(`.session-tab[data-id="${s.id}"] .dot`);
   if (tab) { tab.className = 'dot ' + statusClass(s); tab.title = statusText(s); }
+  if (s.project) updateProjectIndicators(s.project);
+}
+
+/** Refreshes one project tab's working dot and waiting badge in place (rebuilding the bar would drop keyboard focus). */
+function updateProjectIndicators(projectId) {
+  const name = document.querySelector(`.project-tab[data-id="${projectId}"] .project-name`);
+  if (!name) return;
+  const members = state.sessions.filter((x) => x.project === projectId);
+  const waiting = members.filter((x) => x.attention).length;
+  const working = members.some((x) => x.running && x.act.state === 'working');
+  name.querySelector('.dot')?.remove();
+  name.querySelector('.badge')?.remove();
+  if (working) name.append(h('span', { class: 'dot working', title: 'A session is working' }));
+  if (waiting) name.append(h('span', { class: 'badge', title: `${waiting} session${waiting === 1 ? '' : 's'} waiting for you` }, String(waiting)));
 }
 
 function gitSummary(s) {
@@ -379,7 +558,9 @@ function renderSessionTabs() {
   const host = $('#sessionTabs');
   // The label and the close button are sibling buttons, since one button can't contain another: both stay reachable
   // with Tab, and Enter or Space on the label switches sessions. A click elsewhere on the tab counts as the label's.
-  host.replaceChildren(...state.sessions.map((s, i) => h('div', {
+  // Visible sessions only, grouped by project, with a divider wherever the project changes.
+  const shown = visibleSessions();
+  const tabs = shown.map((s, i) => h('div', {
     class: 'session-tab' + (state.expandedId === s.id ? ' active' : ''),
     'data-id': s.id,
     title: `${s.directory}\n${statusText(s)}\nMiddle-click to close`,
@@ -393,7 +574,16 @@ function renderSessionTabs() {
   }, h('button', { class: 'tab-label' },
     h('span', { class: 'dot ' + statusClass(s) }), s.name, i < 9 ? h('span', { class: 'key' }, `Ctrl+${i + 1}`) : null),
   // Closing a session tab removes the session, after the same confirmation as "Remove session…".
-  h('button', { class: 'icon-btn small tab-close', title: 'Close session…', onclick: () => confirmRemove(s) }, iconEl('close')))));
+  h('button', { class: 'icon-btn small tab-close', title: 'Close session…', onclick: () => confirmRemove(s) }, iconEl('close'))));
+  const withDividers = [];
+  shown.forEach((s, i) => {
+    if (i > 0 && projectIndex(s) !== projectIndex(shown[i - 1])) {
+      const p = state.projects[projectIndex(s)];
+      withDividers.push(h('span', { class: 'session-divider', title: p ? p.name : 'No project: shown with every project' }));
+    }
+    withDividers.push(tabs[i]);
+  });
+  host.replaceChildren(...withDividers);
   $('#btnGrid').classList.toggle('active', !state.expandedId);
   renderDocTabs();
 }
@@ -426,7 +616,10 @@ function layout(instant = false) {
   }
   if (resized) refit();
 
-  const n = state.sessions.length;
+  // Sessions in hidden projects keep running; their tiles are just taken out of the grid.
+  const shown = visibleSessions();
+  for (const s of state.sessions) s.tile.classList.toggle('off-project', !shown.includes(s));
+  const n = shown.length;
   // Pick the column count that gives the largest terminal preview.
   let best = { cols: 1, scale: 0 };
   for (let cols = 1; cols <= n; cols++) {
@@ -437,7 +630,7 @@ function layout(instant = false) {
     if (scale > best.scale) best = { cols, scale, tw, th, rows };
   }
 
-  state.sessions.forEach((s, i) => {
+  shown.forEach((s, i) => {
     const t = s.tile;
     const expanded = state.expandedId === s.id;
     t.classList.toggle('expanded', expanded);
@@ -490,9 +683,10 @@ function collapse() {
 }
 
 function cycle(delta) {
-  if (!state.sessions.length) return;
-  const idx = state.sessions.findIndex((s) => s.id === (state.expandedId ?? state.currentId));
-  const next = state.sessions[(idx + delta + state.sessions.length) % state.sessions.length];
+  const shown = visibleSessions();
+  if (!shown.length) return;
+  const idx = shown.findIndex((s) => s.id === (state.expandedId ?? state.currentId));
+  const next = shown[(idx + delta + shown.length) % shown.length];
   expand(next.id);
 }
 
@@ -516,7 +710,7 @@ function handleShortcut(e) {
     return true;
   }
   if (e.ctrlKey && !e.altKey && !e.shiftKey && /^[1-9]$/.test(k)) {
-    const s = state.sessions[+k - 1];
+    const s = visibleSessions()[+k - 1];   // matches the Ctrl+N hints on the visible tabs
     if (s) expand(s.id);
     return true;
   }
@@ -607,6 +801,7 @@ function sessionMenu(s, x, y) {
     '-',
     { label: 'Resume a different conversation…', action: () => showResumeDialog(s) },
     { label: 'Rename / edit command…', action: () => showEditDialog(s) },
+    { label: 'Move to project…', action: () => showEditDialog(s, 'project') },
     { label: s.running ? 'Restart session' : 'Start session', action: () => (s.running ? confirmRestart(s) : restartSession(s)) },
     s.running && { label: 'Stop session', action: () => confirmStop(s) },
     { label: 'Open folder in Explorer', action: () => request('openFolder', { id: s.id }) },
@@ -630,9 +825,12 @@ function terminalMenu(s, x, y) {
 }
 
 function moveSession(s, delta) {
+  // Swap with the neighbour shown next to it, within its own project group (tabs are grouped by project).
+  const shown = visibleSessions();
+  const neighbour = shown[shown.indexOf(s) + delta];
+  if (!neighbour || projectIndex(neighbour) !== projectIndex(s)) return;
   const ids = state.sessions.map((x) => x.id);
-  const i = ids.indexOf(s.id), j = i + delta;
-  if (j < 0 || j >= ids.length) return;
+  const i = ids.indexOf(s.id), j = ids.indexOf(neighbour.id);
   [ids[i], ids[j]] = [ids[j], ids[i]];
   state.sessions = ids.map((id) => state.byId.get(id));
   post({ type: 'reorder', ids });
@@ -676,20 +874,70 @@ function field(label, input, help) {
   return h('div', { class: 'field' }, h('label', {}, label), input, help && h('div', { class: 'help' }, help));
 }
 
-function showEditDialog(s) {
+/**
+ * A project picker: "No project", each project, or "New project…" (which reveals a name box). resolve() returns the
+ * chosen project id, creating the new project first if needed, or null for no project.
+ */
+function projectField(selectedId) {
+  const NEW = '__new__';
+  const select = h('select', {},
+    h('option', { value: '' }, 'No project (shown with every project)'),
+    state.projects.map((p) => h('option', { value: p.id, selected: p.id === selectedId }, p.name)),
+    h('option', { value: NEW }, 'New project…'));
+  const newName = h('input', { placeholder: 'Project name', spellcheck: 'false', hidden: true, maxlength: '60' });
+  select.addEventListener('change', () => {
+    newName.hidden = select.value !== NEW;
+    if (!newName.hidden) newName.focus();
+  });
+  let created = null;   // so retrying after a failed save doesn't create the project twice
+  return {
+    el: field('Project', h('div', { class: 'stack' }, select, newName)),
+    select,
+    newName,
+    async resolve() {
+      if (select.value !== NEW) return select.value || null;
+      const wanted = newName.value.trim();
+      if (!wanted) throw new Error('Enter a name for the new project.');
+      if (created?.name !== wanted) created = { name: wanted, id: await request('projects.add', { name: wanted }) };
+      return created.id;
+    },
+  };
+}
+
+/** The project new sessions go into: the one you're looking at if exactly one is shown, otherwise none. */
+function defaultProjectId() {
+  const shown = state.projects.filter((p) => !state.hiddenProjects.has(p.id));
+  return shown.length === 1 ? shown[0].id : null;
+}
+
+function showEditDialog(s, focus) {
   const name = h('input', { value: s.name, spellcheck: 'false' });
   const command = h('input', { value: s.command, spellcheck: 'false' });
-  const save = () => {
-    request('updateSession', { id: s.id, name: name.value, command: command.value }).catch((e) => toast(e.message, true));
+  const project = projectField(s.project);
+  const error = h('div', { class: 'form-error', hidden: true });
+  const save = async () => {
+    let projectId;
+    try {
+      projectId = await project.resolve();
+    } catch (e) {
+      error.hidden = false;
+      error.textContent = e.message;
+      return;
+    }
+    request('updateSession', { id: s.id, name: name.value, command: command.value, project: projectId ?? '' }).catch((e) => toast(e.message, true));
     closeModal();
     if (s.running && command.value.trim() !== s.command) toast('Command changes apply the next time the session starts.');
+    if (projectId && state.hiddenProjects.has(projectId)) toast(`"${s.name}" moved to a project that's hidden; tick it above to see the session.`);
   };
-  for (const i of [name, command]) i.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); });
+  for (const i of [name, command, project.newName]) i.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); });
   openModal('Edit session', [
     field('Name', name),
     field('Command', command, 'For example: claude, claude --continue, claude --model opus'),
+    project.el,
     field('Folder', h('input', { value: s.directory, readonly: true })),
+    error,
   ], [h('button', { class: 'btn', onclick: closeModal }, 'Cancel'), h('button', { class: 'btn primary', onclick: save }, 'Save')]);
+  if (focus === 'project') setTimeout(() => project.select.focus(), 30);
 }
 
 const leafName = (path) => (path || '').split(/[\\/]/).filter(Boolean).pop() || path;
@@ -747,6 +995,7 @@ function showAddDialog(mode = 'new') {
   const wtHost = h('div', { class: 'field', hidden: true });
   const error = h('div', { class: 'form-error', hidden: true });
   const pickerHost = h('div', { class: 'field' });
+  const project = projectField(defaultProjectId());
 
   const loadWorktrees = debounce(async () => {
     const d = dir.value.trim();
@@ -792,7 +1041,11 @@ function showAddDialog(mode = 'new') {
     }
     const before = new Set(state.sessions.map((x) => x.id));
     try {
+      const projectId = await project.resolve();
+      for (const item of list) item.project = projectId ?? '';
       await request('addSessions', { sessions: list });
+      // Make sure the new session is on screen even if its project was hidden.
+      if (projectId && state.hiddenProjects.has(projectId)) toggleProject(projectId);
       store.set('lastDir', d);
       if (mode === 'new') store.set('lastCommand', cmd);
       closeModal();
@@ -803,7 +1056,7 @@ function showAddDialog(mode = 'new') {
       error.textContent = e.message;
     }
   };
-  for (const i of [dir, name, command]) i.addEventListener('keydown', (e) => { if (e.key === 'Enter') add(); });
+  for (const i of [dir, name, command, project.newName]) i.addEventListener('keydown', (e) => { if (e.key === 'Enter') add(); });
 
   const segNew = h('button', { class: 'seg-btn' }, 'New conversation');
   const segResume = h('button', { class: 'seg-btn' }, 'Resume existing conversation');
@@ -844,6 +1097,7 @@ function showAddDialog(mode = 'new') {
     field('Folder (repository or worktree)', h('div', { class: 'inline' }, dir, browse)),
     field('Name', name),
     field('Command', command, 'Runs in the folder above. For example: claude, claude --continue, claude --resume <id>'),
+    project.el,
     wtHost,
     error,
   ], [h('button', { class: 'btn', onclick: closeModal }, 'Cancel'), h('button', { class: 'btn primary', onclick: add }, 'Add')]);
@@ -909,7 +1163,7 @@ function showGit(id) {
 
 function renderSessionPicker() {
   const sel = $('#gitSession');
-  sel.replaceChildren(...state.sessions.map((s) => h('option', { value: s.id, selected: s.id === state.currentId }, `${s.name}  —  ${s.directory}`)));
+  sel.replaceChildren(...visibleSessions().map((s) => h('option', { value: s.id, selected: s.id === state.currentId }, `${s.name}  —  ${s.directory}`)));
 }
 
 $('#gitSession').addEventListener('change', (e) => showGit(e.target.value));
@@ -1484,7 +1738,7 @@ function cycleDoc(delta) {
 
 function renderDocTabs() {
   const ex = state.byId.get(state.expandedId);
-  const waiting = state.sessions.filter((s) => s.attention).length;
+  const waiting = visibleSessions().filter((s) => s.attention).length;   // hidden projects show theirs on the project tabs
   const termTab = h('div', {
     class: 'doc-tab terminal' + (docs.active === 'terminal' ? ' active' : ''),
     title: 'Terminals (Shift+Esc from a diff, Ctrl+PgUp/PgDn to switch tabs)',

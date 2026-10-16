@@ -22,6 +22,7 @@ internal sealed class MainForm : Form
     private readonly WebView2 webView = new() { Dock = DockStyle.Fill, DefaultBackgroundColor = Color.FromArgb(0x1f, 0x1f, 0x1f) };
     private readonly Dictionary<string, TerminalSession> sessions = [];
     private readonly List<string> order = [];
+    private readonly List<ProjectInfo> projects = ProjectStore.Load();
     private readonly Dictionary<string, StringBuilder> pendingOutput = [];
     private readonly System.Windows.Forms.Timer flushTimer = new() { Interval = 16 };
     private bool webReady;
@@ -40,7 +41,12 @@ internal sealed class MainForm : Form
         flushTimer.Tick += (_, _) => FlushOutput();
         flushTimer.Start();
 
-        foreach (var info in SessionStore.Load()) AddSessionRuntime(info);
+        foreach (var info in SessionStore.Load())
+        {
+            // A session whose project no longer exists (e.g. projects.json was lost) just has no project.
+            if (info.Project != null && !projects.Any(p => p.Id == info.Project)) info.Project = null;
+            AddSessionRuntime(info);
+        }
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -134,15 +140,25 @@ internal sealed class MainForm : Form
     private object SessionList() => new
     {
         type = "sessions",
+        projects = projects.Select(p => new { id = p.Id, name = p.Name }),
         sessions = order.Select(id => sessions[id]).Select(s => new
         {
             id = s.Id,
             name = s.Info.Name,
             directory = s.Info.Directory,
             command = s.Info.Command,
+            project = s.Info.Project,
             running = s.IsRunning,
         }),
     };
+
+    /// <summary>A project id from the page, or null for "no project" (empty or unknown ids included).</summary>
+    private string? ProjectId(JsonElement e, string name = "project") =>
+        OptStr(e, name) is { Length: > 0 } id && projects.Any(p => p.Id == id) ? id : null;
+
+    private static string ProjectName(JsonElement msg) =>
+        Str(msg, "name").Trim() is { Length: > 0 } name ? (name.Length > 60 ? name[..60] : name)
+            : throw new ArgumentException("A project needs a name.");
 
     private static object StatusMessage(TerminalSession s, GitStatus st) => new
     {
@@ -264,7 +280,7 @@ internal sealed class MainForm : Form
             case "addSessions":
             {
                 var items = msg.GetProperty("sessions").EnumerateArray()
-                    .Select(item => (Dir: Str(item, "directory"), Name: Str(item, "name"), Command: Str(item, "command")))
+                    .Select(item => (Dir: Str(item, "directory"), Name: Str(item, "name"), Command: Str(item, "command"), Project: ProjectId(item)))
                     .ToList();
                 // All or nothing: check every folder before adding any. Adding as we went left the earlier sessions
                 // added but unsaved and unshown after a failure, and a retry then added them a second time.
@@ -277,6 +293,7 @@ internal sealed class MainForm : Form
                         Name = string.IsNullOrWhiteSpace(item.Name) ? Path.GetFileName(item.Dir.TrimEnd('\\')) : item.Name.Trim(),
                         Directory = item.Dir,
                         Command = string.IsNullOrWhiteSpace(item.Command) ? "claude" : item.Command.Trim(),
+                        Project = item.Project,
                     });
                 }
                 SaveSessions();
@@ -288,8 +305,52 @@ internal sealed class MainForm : Form
                 var s = Get(msg);
                 if (msg.TryGetProperty("name", out var n) && !string.IsNullOrWhiteSpace(n.GetString())) s.Info.Name = n.GetString()!.Trim();
                 if (msg.TryGetProperty("command", out var c) && !string.IsNullOrWhiteSpace(c.GetString())) s.Info.Command = c.GetString()!.Trim();
+                if (msg.TryGetProperty("project", out _)) s.Info.Project = ProjectId(msg);
                 SaveSessions();
                 Post(SessionList());
+                return null;
+            }
+
+            // ---- projects (a grouping of sessions; deleting one never removes sessions)
+            case "projects.add":
+            {
+                var project = new ProjectInfo { Name = ProjectName(msg) };
+                projects.Add(project);
+                ProjectStore.Save(projects);
+                Post(SessionList());
+                return project.Id;
+            }
+            case "projects.rename":
+            {
+                var project = projects.FirstOrDefault(p => p.Id == Str(msg, "id")) ?? throw new KeyNotFoundException("Unknown project");
+                project.Name = ProjectName(msg);
+                ProjectStore.Save(projects);
+                Post(SessionList());
+                return null;
+            }
+            case "projects.remove":
+            {
+                var id = Str(msg, "id");
+                if (projects.RemoveAll(p => p.Id == id) == 0) return null;
+                // Its sessions are kept and simply have no project any more. Sessions first: if saving projects
+                // then fails, the sessions are already ungrouped rather than pointing at a missing project.
+                foreach (var s in sessions.Values.Where(s => s.Info.Project == id)) s.Info.Project = null;
+                SaveSessions();
+                ProjectStore.Save(projects);
+                Post(SessionList());
+                return null;
+            }
+            case "projects.reorder":
+            {
+                var ids = msg.GetProperty("ids").EnumerateArray().Select(x => x.GetString()!).ToList();
+                if (ids.Count == projects.Count && ids.ToHashSet().SetEquals(projects.Select(p => p.Id)))
+                {
+                    var byId = projects.ToDictionary(p => p.Id);
+                    projects.Clear();
+                    projects.AddRange(ids.Select(i => byId[i]));
+                    ProjectStore.Save(projects);
+                    Post(SessionList());
+                }
                 return null;
             }
             case "removeSession":
