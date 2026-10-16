@@ -461,6 +461,46 @@ internal sealed class MainForm : Form
                 if (!result.Ok) throw new InvalidOperationException(string.IsNullOrEmpty(result.Error) ? result.Text : result.Error);
                 return result.Text.Trim();
             }
+            case "git.pr":
+            {
+                // The open pull request for the session's branch (GitHub or Azure DevOps), plus links for its menu.
+                var s = Get(msg);
+                var root = GitDir(msg);
+                var branch = (await GitService.GetStatusAsync(root)).Branch;
+                if (branch == null || branch.StartsWith('(')) return null;
+                var host = await PullRequestService.GetHostAsync(root, branch);
+                if (host == null) return null;
+                PullRequestInfo? pr = null;
+                try { pr = await PullRequestService.FindAsync(root, host, branch); }
+                catch (Exception) { /* offline, timed out or refused: just no chip */ }
+                return new
+                {
+                    branch,
+                    host = host.IsGitHub ? "GitHub" : "Azure DevOps",
+                    webUrl = host.WebUrl,
+                    pullRequestsUrl = host.PullRequestsUrl,
+                    newUrl = host.NewPullRequestUrl(branch),
+                    pr = pr == null ? null : new { number = pr.Number, title = pr.Title, url = pr.Url, draft = pr.IsDraft },
+                };
+            }
+            case "git.fetch":
+            case "git.pull":
+            case "git.push":
+            {
+                var s = Get(msg);
+                var dir = GitDir(msg);
+                var result = type switch
+                {
+                    "git.fetch" => await GitService.FetchAsync(dir),
+                    "git.pull" => await GitService.PullAsync(dir),
+                    _ => await GitService.PushAsync(dir),
+                };
+                await s.RefreshStatusAsync();   // ahead/behind and history follow
+                // git reports progress and results on stderr; stdout carries the rest (e.g. pull's file summary).
+                var text = string.Join('\n', new[] { result.Error, result.Text.Trim() }.Where(t => !string.IsNullOrWhiteSpace(t)));
+                if (!result.Ok) throw new InvalidOperationException(text.Length > 0 ? text : $"{type[4..]} failed");
+                return text;
+            }
             case "openFile":
             {
                 var root = GitDir(msg);

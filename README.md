@@ -84,6 +84,10 @@ Plain `Esc` always goes to the terminal, because Claude Code uses it to interrup
 
 **Git panel:** shows the selected session's repository. *Git Changes* has staged/unstaged trees, stage/unstage, commit, and VS-style **Undo Changes** (right-click a file or folder, or the ↶ on a section header; new files go to the Recycle Bin; it refuses rather than guesses if the files changed after you confirmed, or if restoring would overwrite a file that now exists at a deleted or renamed file's old name). *Git Repository* has outgoing commits and history, plus each commit's files. Click any file to open a diff. Open diffs refresh as the session edits the file.
 
+**Fetch, Pull, Push and Sync** sit on the Git panel's toolbar, next to the branch and its outgoing/incoming counts. Pull only fast-forwards: it never creates a merge commit or leaves conflicts in a worktree a session may be editing, and stops with git's explanation if the branch has diverged. Push never forces; a branch with no upstream is published to `origin` and tracked. Sync is a pull followed by a push. Each runs for up to 5 minutes, long enough to sign in through Git Credential Manager.
+
+**Pull request chip:** when the branch has an open pull request on GitHub or Azure DevOps, a **PR 958 ▾** chip appears next to it, with *Open in Browser*, *Refresh*, *View Pull Requests* and *New Pull Request*. To find it the app calls that service's API with the credential Git Credential Manager already holds for the remote: it is only sent to that service over HTTPS, the lookup never opens a sign-in window (without a stored credential there's simply no chip), and results are cached for 3 minutes.
+
 **Resuming:** the picker reads Claude Code's saved conversations from `~/.claude/projects`. A resumed session keeps `claude --resume <id>` as its command, so it reopens the same conversation every time the app starts. Close the conversation in any other terminal first. Conversations updated in the last few minutes are tagged *active now* as a reminder.
 
 ## License

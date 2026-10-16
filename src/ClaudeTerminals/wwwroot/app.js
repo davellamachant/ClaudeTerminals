@@ -53,6 +53,11 @@ const PATHS = {
   terminal: 'M2 3h12v10H2zM4.5 6l2 2-2 2M8 10.5h3.5',
   restart: 'M3 8a5 5 0 1 0 1.5-3.6M3 2.5v2.5h2.5',
   undo: 'M3.5 6.5h6.5a3.25 3.25 0 0 1 0 6.5H7M3.5 6.5l3-3M3.5 6.5l3 3',
+  fetch: 'M8 2v1.6M8 5v1.6M8 8v1.6M5 9l3 3 3-3M3 14h10',
+  pull: 'M8 2v9M4.5 7.5L8 11l3.5-3.5M3 14h10',
+  push: 'M8 14V5M4.5 8.5L8 5l3.5 3.5M3 2h10',
+  sync: 'M12.8 6.2A5 5 0 0 0 3.9 5M3.5 2.5V5H6M3.2 9.8a5 5 0 0 0 8.9 1.2M12.5 13.5V11H10',
+  pr: 'M4 4.5a1.5 1.5 0 1 0 0-.01M4 6v4.5M4 13a1.5 1.5 0 1 0 0-.01M12 13a1.5 1.5 0 1 0 0-.01M12 11.5V6.5A2 2 0 0 0 10 4.5H7M8.5 3 7 4.5 8.5 6',
   checkOn: 'M2.5 2.5h11v11h-11zM5 8.2l2 2 4-4.4',
   checkOff: 'M2.5 2.5h11v11h-11z',
 };
@@ -1306,12 +1311,115 @@ function renderGit() {
   else renderChanges(s, body);
 }
 
+/**
+ * The Git panel's toolbar, after Visual Studio's: the branch with its outgoing/incoming counts, the branch's open pull
+ * request (PR 958 ▾), and Fetch, Pull, Push, Sync and a ⋯ menu.
+ */
 function branchLine(s) {
   const g = s.git;
-  return h('div', { class: 'git-branch', title: g.upstream ? `Tracking ${g.upstream}` : 'No upstream branch' },
-    iconEl('branch'), h('span', { class: 'name' }, g.branch || '(unknown)'),
-    g.upstream && h('span', { class: 'ab', title: `${g.ahead} outgoing / ${g.behind} incoming` },
-      iconEl('up'), String(g.ahead), ' ', iconEl('down'), String(g.behind)));
+  const busy = s.remoteBusy;   // 'fetch' | 'pull' | 'push' | 'sync' while one is running for this session
+  const onBranch = !!g.branch && !g.branch.startsWith('(');
+  ensurePullRequest(s);
+  const pr = s.prInfo?.branch === g.branch ? s.prInfo.data : null;
+
+  const tool = (op, iconName, title, enabled = true) => h('button', {
+    class: 'icon-btn remote-btn' + (busy === op ? ' busy' : ''),
+    title: busy === op ? `${title.split(':')[0]}: running…` : title,
+    disabled: !!busy || !enabled,
+    onclick: () => remoteOp(s, op),
+  }, iconEl(iconName));
+  const ahead = g.ahead, behind = g.behind;
+  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+  return h('div', { class: 'git-toolbar' },
+    h('div', { class: 'git-branch', title: g.upstream ? `Tracking ${g.upstream}` : 'No upstream branch' },
+      iconEl('branch'), h('span', { class: 'name' }, g.branch || '(unknown)'),
+      g.upstream && h('span', { class: 'ab', title: `${plural(ahead, 'outgoing commit')} / ${plural(behind, 'incoming commit')}` },
+        iconEl('up'), String(ahead), ' ', iconEl('down'), String(behind)),
+      pr && h('button', {
+        class: 'pr-chip' + (pr.pr.draft ? ' draft' : ''),
+        title: `${pr.pr.draft ? 'Draft pull request' : 'Pull request'} #${pr.pr.number}: ${pr.pr.title}\n${pr.host}`,
+        onclick: (e) => { const r = e.currentTarget.getBoundingClientRect(); pullRequestMenu(s, pr, r.left, r.bottom + 2); },
+      }, iconEl('pr'), `PR ${pr.pr.number}`, iconEl('chevD'))),
+    h('div', { class: 'git-tools' },
+      tool('fetch', 'fetch', 'Fetch: download new commits and branches from the remote, without changing your files'),
+      tool('pull', 'pull', g.upstream
+        ? `Pull: bring in ${plural(behind, 'incoming commit')} from ${g.upstream}. Fast-forward only: never merges`
+        : 'Pull: this branch has no upstream yet (push it first)', !!g.upstream && onBranch),
+      tool('push', 'push', g.upstream
+        ? `Push: send ${plural(ahead, 'outgoing commit')} to ${g.upstream}. Never forced`
+        : 'Push: publish this branch to the remote and track it', onBranch),
+      tool('sync', 'sync', 'Sync: pull, then push', !!g.upstream && onBranch),
+      h('button', {
+        class: 'icon-btn', title: 'More Git actions',
+        onclick: (e) => { const r = e.currentTarget.getBoundingClientRect(); gitMoreMenu(s, r.left, r.bottom + 2); },
+      }, iconEl('more'))));
+}
+
+const PR_CACHE_MS = 3 * 60_000;
+
+/** Looks up the branch's open pull request in the background (cached a few minutes), re-rendering when it arrives. */
+function ensurePullRequest(s, force = false) {
+  const branch = s.git?.branch;
+  if (!branch || branch.startsWith('(') || s.prLoading) return;
+  if (!force && s.prInfo?.branch === branch && Date.now() - s.prInfo.at < PR_CACHE_MS) return;
+  s.prLoading = true;
+  request('git.pr', { id: s.id })
+    .then((data) => { s.prInfo = { branch, at: Date.now(), data: data || null }; })
+    .catch(() => { s.prInfo = { branch, at: Date.now(), data: null }; })
+    .finally(() => {
+      s.prLoading = false;
+      if (currentSession() === s) renderGit();
+    });
+}
+
+function pullRequestMenu(s, info, x, y) {
+  showMenu(x, y, [
+    { label: 'Open in Browser', action: () => request('openUrl', { uri: info.pr.url }) },
+    { label: 'Refresh', action: () => ensurePullRequest(s, true) },
+    '-',
+    { label: 'View Pull Requests', action: () => request('openUrl', { uri: info.pullRequestsUrl }) },
+    { label: 'New Pull Request', action: () => request('openUrl', { uri: info.newUrl }) },
+  ]);
+}
+
+function gitMoreMenu(s, x, y) {
+  const info = s.prInfo?.data;
+  const free = !s.remoteBusy;
+  showMenu(x, y, [
+    free && { label: 'Fetch', action: () => remoteOp(s, 'fetch') },
+    free && s.git.upstream && { label: 'Pull', action: () => remoteOp(s, 'pull') },
+    free && { label: 'Push', action: () => remoteOp(s, 'push') },
+    free && s.git.upstream && { label: 'Sync (pull, then push)', action: () => remoteOp(s, 'sync') },
+    info && '-',
+    info && { label: `Open repository in browser (${info.host})`, action: () => request('openUrl', { uri: info.webUrl }) },
+    info && { label: 'View Pull Requests', action: () => request('openUrl', { uri: info.pullRequestsUrl }) },
+    info && !info.pr && { label: 'New Pull Request', action: () => request('openUrl', { uri: info.newUrl }) },
+    '-',
+    { label: 'Refresh', action: () => { request('git.refresh', { id: s.id }).catch((e) => toast(e.message, true)); ensurePullRequest(s, true); } },
+  ]);
+}
+
+/** Runs fetch, pull, push or sync (pull then push) for a session, one at a time; the result goes to the info bar. */
+async function remoteOp(s, op) {
+  if (s.remoteBusy) return;
+  s.remoteBusy = op;
+  renderGit();
+  const done = { fetch: 'Fetched.', pull: 'Pulled.', push: 'Pushed.', sync: 'Synced.' }[op];
+  try {
+    const steps = op === 'sync' ? ['pull', 'push'] : [op];
+    const outputs = [];
+    for (const step of steps) outputs.push((await request('git.' + step, { id: s.id }))?.trim());
+    const out = outputs.filter(Boolean).join('\n');
+    s.info = { text: out ? `${done}\n${out}` : done };
+    if (op === 'push' || op === 'sync') ensurePullRequest(s, true);   // a first push may have just made "New Pull Request" relevant
+  } catch (e) {
+    s.info = { text: e.message, error: true };
+  } finally {
+    s.remoteBusy = null;
+  }
+  if (currentSession() === s && state.gitTab !== 'changes') toast(s.info.text, !!s.info.error);   // the info bar is on Git Changes
+  renderGit();
 }
 
 function renderChanges(s, body) {
