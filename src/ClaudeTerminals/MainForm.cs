@@ -140,7 +140,7 @@ internal sealed class MainForm : Form
     private object SessionList() => new
     {
         type = "sessions",
-        projects = projects.Select(p => new { id = p.Id, name = p.Name }),
+        projects = projects.Select(p => new { id = p.Id, name = p.Name, color = p.Color }),
         sessions = order.Select(id => sessions[id]).Select(s => new
         {
             id = s.Id,
@@ -314,7 +314,7 @@ internal sealed class MainForm : Form
             // ---- projects (a grouping of sessions; deleting one never removes sessions)
             case "projects.add":
             {
-                var project = new ProjectInfo { Name = ProjectName(msg) };
+                var project = new ProjectInfo { Name = ProjectName(msg), Color = ProjectInfo.NormalizeColor(OptStr(msg, "color")) };
                 projects.Add(project);
                 ProjectStore.Save(projects);
                 Post(SessionList());
@@ -324,6 +324,8 @@ internal sealed class MainForm : Form
             {
                 var project = projects.FirstOrDefault(p => p.Id == Str(msg, "id")) ?? throw new KeyNotFoundException("Unknown project");
                 project.Name = ProjectName(msg);
+                // Sent only by the edit dialog: a missing "color" leaves it alone, null or "" means automatic.
+                if (msg.TryGetProperty("color", out _)) project.Color = ProjectInfo.NormalizeColor(OptStr(msg, "color"));
                 ProjectStore.Save(projects);
                 Post(SessionList());
                 return null;

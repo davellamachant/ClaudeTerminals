@@ -67,7 +67,7 @@ winget install JRSoftware.InnoSetup   # once
 | Show one project | Click its name in the Projects row |
 | Show several projects | Tick or untick each project's checkbox; **All** shows every project, **None** hides them all |
 | Put a session in a project | Pick the project when adding the session, or right-click its tab → *Move to project…* |
-| Rename, reorder or delete a project | Right-click the project. Deleting it keeps its sessions; they just have no project |
+| Rename, recolour, reorder or delete a project | Right-click the project. *Edit project* sets its name and colour (a swatch, a custom colour or Automatic). Deleting it keeps its sessions; they just have no project |
 | Terminal font size | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
 | Newline in Claude prompt | `Shift+Enter` |
 | Copy / paste | `Ctrl+C` with a selection / `Ctrl+V` (or right-click when expanded) |
@@ -79,7 +79,7 @@ Plain `Esc` always goes to the terminal, because Claude Code uses it to interrup
 
 **Tile status dots:** green = idle, pulsing blue = working, orange = finished working while you weren't watching (or rang the bell).
 
-**Projects** group sessions, for example everything for one product across its worktrees. Only the ticked projects' sessions are shown. Sessions with no project are grouped under **Unknown**, which you tick and untick like a project. Hidden sessions keep running, and each project tab counts its sessions waiting for you, so a hidden project still gets noticed.
+**Projects** group sessions, for example everything for one product across its worktrees. Only the ticked projects' sessions are shown. Sessions with no project are grouped under **Unknown**, which you tick and untick like a project. Each session's tab and tile carry a tag in its project's colour, so two sessions with the same name in different projects can be told apart. Hidden sessions keep running, and each project tab counts its sessions waiting for you, so a hidden project still gets noticed.
 
 **Git panel:** shows the selected session's repository. *Git Changes* has staged/unstaged trees, stage/unstage, commit, and VS-style **Undo Changes** (right-click a file or folder, or the ↶ on a section header; new files go to the Recycle Bin; it refuses rather than guesses if the files changed after you confirmed, or if restoring would overwrite a file that now exists at a deleted or renamed file's old name). *Git Repository* has outgoing commits and history, plus each commit's files. Click any file to open a diff. Open diffs refresh as the session edits the file.
 

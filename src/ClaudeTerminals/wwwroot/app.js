@@ -157,22 +157,23 @@ const allGroups = () => [...state.projects.map((p) => p.id), UNKNOWN];
 
 const projectOf = (s) => state.projects.find((p) => p.id === s.project) || null;
 
-// A colour per project, from its id rather than its position, so reordering or renaming never changes it.
 const PROJECT_COLORS = ['#4f9cf5', '#e8a23b', '#5cc48a', '#d16fd6', '#e5675f', '#47c1c9', '#c9b641', '#9b8cf0'];
-function projectColor(id) {
+
+/** The automatic colour, from the id rather than the position, so reordering or renaming never changes it. */
+function autoProjectColor(id) {
   let hash = 0;
   for (const c of id) hash = (hash * 31 + c.charCodeAt(0)) >>> 0;
   return PROJECT_COLORS[hash % PROJECT_COLORS.length];
 }
 
-/** Tags only earn their space when sessions from more than one group are on screen; otherwise they'd all say the same. */
-const showProjectTags = () => new Set(visibleSessions().map(groupOf)).size > 1;
+/** The project's chosen colour (the host only ever sends #rrggbb), or its automatic one. */
+const projectColor = (p) => p.color || autoProjectColor(p.id);
 
-/** A coloured tag naming the session's project (none for Unknown, or when only one group is visible). */
-function projectTag(s, tagsShown = showProjectTags()) {
+/** A coloured tag naming the session's project; sessions in Unknown have none. */
+function projectTag(s) {
   const p = projectOf(s);
-  if (!p || !tagsShown) return null;
-  return h('span', { class: 'proj-tag', style: `--proj:${projectColor(p.id)}`, title: `Project: ${p.name}` }, p.name);
+  if (!p) return null;
+  return h('span', { class: 'proj-tag', style: `--proj:${projectColor(p)}`, title: `Project: ${p.name}` }, p.name);
 }
 
 /** Visible sessions, grouped by project in project order (no project last), keeping their own order within a group. */
@@ -256,7 +257,7 @@ function renderProjectBar() {
     const what = p.unknown ? 'sessions with no project' : p.name;
     return h('div', {
       class: 'project-tab' + (shown ? ' shown' : '') + (p.unknown ? ' unknown' : ''),
-      style: p.unknown ? null : `--proj:${projectColor(p.id)}`,
+      style: p.unknown ? null : `--proj:${projectColor(p)}`,
       'data-id': p.id,
       oncontextmenu: (e) => { e.preventDefault(); projectMenu(p, e.clientX, e.clientY); },
     },
@@ -298,7 +299,7 @@ function projectMenu(p, x, y) {
     { label: 'Show only this project', action: () => showOnlyProject(p.id) },
     { label: state.hiddenProjects.has(p.id) ? 'Show alongside the others' : 'Hide', action: () => toggleProject(p.id) },
     '-',
-    { label: 'Rename…', action: () => showRenameProjectDialog(p) },
+    { label: 'Edit project (name, colour)…', action: () => showEditProjectDialog(p) },
     i > 0 && { label: 'Move left', action: () => moveProject(p, -1) },
     i < state.projects.length - 1 && { label: 'Move right', action: () => moveProject(p, 1) },
     '-',
@@ -314,28 +315,60 @@ function moveProject(p, delta) {
   request('projects.reorder', { ids }).catch((e) => toast(e.message, true));
 }
 
-function projectNameDialog(title, initial, okLabel, onOk) {
-  const name = h('input', { value: initial, placeholder: 'e.g. FiscFlow', spellcheck: 'false', maxlength: '60' });
+/**
+ * Name and colour for a new or existing project. The colour is null for "Automatic" (derived from the id; for a project
+ * not created yet, previewed with the first palette colour) or a #rrggbb picked from the swatches or the custom picker.
+ */
+function projectDialog(title, initial, okLabel, onOk) {
+  const name = h('input', { value: initial.name, placeholder: 'e.g. FiscFlow', spellcheck: 'false', maxlength: '60' });
   const error = h('div', { class: 'form-error', hidden: true });
+  let color = initial.color ?? null;
+  const automatic = initial.id ? autoProjectColor(initial.id) : PROJECT_COLORS[0];
+
+  const preview = h('span', { class: 'proj-tag' });
+  const custom = h('input', { type: 'color', class: 'swatch-custom-input', tabindex: '-1' });
+  const customBtn = h('button', { class: 'swatch swatch-custom', title: 'Custom colour…', onclick: () => custom.click() }, '…');
+  const autoBtn = h('button', { class: 'swatch-auto', title: 'Use the automatic colour', onclick: () => pick(null) }, 'Automatic');
+  const swatches = PROJECT_COLORS.map((c) => h('button', { class: 'swatch', style: `--swatch:${c}`, title: c, onclick: () => pick(c) }));
+  custom.addEventListener('input', () => pick(custom.value));
+
+  function pick(c) {
+    color = c;
+    const shown = c ?? automatic;
+    for (const s of swatches) s.classList.toggle('selected', c !== null && s.title === c);
+    const isCustom = c !== null && !PROJECT_COLORS.includes(c);
+    customBtn.classList.toggle('selected', isCustom);
+    customBtn.style.setProperty('--swatch', isCustom ? c : 'transparent');
+    autoBtn.classList.toggle('selected', c === null);
+    custom.value = shown;
+    preview.style.setProperty('--proj', shown);
+    preview.textContent = name.value.trim() || 'Project';
+  }
+  name.addEventListener('input', () => pick(color));
+
   const ok = async () => {
     if (!name.value.trim()) { error.hidden = false; error.textContent = 'Enter a name.'; return; }
-    try { await onOk(name.value.trim()); closeModal(); } catch (e) { error.hidden = false; error.textContent = e.message; }
+    try { await onOk(name.value.trim(), color); closeModal(); } catch (e) { error.hidden = false; error.textContent = e.message; }
   };
   name.addEventListener('keydown', (e) => { if (e.key === 'Enter') ok(); });
-  openModal(title, [field('Name', name), error],
-    [h('button', { class: 'btn', onclick: closeModal }, 'Cancel'), h('button', { class: 'btn primary', onclick: ok }, okLabel)]);
+  openModal(title, [
+    field('Name', name),
+    field('Colour', h('div', { class: 'swatch-row' }, autoBtn, swatches, customBtn, custom, preview)),
+    error,
+  ], [h('button', { class: 'btn', onclick: closeModal }, 'Cancel'), h('button', { class: 'btn primary', onclick: ok }, okLabel)]);
+  pick(color);
 }
 
 function showNewProjectDialog() {
-  projectNameDialog('New project', '', 'Create', async (name) => {
-    await request('projects.add', { name });
+  projectDialog('New project', { name: '', color: null }, 'Create', async (name, color) => {
+    await request('projects.add', { name, color });
     if (!state.sessions.length) return;
     toast(`Project "${name}" created. Put sessions in it with right-click → Move to project…, or pick it when adding a session.`);
   });
 }
 
-function showRenameProjectDialog(p) {
-  projectNameDialog('Rename project', p.name, 'Rename', (name) => request('projects.rename', { id: p.id, name }));
+function showEditProjectDialog(p) {
+  projectDialog('Edit project', p, 'Save', (name, color) => request('projects.rename', { id: p.id, name, color: color ?? '' }));
 }
 
 function confirmDeleteProject(p) {
@@ -614,7 +647,6 @@ function renderSessionTabs() {
   // with Tab, and Enter or Space on the label switches sessions. A click elsewhere on the tab counts as the label's.
   // Visible sessions only, grouped by project, with a divider wherever the project changes.
   const shown = visibleSessions();
-  const tagsShown = showProjectTags();
   const tabs = shown.map((s, i) => h('div', {
     class: 'session-tab' + (state.expandedId === s.id ? ' active' : ''),
     'data-id': s.id,
@@ -627,7 +659,7 @@ function renderSessionTabs() {
     onauxclick: (e) => { if (e.button === 1) confirmRemove(s); },
     oncontextmenu: (e) => { e.preventDefault(); sessionMenu(s, e.clientX, e.clientY); },
   }, h('button', { class: 'tab-label' },
-    h('span', { class: 'dot ' + statusClass(s) }), s.name, projectTag(s, tagsShown), i < 9 ? h('span', { class: 'key' }, `Ctrl+${i + 1}`) : null),
+    h('span', { class: 'dot ' + statusClass(s) }), s.name, projectTag(s), i < 9 ? h('span', { class: 'key' }, `Ctrl+${i + 1}`) : null),
   // Closing a session tab removes the session, after the same confirmation as "Remove session…".
   h('button', { class: 'icon-btn small tab-close', title: 'Close session…', onclick: () => confirmRemove(s) }, iconEl('close'))));
   const withDividers = [];

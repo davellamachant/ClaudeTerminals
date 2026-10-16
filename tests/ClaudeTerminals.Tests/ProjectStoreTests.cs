@@ -55,6 +55,24 @@ public sealed class ProjectStoreTests : IDisposable
     }
 
     [Fact]
+    public void Colours_round_trip_and_anything_not_rrggbb_means_automatic()
+    {
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(File_, """
+            [
+              { "Id": "a", "Name": "Picked", "Color": "#E8A23B" },
+              { "Id": "b", "Name": "Automatic" },
+              { "Id": "c", "Name": "Css injection", "Color": "red;background:url(x)" },
+              { "Id": "d", "Name": "Short hex", "Color": "#abc" }
+            ]
+            """);
+
+        var colours = ProjectStore.Load(File_).Select(p => p.Color).ToList();
+
+        Assert.Equal(new[] { "#e8a23b", null, null, null }, colours);
+    }
+
+    [Fact]
     public void Sessions_saved_before_projects_existed_load_with_no_project()
     {
         var old = """[ { "Id": "x", "Name": "Alice", "Directory": "D:\\repo", "Command": "claude" } ]""";

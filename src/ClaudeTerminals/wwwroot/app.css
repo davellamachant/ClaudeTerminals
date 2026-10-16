@@ -387,3 +387,20 @@ textarea.commit-msg { resize: vertical; min-height: 54px; height: 54px; user-sel
 .doc-tab.active .proj-tag { color: #fff; background: color-mix(in srgb, var(--proj) 55%, transparent); }
 .project-tab.shown:not(.unknown) { border-color: var(--proj); }
 .project-tab.shown:not(.unknown) .project-check { color: var(--proj); }
+
+/* Project colour picker */
+.swatch-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.swatch {
+  width: 22px; height: 22px; border-radius: 50%; border: 2px solid transparent; padding: 0; cursor: pointer;
+  background: var(--swatch); box-shadow: 0 0 0 1px var(--border) inset;
+}
+.swatch:hover { transform: scale(1.1); }
+.swatch.selected { border-color: var(--text); }
+.swatch-custom { color: var(--text-dim); font-weight: 700; line-height: 1; background: var(--swatch, transparent); }
+.swatch-custom.selected { color: transparent; }
+.swatch-custom-input { position: absolute; width: 0; height: 0; opacity: 0; pointer-events: none; }
+.swatch-auto {
+  height: 24px; padding: 0 10px; border-radius: 12px; border: 1px solid var(--border); background: none; color: var(--text-dim); cursor: pointer;
+}
+.swatch-auto.selected { border-color: var(--text); color: var(--text); }
+.swatch-row .proj-tag { margin-left: 8px; }
