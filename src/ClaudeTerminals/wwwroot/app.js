@@ -258,7 +258,6 @@ function renderProjectBar() {
     const what = p.unknown ? 'sessions with no project' : p.name;
     return h('div', {
       class: 'project-tab' + (shown ? ' shown' : '') + (p.unknown ? ' unknown' : ''),
-      draggable: p.unknown ? null : 'true',   // Unknown always stays last
       style: p.unknown ? null : `--proj:${projectColor(p)}`,
       'data-id': p.id,
       oncontextmenu: (e) => { e.preventDefault(); projectMenu(p, e.clientX, e.clientY); },
@@ -652,7 +651,6 @@ function renderSessionTabs() {
   const shown = visibleSessions();
   const tabs = shown.map((s, i) => h('div', {
     class: 'session-tab' + (state.expandedId === s.id ? ' active' : ''),
-    draggable: 'true',
     'data-id': s.id,
     title: `${s.directory}\n${statusText(s)}\nMiddle-click to close`,
     onclick: (e) => {
@@ -1859,7 +1857,6 @@ function renderDocTabs() {
     return h('div', {
       class: 'doc-tab' + (t.preview ? ' preview' : '') + (docs.active === t.key ? ' active' : ''),
       'data-id': t.key,
-      draggable: 'true',
       title: `${s?.name ?? ''}: ${t.spec.path} (${sub})${t.preview ? '\nPreview tab — double-click to keep it open' : ''}`,
       onclick: (e) => { if (!e.target.closest('button')) activateDoc(t.key); },
       ondblclick: () => { t.preview = false; renderDocTabs(); },
@@ -2023,62 +2020,84 @@ function makeScrollable(row, extraClass = '') {
 /**
  * Drag-to-reorder for a tab row. Items matching `item` carry `data-id`; `canDrag(id)` vetoes pinned ones. While
  * dragging, the item under the pointer shows which side the drop lands on, and the row scrolls near its edges.
- * `onDrop(draggedId, targetId, before)` is told where to put it; targetId is null when dropped past the last item.
- * Listeners sit on the row itself, so its contents can be re-rendered freely.
+ * `onDrop(draggedId, targetId, before)` is told where to put it. Listeners sit on the row itself, so its contents can
+ * be re-rendered freely.
+ *
+ * Built on pointer events rather than HTML5 drag and drop: in WebView2 an HTML5 drag runs through the operating
+ * system's drag loop, which AllowExternalDrop = false (set so dropped files can't navigate the page) also blocks.
  */
 function enableTabDrag(row, { item, canDrag = () => true, onDrop }) {
-  let dragged = null;
+  const THRESHOLD = 5;   // pixels the pointer must move before a press becomes a drag (smaller moves stay clicks)
+  let press = null;      // { id, el, x, pointerId } from pointerdown until pointerup
+  let dragging = false;
+
   const clear = () => row.querySelectorAll('.drop-before, .drop-after').forEach((el) => el.classList.remove('drop-before', 'drop-after'));
-  const targetAt = (e) => {
-    const el = e.target.closest(item);
-    if (el && row.contains(el)) {
-      const r = el.getBoundingClientRect();
-      return { el, before: e.clientX < r.left + r.width / 2 };
-    }
-    // Past the last item, or between items: use the nearest one.
-    const items = [...row.querySelectorAll(item)].filter((x) => x.dataset.id !== dragged);
+
+  /** The item nearest the pointer (other than the dragged one), and which side of it the drop lands on. */
+  const targetAt = (x) => {
     let best = null;
-    for (const x of items) {
-      const r = x.getBoundingClientRect();
-      const d = e.clientX < r.left ? r.left - e.clientX : e.clientX > r.right ? e.clientX - r.right : 0;
-      if (!best || d < best.d) best = { el: x, before: e.clientX < r.left + r.width / 2, d };
+    for (const el of row.querySelectorAll(item)) {
+      if (el.dataset.id === press.id) continue;
+      const r = el.getBoundingClientRect();
+      const d = x < r.left ? r.left - x : x > r.right ? x - r.right : 0;
+      if (!best || d < best.d) best = { el, before: x < r.left + r.width / 2, d };
     }
     return best;
   };
 
-  row.addEventListener('dragstart', (e) => {
+  const finish = () => {
+    clear();
+    press?.el.classList.remove('dragging');
+    document.body.classList.remove('tab-dragging');
+    press = null;
+    dragging = false;
+  };
+
+  row.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
     const el = e.target.closest(item);
-    if (!el || !row.contains(el) || !canDrag(el.dataset.id)) { if (el) e.preventDefault(); return; }
-    dragged = el.dataset.id;
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/x-claude-terminals', dragged);   // a private type, so nothing else accepts the drop
-    requestAnimationFrame(() => el.classList.add('dragging'));
+    if (!el || !row.contains(el) || !canDrag(el.dataset.id) || e.target.closest('.tab-close, .icon-btn')) return;
+    press = { id: el.dataset.id, el, x: e.clientX, pointerId: e.pointerId };
   });
-  row.addEventListener('dragover', (e) => {
-    if (!dragged) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
+
+  row.addEventListener('pointermove', (e) => {
+    if (!press || e.pointerId !== press.pointerId) return;
+    if (!dragging) {
+      if (Math.abs(e.clientX - press.x) < THRESHOLD) return;
+      dragging = true;
+      row.setPointerCapture(e.pointerId);   // keep receiving moves even when the pointer leaves the row
+      press.el.classList.add('dragging');
+      document.body.classList.add('tab-dragging');
+    }
     const r = row.getBoundingClientRect();
     if (e.clientX < r.left + 30) row.scrollLeft -= 12;
     else if (e.clientX > r.right - 30) row.scrollLeft += 12;
-    const t = targetAt(e);
+    const t = targetAt(e.clientX);
     clear();
-    if (t && t.el.dataset.id !== dragged) t.el.classList.add(t.before ? 'drop-before' : 'drop-after');
+    if (t) t.el.classList.add(t.before ? 'drop-before' : 'drop-after');
   });
-  row.addEventListener('dragleave', (e) => { if (!row.contains(e.relatedTarget)) clear(); });
-  row.addEventListener('drop', (e) => {
-    if (!dragged) return;
-    e.preventDefault();
-    const t = targetAt(e);
-    const id = dragged;
-    clear();
-    if (t && t.el.dataset.id !== id) onDrop(id, t.el.dataset.id, t.before);
+
+  row.addEventListener('pointerup', (e) => {
+    if (!press || e.pointerId !== press.pointerId) return;
+    if (!dragging) { press = null; return; }   // just a click: let it through
+    const t = targetAt(e.clientX);
+    const id = press.id;
+    finish();
+    // The click that follows this pointerup would also switch tabs; swallow it.
+    const swallow = (c) => { c.stopPropagation(); c.preventDefault(); };
+    window.addEventListener('click', swallow, { capture: true, once: true });
+    setTimeout(() => window.removeEventListener('click', swallow, { capture: true }), 0);
+    if (t) onDrop(id, t.el.dataset.id, t.before);
   });
-  row.addEventListener('dragend', () => {
-    clear();
-    row.querySelectorAll('.dragging').forEach((el) => el.classList.remove('dragging'));
-    dragged = null;
-  });
+
+  row.addEventListener('pointercancel', finish);
+  row.addEventListener('lostpointercapture', () => { if (dragging) finish(); });
+  // Escape cancels a drag in progress (capture phase, before the terminal or other shortcuts see it).
+  window.addEventListener('keydown', (e) => {
+    if (dragging && e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); finish(); }
+  }, true);
+  // Images and links inside a tab must not start the browser's own drag instead.
+  row.addEventListener('dragstart', (e) => e.preventDefault());
 }
 
 /** Scrolls a row so its active tab is fully visible (it may sit behind a scroll button otherwise). */

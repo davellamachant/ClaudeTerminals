@@ -445,3 +445,4 @@ textarea.commit-msg { resize: vertical; min-height: 54px; height: 54px; user-sel
 .session-tab.dragging, .project-tab.dragging, .doc-tab.dragging { opacity: .4; }
 .session-tab.drop-before, .project-tab.drop-before, .doc-tab.drop-before { box-shadow: inset 3px 0 0 var(--accent); }
 .session-tab.drop-after, .project-tab.drop-after, .doc-tab.drop-after { box-shadow: inset -3px 0 0 var(--accent); }
+body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; user-select: none !important; }
