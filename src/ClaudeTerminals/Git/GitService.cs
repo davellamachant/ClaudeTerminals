@@ -44,9 +44,24 @@ internal static class GitService
     private const int MaxDiffBytes = 4 * 1024 * 1024;
 
     /// <param name="maxOutputBytes">Stop reading (and end git) once stdout exceeds this; the result is then <see cref="GitResult.Truncated"/>.</param>
+    /// <param name="environment">Extra environment variables for git (e.g. to forbid credential prompts).</param>
+    /// <param name="timeout">Ends git and returns a failed result if it runs longer than this.</param>
     public static async Task<GitResult> RunAsync(string dir, IEnumerable<string> args, string? stdin = null, CancellationToken ct = default,
-        int? maxOutputBytes = null)
+        int? maxOutputBytes = null, IReadOnlyDictionary<string, string>? environment = null, TimeSpan? timeout = null)
     {
+        if (timeout is { } limit)
+        {
+            using var timer = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timer.CancelAfter(limit);
+            try
+            {
+                return await RunAsync(dir, args, stdin, timer.Token, maxOutputBytes, environment);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                return new GitResult(1, [], $"git {args.FirstOrDefault(a => !a.StartsWith('-') && !a.Contains('='))} was stopped after {limit.TotalSeconds:0} s without finishing.");
+            }
+        }
         var psi = new ProcessStartInfo("git")
         {
             WorkingDirectory = dir,
@@ -62,6 +77,8 @@ internal static class GitService
         // Don't take index.lock for read-only commands; the Claude sessions are using these repos concurrently.
         psi.Environment["GIT_OPTIONAL_LOCKS"] = "0";
         psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
+        if (environment != null)
+            foreach (var (name, value) in environment) psi.Environment[name] = value;
         foreach (var a in new[] { "-c", "core.quotepath=false", "-c", "color.ui=false", "-c", "core.safecrlf=false" })
             psi.ArgumentList.Add(a);
         foreach (var a in args) psi.ArgumentList.Add(a);
@@ -669,6 +686,44 @@ internal static class GitService
             return false;
         }
     }
+
+    // ---- Remote operations (explicit user actions; they reach the network and may show a credential prompt) ----
+
+    /// <summary>Long enough to sign in through Git Credential Manager's window; short enough that nothing hangs forever.</summary>
+    private static readonly TimeSpan RemoteTimeout = TimeSpan.FromMinutes(5);
+
+    public static Task<GitResult> FetchAsync(string dir) => RunRemoteAsync(dir, ["fetch", "--prune"]);
+
+    /// <summary>
+    /// Fast-forward only: never creates a merge commit or leaves conflicts in a worktree a Claude session may be editing.
+    /// A diverged branch fails with git's explanation instead.
+    /// </summary>
+    public static Task<GitResult> PullAsync(string dir) => RunRemoteAsync(dir, ["pull", "--ff-only"]);
+
+    /// <summary>Never forces. A branch with no upstream is published to the default remote, which then becomes its upstream.</summary>
+    public static async Task<GitResult> PushAsync(string dir)
+    {
+        var status = await GetStatusAsync(dir);
+        if (!status.IsRepo) return Failed("This folder isn't a Git repository.");
+        if (status.Branch is null || status.Branch.StartsWith('('))
+            return Failed("There's no branch to push: HEAD is detached. Check out a branch first.");
+        if (status.Upstream != null) return await RunRemoteAsync(dir, ["push"]);
+        var remote = await DefaultRemoteAsync(dir);
+        return remote == null
+            ? Failed("This repository has no remote to push to.")
+            : await RunRemoteAsync(dir, ["push", "--set-upstream", remote, "HEAD"]);
+    }
+
+    /// <summary>"origin" if it exists, otherwise the first remote, or null when there are none.</summary>
+    private static async Task<string?> DefaultRemoteAsync(string dir)
+    {
+        var remotes = (await RunAsync(dir, ["remote"])).Text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return remotes.Contains("origin") ? "origin" : remotes.FirstOrDefault();
+    }
+
+    private static Task<GitResult> RunRemoteAsync(string dir, string[] args) => RunAsync(dir, args, timeout: RemoteTimeout);
+
+    private static GitResult Failed(string message) => new(1, [], message);
 
     public static async Task<GitResult> CommitAsync(string dir, string message, bool all)
     {
