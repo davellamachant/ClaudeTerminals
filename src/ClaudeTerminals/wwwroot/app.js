@@ -223,7 +223,7 @@ function hideAllProjects() {
  * count of its sessions waiting for you and a dot while any of them is working, so a hidden project still gets noticed.
  */
 function renderProjectBar() {
-  const bar = $('#projectBar');
+  const bar = $('#projectTabs');   // the grid button sits before it in the same row and is left alone
   // With no projects there is nothing to toggle, so Unknown only appears once a project exists.
   const groups = state.projects.length
     ? [...state.projects, { id: UNKNOWN, name: UNKNOWN_NAME, unknown: true }]

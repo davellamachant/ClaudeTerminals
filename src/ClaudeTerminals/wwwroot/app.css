@@ -344,9 +344,10 @@ textarea.commit-msg { resize: vertical; min-height: 54px; height: 54px; user-sel
 
 /* ---------------------------------------------------------------- projects */
 .project-bar {
-  height: 32px; flex: none; display: flex; align-items: center; gap: 4px; padding: 0 8px;
-  background: #141414; border-bottom: 1px solid var(--border-soft); overflow-x: auto; scrollbar-width: none;
+  height: 36px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 6px;
+  background: #141414; border-bottom: 1px solid var(--border-soft);
 }
+.project-tabs { display: flex; align-items: center; gap: 4px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
 .project-bar-label { color: var(--text-faint); font-size: 11px; text-transform: uppercase; letter-spacing: .4px; margin-right: 4px; }
 .project-tab {
   display: inline-flex; align-items: center; height: 24px; border-radius: 12px; border: 1px solid var(--border);
