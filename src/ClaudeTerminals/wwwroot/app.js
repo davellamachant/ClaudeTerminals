@@ -38,6 +38,7 @@ const PATHS = {
   git: 'M5 3v10M5 11a2 2 0 1 0 0 .01M5 3a1.6 1.6 0 1 0 0 .01M11 3a1.6 1.6 0 1 0 0 .01M11 4.6C11 8 5 7 5 10',
   branch: 'M5 2.5v8M5 12a1.5 1.5 0 1 0 0 .01M11 4a1.5 1.5 0 1 0 0 .01M11 5.5c0 3-6 2.5-6 5',
   chevR: 'M6 4l4 4-4 4',
+  chevL: 'M10 4l-4 4 4 4',
   chevD: 'M4 6l4 4 4-4',
   up: 'M8 13V3M4 7l4-4 4 4',
   down: 'M8 3v10M4 9l4 4 4-4',
@@ -672,6 +673,7 @@ function renderSessionTabs() {
   });
   host.replaceChildren(...withDividers);
   $('#btnGrid').classList.toggle('active', !state.expandedId);
+  revealActive(host, '.session-tab.active');   // e.g. after Ctrl+N opens a tab scrolled out of view
   renderDocTabs();
 }
 
@@ -1849,7 +1851,7 @@ function renderDocTabs() {
     h('button', { class: 'icon-btn small', title: 'Close (Ctrl+F4)', onclick: () => closeDoc(t.key) }, iconEl('close')));
   });
   fill($('#docTabs'), termTab, tabs);
-  $('#docTabs .doc-tab.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  revealActive($('#docTabs'), '.doc-tab.active');
 }
 
 async function loadDiff(tab, keepView = false) {
@@ -1966,6 +1968,48 @@ $('#diffDoc').addEventListener('keydown', (e) => {
   if (e.altKey && e.key === 'ArrowUp') { e.preventDefault(); goToChange(-1); }
 });
 
+// ------------------------------------------------------------------ scrolling tab rows
+
+/**
+ * Gives a horizontally overflowing row ◀ ▶ buttons (shown only when there is more to see in that direction) and lets
+ * the mouse wheel scroll it sideways. The row is wrapped in place; its own contents can be re-rendered freely.
+ */
+function makeScrollable(row, extraClass = '') {
+  const wrap = h('div', { class: 'tab-scroller ' + extraClass });
+  const left = h('button', { class: 'scroll-btn', title: 'Scroll left', tabindex: '-1', onclick: () => step(-1) }, iconEl('chevL'));
+  const right = h('button', { class: 'scroll-btn', title: 'Scroll right', tabindex: '-1', onclick: () => step(1) }, iconEl('chevR'));
+  row.replaceWith(wrap);
+  wrap.append(left, row, right);
+
+  function step(direction) {
+    row.scrollBy({ left: direction * Math.max(80, row.clientWidth * 0.8), behavior: 'smooth' });
+  }
+  function update() {
+    const max = row.scrollWidth - row.clientWidth;
+    left.hidden = row.scrollLeft <= 1;
+    right.hidden = row.scrollLeft >= max - 1;
+  }
+  // A vertical wheel scrolls the row sideways; a horizontal one (touchpad) already does.
+  row.addEventListener('wheel', (e) => {
+    if (row.scrollWidth <= row.clientWidth || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+    e.preventDefault();
+    row.scrollLeft += e.deltaY;
+  }, { passive: false });
+  row.addEventListener('scroll', update, { passive: true });
+  new ResizeObserver(update).observe(row);
+  new MutationObserver(() => requestAnimationFrame(update)).observe(row, { childList: true, subtree: true });
+  update();
+}
+
+/** Scrolls a row so its active tab is fully visible (it may sit behind a scroll button otherwise). */
+function revealActive(row, selector) {
+  const go = () => row.querySelector(selector)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  go();
+  // Scrolling can make a ◀ ▶ button appear, which narrows the row and covers part of the tab again: repeat once the
+  // buttons have settled.
+  requestAnimationFrame(() => requestAnimationFrame(go));
+}
+
 // ------------------------------------------------------------------ boot
 
 $('#btnGrid').innerHTML = icon('grid');
@@ -1983,6 +2027,10 @@ $('#btnGit').addEventListener('click', toggleGit);
 // Not addEventListener('click', showAddDialog): the click event would arrive as its `mode` argument.
 $('#btnAdd').addEventListener('click', () => showAddDialog());
 $('#btnAddEmpty').addEventListener('click', () => showAddDialog());
+
+makeScrollable($('#projectTabs'));
+makeScrollable($('#sessionTabs'));
+makeScrollable($('#docTabs'), 'doc');
 
 applyGitVisibility();
 applyDiffOptions();

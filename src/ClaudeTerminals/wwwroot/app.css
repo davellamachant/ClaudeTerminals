@@ -404,3 +404,21 @@ textarea.commit-msg { resize: vertical; min-height: 54px; height: 54px; user-sel
 }
 .swatch-auto.selected { border-color: var(--text); color: var(--text); }
 .swatch-row .proj-tag { margin-left: 8px; }
+
+/* Scrollable tab rows: the row scrolls (scrollbar hidden), with ◀ ▶ buttons at the ends when there is more to see. */
+.tab-scroller { display: flex; align-items: center; min-width: 0; flex: 0 1 auto; position: relative; }
+.tab-scroller > .session-tabs, .tab-scroller > .project-tabs { flex: 0 1 auto; }
+.scroll-btn {
+  flex: none; width: 22px; height: 26px; display: inline-flex; align-items: center; justify-content: center; padding: 0;
+  border: 1px solid var(--border); border-radius: 4px; background: var(--panel-2); color: var(--text); cursor: pointer;
+}
+.scroll-btn:hover { background: var(--hover-strong); }
+.scroll-btn svg.ic { width: 14px; height: 14px; }
+.tab-scroller > .scroll-btn:first-child { margin-right: 4px; }
+.tab-scroller > .scroll-btn:last-child { margin-left: 4px; }
+/* The document tab row keeps its own look: the wrapper takes over its full width, background and accent line. */
+.tab-scroller.doc { flex: none; width: 100%; height: 30px; background: var(--chrome-2); border-bottom: 2px solid var(--accent-strong); }
+.tab-scroller.doc > .doc-tabs { flex: 1 1 auto; height: 100%; border-bottom: 0; }
+.tab-scroller.doc > .scroll-btn { height: 24px; margin: 0 3px; }
+/* Title-bar buttons keep their size; the tab rows beside them shrink and scroll instead. */
+#titlebar > .tb-btn, #projectBar > .tb-btn { flex: none; white-space: nowrap; }
