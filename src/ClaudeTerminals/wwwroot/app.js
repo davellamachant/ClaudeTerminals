@@ -646,7 +646,8 @@ function renderSessionTabs() {
   const host = $('#sessionTabs');
   // The label and the close button are sibling buttons, since one button can't contain another: both stay reachable
   // with Tab, and Enter or Space on the label switches sessions. A click elsewhere on the tab counts as the label's.
-  // Visible sessions only, grouped by project, with a divider wherever the project changes.
+  // Visible sessions only, grouped by project. Each group is outlined in its project's colour and named once at its
+  // start, so the tabs themselves carry no project tag.
   const shown = visibleSessions();
   const tabs = shown.map((s, i) => h('div', {
     class: 'session-tab' + (state.expandedId === s.id ? ' active' : ''),
@@ -660,18 +661,32 @@ function renderSessionTabs() {
     onauxclick: (e) => { if (e.button === 1) confirmRemove(s); },
     oncontextmenu: (e) => { e.preventDefault(); sessionMenu(s, e.clientX, e.clientY); },
   }, h('button', { class: 'tab-label' },
-    h('span', { class: 'dot ' + statusClass(s) }), s.name, projectTag(s), i < 9 ? h('span', { class: 'key' }, `Ctrl+${i + 1}`) : null),
+    h('span', { class: 'dot ' + statusClass(s) }), s.name, i < 9 ? h('span', { class: 'key' }, `Ctrl+${i + 1}`) : null),
   // Closing a session tab removes the session, after the same confirmation as "Remove session…".
   h('button', { class: 'icon-btn small tab-close', title: 'Close session…', onclick: () => confirmRemove(s) }, iconEl('close'))));
-  const withDividers = [];
-  shown.forEach((s, i) => {
-    if (i > 0 && projectIndex(s) !== projectIndex(shown[i - 1])) {
-      const p = state.projects[projectIndex(s)];
-      withDividers.push(h('span', { class: 'session-divider', title: p ? p.name : UNKNOWN_NAME + ': sessions with no project' }));
-    }
-    withDividers.push(tabs[i]);
-  });
-  host.replaceChildren(...withDividers);
+  if (!state.projects.length) {
+    host.replaceChildren(...tabs);   // nothing to group by
+  } else {
+    const groups = [];
+    shown.forEach((s, i) => {
+      const id = groupOf(s);
+      if (!groups.length || groups[groups.length - 1].id !== id) {
+        const p = projectOf(s);
+        groups.push({ id, name: p ? p.name : UNKNOWN_NAME, color: p ? projectColor(p) : null, tabs: [] });
+      }
+      groups[groups.length - 1].tabs.push(tabs[i]);
+    });
+    host.replaceChildren(...groups.map((g) => h('div', {
+      class: 'session-group' + (g.color ? '' : ' unknown'),
+      style: g.color ? `--proj:${g.color}` : null,
+    },
+    h('button', {
+      class: 'session-group-label',
+      title: g.color ? `${g.name}: show only this project` : `${UNKNOWN_NAME}: sessions with no project. Click to show only these`,
+      onclick: () => showOnlyProject(g.id),
+    }, g.name),
+    g.tabs)));
+  }
   $('#btnGrid').classList.toggle('active', !state.expandedId);
   revealActive(host, '.session-tab.active');   // e.g. after Ctrl+N opens a tab scrolled out of view
   renderDocTabs();

@@ -372,7 +372,6 @@ textarea.commit-msg { resize: vertical; min-height: 54px; height: 54px; user-sel
 .project-all:hover { color: var(--text); border-color: var(--border); }
 .project-all.active { color: var(--text); border-color: var(--border); }
 .project-add { margin-left: 2px; color: var(--text-dim); }
-.session-divider { width: 1px; align-self: center; height: 18px; background: var(--border); margin: 0 4px; flex: none; }
 .tile.off-project { display: none; }
 .stack { display: flex; flex-direction: column; gap: 6px; }
 .field select { height: 28px; }
@@ -422,3 +421,22 @@ textarea.commit-msg { resize: vertical; min-height: 54px; height: 54px; user-sel
 .tab-scroller.doc > .scroll-btn { height: 24px; margin: 0 3px; }
 /* Title-bar buttons keep their size; the tab rows beside them shrink and scroll instead. */
 #titlebar > .tb-btn, #projectBar > .tb-btn { flex: none; white-space: nowrap; }
+
+/* Session tabs grouped by project: one outlined group per project, named once at its start. */
+.session-group {
+  --proj: #8a8a92;
+  display: flex; align-items: center; gap: 2px; flex: none; height: 30px; padding: 0 2px 0 0; margin-right: 6px;
+  border: 1px solid color-mix(in srgb, var(--proj) 45%, transparent); border-radius: 6px;
+  background: color-mix(in srgb, var(--proj) 6%, transparent);
+}
+.session-group:last-child { margin-right: 0; }
+.session-group-label {
+  align-self: stretch; display: inline-flex; align-items: center; padding: 0 9px; border: 0; border-radius: 5px 0 0 5px;
+  font-size: 11px; font-weight: 700; letter-spacing: .2px; white-space: nowrap; cursor: pointer;
+  color: var(--proj); background: color-mix(in srgb, var(--proj) 16%, transparent);
+  border-right: 1px solid color-mix(in srgb, var(--proj) 35%, transparent);
+}
+.session-group-label:hover { background: color-mix(in srgb, var(--proj) 26%, transparent); }
+.session-group-label:focus-visible { outline: 1px solid var(--focus); outline-offset: -2px; }
+.session-group.unknown .session-group-label { font-style: italic; }
+.session-group .session-tab { height: 26px; }
