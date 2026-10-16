@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = path.resolve(process.argv[2] ?? 'D:\\Demo');
+const root = path.resolve(process.argv[2] ?? 'D:\\Demos\\acme');
 const MARKER = '.claude-terminals-demo';
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -633,14 +633,22 @@ for (const [cwd, gitBranch, title, prompt, daysAgo] of conversations) {
 // ------------------------------------------------------------------ Claude Terminals profile
 
 const fake = path.join(here, 'fake-claude.mjs');
-const session = (Id, Name, Directory, scenario) => ({ Id, Name, Directory, Command: `node "${fake}" ${scenario}` });
+const session = (Id, Name, Directory, scenario, Project = null) => ({ Id, Name, Directory, Command: `node "${fake}" ${scenario}`, Project });
 const profile = path.join(root, 'profile');
 fs.mkdirSync(profile, { recursive: true });
+// Three projects, plus a session with none so the Unknown group shows too.
+fs.writeFileSync(path.join(profile, 'projects.json'), JSON.stringify([
+  { Id: 'acme', Name: 'Acme Shop', Color: null },
+  { Id: 'docs', Name: 'Docs', Color: '#e8a23b' },
+  { Id: 'inv', Name: 'Inventory', Color: null },
+], null, 2));
 fs.writeFileSync(path.join(profile, 'sessions.json'), JSON.stringify([
-  session('checkout', 'checkout-api', main, 'checkout'),
-  session('frontend', 'web-frontend', cart, 'frontend'),
-  session('payments', 'payments-refactor', payments, 'payments'),
-  session('docs', 'docs', docs, 'docs'),
+  session('checkout', 'checkout-api', main, 'checkout', 'acme'),
+  session('frontend', 'web-frontend', cart, 'frontend', 'acme'),
+  session('payments', 'payments-refactor', payments, 'payments', 'acme'),
+  session('docs', 'docs', docs, 'docs', 'docs'),
+  session('stock', 'stock-sync', payments, 'payments', 'inv'),
+  session('tooling', 'tooling', main, 'docs'),
 ], null, 2));
 
 console.log(JSON.stringify({ root, profile, claudeConfig }));

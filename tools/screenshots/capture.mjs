@@ -57,7 +57,7 @@ await js('setFontSize(17);');
 
 // Let every session start, the "working" ones spin, and web-frontend reach its permission prompt.
 await js(`
-  for (let i = 0; i < 60 && !(state.sessions.length === 4 && state.sessions.every((s) => s.running && s.git)); i++)
+  for (let i = 0; i < 60 && !(state.sessions.length === 6 && state.sessions.every((s) => s.running && s.git)); i++)
     await new Promise((r) => setTimeout(r, 500));
 `);
 await sleep(13_000);
@@ -67,10 +67,12 @@ const reset = `
   for (const t of [...docs.tabs]) closeDoc(t.key);
   showTerminalDoc(); collapse();
   state.gitTab = 'changes';
+  showAllProjects();
 `;
 
-// 1. Overview: every session at once, Git Changes for checkout-api.
-console.log('states:', await js(`${reset} showGit('checkout'); return state.sessions.map((s) => s.name + '=' + statusClass(s)).join(', ');`));
+// 1. Overview: Inventory unticked to show the project toggles; the other projects and Unknown at once.
+console.log('states:', await js(`${reset} toggleProject('inv'); showGit('checkout');
+  return state.sessions.map((s) => s.name + '=' + statusClass(s)).join(', ');`));
 await shot('overview');
 
 // 2. One session expanded with its Git Changes.

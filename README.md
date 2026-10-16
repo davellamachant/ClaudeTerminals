@@ -2,11 +2,13 @@
 
 One window for many local Claude Code sessions, with a Visual Studio–style Git Changes / Git Repository view and diff viewer for each session's worktree.
 
-![All sessions at a glance, with Git Changes for the selected worktree](docs/images/overview.png)
+![Sessions grouped by project, with Git Changes for the selected worktree](docs/images/overview.png)
+
+<sub>Tick projects on and off in the Projects row; each session tab group and tile is tagged with its project.</sub>
 
 <table>
   <tr>
-    <td width="50%"><a href="docs/images/session.png"><img src="docs/images/session.png" alt="An expanded session with its Git Changes"></a><br><sub>Click a tile to work in that session full-size; <code>Shift+Esc</code> goes back.</sub></td>
+    <td width="50%"><a href="docs/images/session.png"><img src="docs/images/session.png" alt="An expanded session with its Git Changes"></a><br><sub>Click a tile to work in that session full-size; <code>Shift+Esc</code> goes back. Fetch, pull and push from the Git toolbar.</sub></td>
     <td width="50%"><a href="docs/images/diff.png"><img src="docs/images/diff.png" alt="Side-by-side diff in a document tab"></a><br><sub>VS-style side-by-side diffs open in tabs next to the terminal.</sub></td>
   </tr>
   <tr>

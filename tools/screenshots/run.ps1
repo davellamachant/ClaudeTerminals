@@ -1,9 +1,10 @@
 # Regenerates the README screenshots from a fictional demo project; no real sessions, repos or
 # conversations are involved. Requires Node.js and a build of the app.
-#   .\tools\screenshots\run.ps1                 # demo in <drive>:\Demo, images in docs\images
+#   .\tools\screenshots\run.ps1                 # demo in <drive>:\Demos\acme, images in docs\images
 #   .\tools\screenshots\run.ps1 -KeepDemo       # leave the demo repos for poking around
 param(
-    [string]$DemoRoot = (Join-Path ([IO.Path]::GetPathRoot($PSScriptRoot)) 'Demo'),
+    # One level below the drive root: some tools refuse to delete a folder directly under it.
+    [string]$DemoRoot = (Join-Path ([IO.Path]::GetPathRoot($PSScriptRoot)) 'Demos\acme'),
     [int]$Port = 9333,
     [switch]$KeepDemo
 )
