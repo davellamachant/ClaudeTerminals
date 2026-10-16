@@ -258,6 +258,7 @@ function renderProjectBar() {
     const what = p.unknown ? 'sessions with no project' : p.name;
     return h('div', {
       class: 'project-tab' + (shown ? ' shown' : '') + (p.unknown ? ' unknown' : ''),
+      draggable: p.unknown ? null : 'true',   // Unknown always stays last
       style: p.unknown ? null : `--proj:${projectColor(p)}`,
       'data-id': p.id,
       oncontextmenu: (e) => { e.preventDefault(); projectMenu(p, e.clientX, e.clientY); },
@@ -651,6 +652,7 @@ function renderSessionTabs() {
   const shown = visibleSessions();
   const tabs = shown.map((s, i) => h('div', {
     class: 'session-tab' + (state.expandedId === s.id ? ' active' : ''),
+    draggable: 'true',
     'data-id': s.id,
     title: `${s.directory}\n${statusText(s)}\nMiddle-click to close`,
     onclick: (e) => {
@@ -1856,6 +1858,8 @@ function renderDocTabs() {
     const sub = t.spec.mode === 'commit' ? t.spec.commit.slice(0, 7) : t.spec.mode === 'staged' ? 'staged' : 'diff';
     return h('div', {
       class: 'doc-tab' + (t.preview ? ' preview' : '') + (docs.active === t.key ? ' active' : ''),
+      'data-id': t.key,
+      draggable: 'true',
       title: `${s?.name ?? ''}: ${t.spec.path} (${sub})${t.preview ? '\nPreview tab — double-click to keep it open' : ''}`,
       onclick: (e) => { if (!e.target.closest('button')) activateDoc(t.key); },
       ondblclick: () => { t.preview = false; renderDocTabs(); },
@@ -2016,6 +2020,67 @@ function makeScrollable(row, extraClass = '') {
   update();
 }
 
+/**
+ * Drag-to-reorder for a tab row. Items matching `item` carry `data-id`; `canDrag(id)` vetoes pinned ones. While
+ * dragging, the item under the pointer shows which side the drop lands on, and the row scrolls near its edges.
+ * `onDrop(draggedId, targetId, before)` is told where to put it; targetId is null when dropped past the last item.
+ * Listeners sit on the row itself, so its contents can be re-rendered freely.
+ */
+function enableTabDrag(row, { item, canDrag = () => true, onDrop }) {
+  let dragged = null;
+  const clear = () => row.querySelectorAll('.drop-before, .drop-after').forEach((el) => el.classList.remove('drop-before', 'drop-after'));
+  const targetAt = (e) => {
+    const el = e.target.closest(item);
+    if (el && row.contains(el)) {
+      const r = el.getBoundingClientRect();
+      return { el, before: e.clientX < r.left + r.width / 2 };
+    }
+    // Past the last item, or between items: use the nearest one.
+    const items = [...row.querySelectorAll(item)].filter((x) => x.dataset.id !== dragged);
+    let best = null;
+    for (const x of items) {
+      const r = x.getBoundingClientRect();
+      const d = e.clientX < r.left ? r.left - e.clientX : e.clientX > r.right ? e.clientX - r.right : 0;
+      if (!best || d < best.d) best = { el: x, before: e.clientX < r.left + r.width / 2, d };
+    }
+    return best;
+  };
+
+  row.addEventListener('dragstart', (e) => {
+    const el = e.target.closest(item);
+    if (!el || !row.contains(el) || !canDrag(el.dataset.id)) { if (el) e.preventDefault(); return; }
+    dragged = el.dataset.id;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/x-claude-terminals', dragged);   // a private type, so nothing else accepts the drop
+    requestAnimationFrame(() => el.classList.add('dragging'));
+  });
+  row.addEventListener('dragover', (e) => {
+    if (!dragged) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const r = row.getBoundingClientRect();
+    if (e.clientX < r.left + 30) row.scrollLeft -= 12;
+    else if (e.clientX > r.right - 30) row.scrollLeft += 12;
+    const t = targetAt(e);
+    clear();
+    if (t && t.el.dataset.id !== dragged) t.el.classList.add(t.before ? 'drop-before' : 'drop-after');
+  });
+  row.addEventListener('dragleave', (e) => { if (!row.contains(e.relatedTarget)) clear(); });
+  row.addEventListener('drop', (e) => {
+    if (!dragged) return;
+    e.preventDefault();
+    const t = targetAt(e);
+    const id = dragged;
+    clear();
+    if (t && t.el.dataset.id !== id) onDrop(id, t.el.dataset.id, t.before);
+  });
+  row.addEventListener('dragend', () => {
+    clear();
+    row.querySelectorAll('.dragging').forEach((el) => el.classList.remove('dragging'));
+    dragged = null;
+  });
+}
+
 /** Scrolls a row so its active tab is fully visible (it may sit behind a scroll button otherwise). */
 function revealActive(row, selector) {
   const go = () => row.querySelector(selector)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
@@ -2046,6 +2111,51 @@ $('#btnAddEmpty').addEventListener('click', () => showAddDialog());
 makeScrollable($('#projectTabs'));
 makeScrollable($('#sessionTabs'));
 makeScrollable($('#docTabs'), 'doc');
+
+/** Moves `id` before or after `targetId` in a list of ids. */
+function moveId(ids, id, targetId, before) {
+  const rest = ids.filter((x) => x !== id);
+  const at = rest.indexOf(targetId);
+  rest.splice(before ? at : at + 1, 0, id);
+  return rest;
+}
+
+// Session tabs: dropping into another project's group moves the session into that project, at that spot.
+enableTabDrag($('#sessionTabs'), {
+  item: '.session-tab',
+  onDrop: (id, targetId, before) => {
+    const s = state.byId.get(id), target = state.byId.get(targetId);
+    const ids = moveId(state.sessions.map((x) => x.id), id, targetId, before);
+    state.sessions = ids.map((x) => state.byId.get(x));
+    post({ type: 'reorder', ids });
+    if (groupOf(s) !== groupOf(target)) {
+      s.project = projectOf(target)?.id ?? null;   // shown at once; the host's reply confirms it
+      request('updateSession', { id, project: s.project ?? '' }).catch((e) => toast(e.message, true));
+    }
+    applyProjectFilter();
+  },
+});
+
+// Project tabs; Unknown isn't draggable and stays last, so a drop beside it goes at the end of the real projects.
+enableTabDrag($('#projectTabs'), {
+  item: '.project-tab',
+  canDrag: (id) => id !== UNKNOWN,
+  onDrop: (id, targetId, before) => {
+    const ids = state.projects.map((p) => p.id);
+    const ordered = targetId === UNKNOWN ? moveId(ids, id, ids[ids.length - 1], false) : moveId(ids, id, targetId, before);
+    request('projects.reorder', { ids: ordered }).catch((e) => toast(e.message, true));
+  },
+});
+
+// Diff tabs; the Terminal tab isn't an item, so it stays first.
+enableTabDrag($('#docTabs'), {
+  item: '.doc-tab:not(.terminal)',
+  onDrop: (key, targetKey, before) => {
+    const order = moveId(docs.tabs.map((t) => t.key), key, targetKey, before);
+    docs.tabs.sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key));
+    renderDocTabs();
+  },
+});
 
 applyGitVisibility();
 applyDiffOptions();

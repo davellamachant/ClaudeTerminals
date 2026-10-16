@@ -66,7 +66,8 @@ winget install JRSoftware.InnoSetup   # once
 | Close a session | The × on its tab in the title bar, or middle-click the tab. After you confirm, the session is removed and its process stopped; the folder isn't touched |
 | Show one project | Click its name in the Projects row |
 | Show several projects | Tick or untick each project's checkbox; **All** shows every project, **None** hides them all |
-| Put a session in a project | Pick the project when adding the session, or right-click its tab → *Move to project…* |
+| Put a session in a project | Pick the project when adding the session, drag its tab into the project's group, or right-click its tab → *Move to project…* |
+| Reorder tabs | Drag session, project or diff tabs (or right-click → *Move left/right*). Unknown stays last and the Terminal tab first |
 | Rename, recolour, reorder or delete a project | Right-click the project. *Edit project* sets its name and colour (a swatch, a custom colour or Automatic). Deleting it keeps its sessions; they just have no project |
 | Terminal font size | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
 | Newline in Claude prompt | `Shift+Enter` |
