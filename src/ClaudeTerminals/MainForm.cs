@@ -84,6 +84,11 @@ internal sealed class MainForm : Form
             core.SetVirtualHostNameToFolderMapping("app.local", root, CoreWebView2HostResourceAccessKind.Allow);
             core.WebMessageReceived += OnWebMessage;
             core.NewWindowRequested += (_, args) => args.Handled = true;
+            // The page's files come from the install folder and only change when the app is updated, but the browser
+            // caches them heuristically from their timestamps; after an upgrade it could keep running the previous
+            // version's app.js, possibly mixed with new files. Start each launch with an empty HTTP cache.
+            try { await core.CallDevToolsProtocolMethodAsync("Network.clearBrowserCache", "{}"); }
+            catch (Exception) { /* best effort: worst case is the old behaviour */ }
             core.Navigate(AppPage);
         }
         catch (Exception ex)

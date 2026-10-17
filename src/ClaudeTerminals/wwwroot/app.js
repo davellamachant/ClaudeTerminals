@@ -662,7 +662,9 @@ function renderSessionTabs() {
     title: `${s.directory}\n${statusText(s)}\nMiddle-click to close`,
     onclick: (e) => {
       if (e.target.closest('.tab-close')) return;
-      state.expandedId === s.id ? collapse() : expand(s.id);
+      // Always opens and focuses the session, even if it's the one already shown (that click used to go back to the
+      // grid, which read as "nothing happened"). The grid button, Shift+Esc or the collapse button go back.
+      expand(s.id);
     },
     onmousedown: (e) => { if (e.button === 1) e.preventDefault(); },   // no autoscroll cursor
     onauxclick: (e) => { if (e.button === 1) confirmRemove(s); },
@@ -776,11 +778,16 @@ function expand(id) {
   if (docs.active !== 'terminal') showTerminalDoc();
   state.expandedId = id;
   setAttention(s, false);
-  if (state.currentId !== id) { state.currentId = id; store.set('currentId', id); renderSessionPicker(); renderGit(); }
+  const switched = state.currentId !== id;
+  if (switched) { state.currentId = id; store.set('currentId', id); renderSessionPicker(); }
   layout();
   for (const x of state.sessions) renderTileHeader(x);
   renderSessionTabs();
   setTimeout(() => s.term.focus(), 30);
+  // Last, so a fault in the Git panel can never stop the terminal from opening.
+  if (switched) {
+    try { renderGit(); } catch (err) { console.error('Git panel render failed', err); }
+  }
 }
 
 function collapse() {
@@ -820,8 +827,10 @@ function handleShortcut(e) {
     else collapse();
     return true;
   }
-  if (e.ctrlKey && !e.altKey && !e.shiftKey && /^[1-9]$/.test(k)) {
-    const s = visibleSessions()[+k - 1];   // matches the Ctrl+N hints on the visible tabs
+  // The physical key, not the character: with some keyboard layouts Ctrl plus a number key doesn't produce "1"…"9".
+  const digit = /^(?:Digit|Numpad)([1-9])$/.exec(e.code)?.[1] ?? (/^[1-9]$/.test(k) ? k : null);
+  if (e.ctrlKey && !e.altKey && !e.shiftKey && digit) {
+    const s = visibleSessions()[+digit - 1];   // matches the Ctrl+N hints on the visible tabs
     if (s) expand(s.id);
     return true;
   }
@@ -1322,7 +1331,9 @@ function branchLine(s) {
   const busy = s.remoteBusy;   // 'fetch' | 'pull' | 'push' while one is running for this session
   const onBranch = !!g.branch && !g.branch.startsWith('(');
   ensurePullRequest(s);
-  const pr = s.prInfo?.branch === g.branch ? s.prInfo.data : null;
+  // The lookup also answers for a known host with no open pull request (data.pr null): no chip then.
+  const info = s.prInfo?.branch === g.branch ? s.prInfo.data : null;
+  const pr = info?.pr ? info : null;
 
   const tool = (op, iconName, title, enabled = true) => h('button', {
     class: 'icon-btn remote-btn' + (busy === op ? ' busy' : ''),
@@ -2132,7 +2143,7 @@ function makeScrollable(row, extraClass = '') {
  * system's drag loop, which AllowExternalDrop = false (set so dropped files can't navigate the page) also blocks.
  */
 function enableTabDrag(row, { item, canDrag = () => true, onDrop }) {
-  const THRESHOLD = 5;   // pixels the pointer must move before a press becomes a drag (smaller moves stay clicks)
+  const THRESHOLD = 8;   // pixels the pointer must move before a press becomes a drag (a hurried click can move ~5)
   let press = null;      // { id, el, x, pointerId } from pointerdown until pointerup
   let dragging = false;
 
@@ -2159,6 +2170,8 @@ function enableTabDrag(row, { item, canDrag = () => true, onDrop }) {
   };
 
   row.addEventListener('pointerdown', (e) => {
+    if (dragging) finish();   // a drag whose release never arrived must not swallow this new press
+    press = null;
     if (e.button !== 0) return;
     const el = e.target.closest(item);
     if (!el || !row.contains(el) || !canDrag(el.dataset.id) || e.target.closest('.tab-close, .icon-btn')) return;
@@ -2167,6 +2180,9 @@ function enableTabDrag(row, { item, canDrag = () => true, onDrop }) {
 
   row.addEventListener('pointermove', (e) => {
     if (!press || e.pointerId !== press.pointerId) return;
+    // Only a held button drags. If its release was missed (let go outside the window, say), forget the press rather
+    // than letting plain mouse movement start a drag that eats the next click.
+    if ((e.buttons & 1) === 0) { if (dragging) finish(); else press = null; return; }
     if (!dragging) {
       if (Math.abs(e.clientX - press.x) < THRESHOLD) return;
       dragging = true;
@@ -2185,6 +2201,16 @@ function enableTabDrag(row, { item, canDrag = () => true, onDrop }) {
   row.addEventListener('pointerup', (e) => {
     if (!press || e.pointerId !== press.pointerId) return;
     if (!dragging) { press = null; return; }   // just a click: let it through
+    // Let go back over the tab it started on: nothing would move, so treat it as the click it probably was.
+    const own = press.el.getBoundingClientRect();
+    if (e.clientX >= own.left && e.clientX <= own.right && e.clientY >= own.top && e.clientY <= own.bottom) {
+      // The row captured the pointer, so the browser aims this click at the row, not the tab: click what's under the
+      // pointer ourselves (the tab label, a project's checkbox or name…).
+      const under = document.elementFromPoint(e.clientX, e.clientY);
+      finish();
+      if (under && row.contains(under)) under.click();
+      return;
+    }
     const t = targetAt(e.clientX);
     const id = press.id;
     finish();
@@ -2197,6 +2223,7 @@ function enableTabDrag(row, { item, canDrag = () => true, onDrop }) {
 
   row.addEventListener('pointercancel', finish);
   row.addEventListener('lostpointercapture', () => { if (dragging) finish(); });
+  window.addEventListener('blur', () => { if (press) finish(); });   // switching windows mid-press loses its release
   // Escape cancels a drag in progress (capture phase, before the terminal or other shortcuts see it).
   window.addEventListener('keydown', (e) => {
     if (dragging && e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); finish(); }
