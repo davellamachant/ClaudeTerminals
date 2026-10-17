@@ -778,11 +778,16 @@ function expand(id) {
   if (docs.active !== 'terminal') showTerminalDoc();
   state.expandedId = id;
   setAttention(s, false);
-  if (state.currentId !== id) { state.currentId = id; store.set('currentId', id); renderSessionPicker(); renderGit(); }
+  const switched = state.currentId !== id;
+  if (switched) { state.currentId = id; store.set('currentId', id); renderSessionPicker(); }
   layout();
   for (const x of state.sessions) renderTileHeader(x);
   renderSessionTabs();
   setTimeout(() => s.term.focus(), 30);
+  // Last, so a fault in the Git panel can never stop the terminal from opening.
+  if (switched) {
+    try { renderGit(); } catch (err) { console.error('Git panel render failed', err); }
+  }
 }
 
 function collapse() {
@@ -1326,7 +1331,9 @@ function branchLine(s) {
   const busy = s.remoteBusy;   // 'fetch' | 'pull' | 'push' while one is running for this session
   const onBranch = !!g.branch && !g.branch.startsWith('(');
   ensurePullRequest(s);
-  const pr = s.prInfo?.branch === g.branch ? s.prInfo.data : null;
+  // The lookup also answers for a known host with no open pull request (data.pr null): no chip then.
+  const info = s.prInfo?.branch === g.branch ? s.prInfo.data : null;
+  const pr = info?.pr ? info : null;
 
   const tool = (op, iconName, title, enabled = true) => h('button', {
     class: 'icon-btn remote-btn' + (busy === op ? ' busy' : ''),
