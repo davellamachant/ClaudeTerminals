@@ -489,6 +489,13 @@ function createSession(info) {
   term.onResize(({ cols, rows }) => { if (s.running) post({ type: 'resize', id: s.id, cols, rows }); });
   term.onTitleChange((t) => { s.title = t; renderTileHeader(s); });
   term.onBell(() => { if (state.expandedId !== s.id) setAttention(s, true); });
+  // The right button only opens the menu. Left to xterm, a right press is reported to Claude when it tracks the mouse,
+  // and Claude pastes on right-click, so the clipboard was pasted as the menu opened.
+  for (const type of ['mousedown', 'mouseup', 'mousemove']) {
+    s.surface.addEventListener(type, (e) => {
+      if (e.button === 2 || (e.buttons & 2)) e.stopPropagation();
+    }, true);
+  }
   s.surface.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     if (state.expandedId === s.id) terminalMenu(s, e.clientX, e.clientY);
