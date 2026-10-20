@@ -74,6 +74,7 @@ winget install JRSoftware.InnoSetup   # once
 | Terminal font size | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
 | Newline in Claude prompt | `Shift+Enter` |
 | Copy / paste | `Ctrl+C` with a selection / `Ctrl+V` (or right-click when expanded) |
+| Look back through the conversation | Hover the ticks at the right edge of the open terminal; click one (or right-click → *Show conversation*) to open the **Conversation** tab at that prompt |
 | Diff tabs | Click a file for a preview tab (italic, reused); double-click to keep it open |
 | Terminal ↔ diffs | Click the Terminal tab, `Shift+Esc` from a diff, or `Ctrl+PgUp` / `Ctrl+PgDn` |
 | Close diff tab | `Ctrl+F4`, middle-click, or the tab's ×; `Alt+↑/↓` jumps between changes |
@@ -89,6 +90,8 @@ Plain `Esc` always goes to the terminal, because Claude Code uses it to interrup
 **Fetch, Pull and Push** sit on the Git panel's toolbar, next to the branch and its outgoing/incoming counts. Pull only fast-forwards: it never creates a merge commit or leaves conflicts in a worktree a session may be editing, and stops with git's explanation if the branch has diverged. Push never forces; a branch with no upstream is published to `origin` and tracked. Each runs for up to 5 minutes, long enough to sign in through Git Credential Manager.
 
 **Pull request chip:** when the branch has an open pull request on GitHub or Azure DevOps, a **PR 958 ▾** chip appears next to it, with *Open in Browser*, *Refresh*, *View Pull Requests* and *New Pull Request*. To find it the app calls that service's API with the credential Git Credential Manager already holds for the remote: it is only sent to that service over HTTPS, the lookup never opens a sign-in window (without a stored credential there's simply no chip), and results are cached for 3 minutes.
+
+**Conversation rail and tab:** the ticks down the right edge of the open terminal are the prompts you've sent in that session, newest at the bottom. Hovering one shows the prompt and the start of Claude's reply; clicking opens the session's **Conversation** tab next to the diff tabs, scrolled to that prompt. It shows the whole conversation as text: your prompts, Claude's answers with their formatting, and its tool calls (long runs folded). It follows along while Claude works, and its own rail jumps between prompts. Both come from Claude Code's saved transcript (the session's Claude process names it in `~/.claude/sessions`), so they work in Claude's full-screen mode, which keeps no terminal scrollback. Nothing is sent anywhere.
 
 **Resuming:** the picker reads Claude Code's saved conversations from `~/.claude/projects`. A resumed session keeps `claude --resume <id>` as its command, so it reopens the same conversation every time the app starts. Close the conversation in any other terminal first. Conversations updated in the last few minutes are tagged *active now* as a reminder.
 

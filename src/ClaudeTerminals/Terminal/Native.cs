@@ -11,6 +11,7 @@ internal static class Native
     public const int STARTF_USESTDHANDLES = 0x00000100;
     public static readonly IntPtr PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE = (IntPtr)0x00020016;
 
+    public const int JobObjectBasicProcessIdList = 3;
     public const int JobObjectExtendedLimitInformation = 9;
     public const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
 
@@ -120,6 +121,9 @@ internal static class Native
 
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool SetInformationJobObject(IntPtr hJob, int infoClass, ref JOBOBJECT_EXTENDED_LIMIT_INFORMATION lpInfo, int cbInfoLength);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool QueryInformationJobObject(IntPtr hJob, int infoClass, byte[] lpInfo, int cbInfoLength, out int lpReturnLength);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool AssignProcessToJobObject(IntPtr hJob, IntPtr hProcess);

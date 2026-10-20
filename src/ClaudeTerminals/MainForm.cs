@@ -393,6 +393,37 @@ internal sealed class MainForm : Form
                 var dir = Str(msg, "directory");
                 return Directory.Exists(dir) ? await GitService.GetWorktreesAsync(dir) : new List<WorktreeInfo>();
             }
+            case "conversation":
+            {
+                // The conversation the session's Claude is in: a light outline for the rail, or everything for the
+                // Conversation tab (full). Nothing is sent again while the page already has this version, and a page
+                // that has `count` turns of this conversation only gets its last one (which may have grown) and newer.
+                var s = Get(msg);
+                var full = Bool(msg, "full");
+                var conv = await Task.Run(() => ConversationReader.ForProcesses(s.ProcessIds()));
+                if (conv == null) return new { found = false };
+                var same = OptStr(msg, "sessionId") == conv.SessionId;
+                if (same && msg.TryGetProperty("version", out var v) && v.ValueKind == JsonValueKind.Number && v.GetInt64() == conv.Version)
+                    return new { found = true, unchanged = true };
+                var from = same ? Math.Clamp(Int(msg, "count") - 1, 0, conv.Turns.Count) : 0;
+                return new
+                {
+                    found = true,
+                    sessionId = conv.SessionId,
+                    version = conv.Version,
+                    from,
+                    turns = conv.Turns.Skip(from).Select(t => full
+                        ? (object)new { index = t.Index, time = t.Time, prompt = t.Prompt, items = t.Items }
+                        : new
+                        {
+                            index = t.Index,
+                            time = t.Time,
+                            prompt = Preview(t.Prompt, 300),
+                            reply = Preview(t.Items.FirstOrDefault(i => i.Kind == "text")?.Text, 300),
+                            tools = t.Items.Count(i => i.Kind == "tool"),
+                        }),
+                };
+            }
             case "conversations":
             {
                 var dir = OptStr(msg, "directory");
@@ -541,6 +572,14 @@ internal sealed class MainForm : Form
 
     private static bool Bool(JsonElement e, string name) =>
         e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.True;
+
+    /// <summary>The start of a text on one line, for the conversation rail's hover cards.</summary>
+    private static string? Preview(string? text, int max)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        text = string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        return text.Length <= max ? text : text[..max] + "…";
+    }
 
     // Script and interpreter types that Windows' own unsafe-type list (AssocIsDangerous) may not cover.
     private static readonly HashSet<string> ScriptExtensions = new(StringComparer.OrdinalIgnoreCase)

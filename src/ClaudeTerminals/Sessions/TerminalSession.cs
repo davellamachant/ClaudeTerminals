@@ -59,6 +59,9 @@ internal sealed class TerminalSession : IDisposable
 
     public void Write(string data) => process?.Write(data);
 
+    /// <summary>The running processes in this session's terminal (empty when it isn't running).</summary>
+    public int[] ProcessIds() => process?.ProcessIds() ?? [];
+
     public void Resize(int cols, int rows) => process?.Resize(cols, rows);
 
     /// <summary>Kills the running process, if any. Does not raise <see cref="Exited"/>.</summary>

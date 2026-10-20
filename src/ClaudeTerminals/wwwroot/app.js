@@ -59,6 +59,7 @@ const PATHS = {
   pr: 'M4 4.5a1.5 1.5 0 1 0 0-.01M4 6v4.5M4 13a1.5 1.5 0 1 0 0-.01M12 13a1.5 1.5 0 1 0 0-.01M12 11.5V6.5A2 2 0 0 0 10 4.5H7M8.5 3 7 4.5 8.5 6',
   checkOn: 'M2.5 2.5h11v11h-11zM5 8.2l2 2 4-4.4',
   checkOff: 'M2.5 2.5h11v11h-11z',
+  chat: 'M2.5 3h11v7.5H7.5l-3 2.5v-2.5h-2z',
 };
 
 function icon(name, cls = '') {
@@ -384,6 +385,7 @@ function confirmDeleteProject(p) {
 }
 
 const PAD = 8, GAP = 8, HEADER_H = 30;
+const RAIL_W = 16;   // the conversation rail's gutter at the right of each terminal
 const MAX_WEBGL = 12;
 
 const TERM_THEME = {
@@ -449,7 +451,9 @@ function createSession(info) {
     if (state.expandedId !== s.id) expand(s.id);
   });
   s.header.addEventListener('contextmenu', (e) => { e.preventDefault(); sessionMenu(s, e.clientX, e.clientY); });
-  s.tile = h('div', { class: 'tile', 'data-id': s.id }, s.header, h('div', { class: 'tile-body' }, s.surface, s.cover, s.exitedBadge));
+  s.rail = h('div', { class: 'chat-rail' });
+  attachRail(s.rail);
+  s.tile = h('div', { class: 'tile', 'data-id': s.id }, s.header, h('div', { class: 'tile-body' }, s.surface, s.rail, s.cover, s.exitedBadge));
 
   const term = new Terminal({
     fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace',
@@ -712,7 +716,7 @@ function renderSessionTabs() {
 
 function surfaceSize() {
   const r = $('#termPane').getBoundingClientRect();
-  return { w: Math.max(200, Math.floor(r.width - 2 * PAD - 2 - 8)), h: Math.max(100, Math.floor(r.height - 2 * PAD - HEADER_H - 2 - 4)) };
+  return { w: Math.max(200, Math.floor(r.width - 2 * PAD - 2 - 8 - RAIL_W)), h:Math.max(100, Math.floor(r.height - 2 * PAD - HEADER_H - 2 - 4)) };
 }
 
 const refit = debounce(() => {
@@ -791,6 +795,8 @@ function expand(id) {
   for (const x of state.sessions) renderTileHeader(x);
   renderSessionTabs();
   setTimeout(() => s.term.focus(), 30);
+  renderTermRail(s);
+  refreshTermRail(s);
   // Last, so a fault in the Git panel can never stop the terminal from opening.
   if (switched) {
     try { renderGit(); } catch (err) { console.error('Git panel render failed', err); }
@@ -925,6 +931,7 @@ function sessionMenu(s, x, y) {
   showMenu(x, y, [
     state.expandedId === s.id ? { label: 'Back to all sessions', kbd: 'Shift+Esc', action: collapse } : { label: 'Expand', action: () => expand(s.id) },
     { label: 'Show Git changes', action: () => showGit(s.id) },
+    { label: 'Show conversation', action: () => openConversation(s) },
     '-',
     { label: 'Resume a different conversation…', action: () => showResumeDialog(s) },
     { label: 'Rename / edit command…', action: () => showEditDialog(s) },
@@ -947,6 +954,7 @@ function terminalMenu(s, x, y) {
     { label: 'Select all', action: () => s.term.selectAll() },
     { label: 'Clear scrollback', action: () => s.term.clear() },
     '-',
+    { label: 'Show conversation', action: () => openConversation(s) },
     { label: 'Back to all sessions', kbd: 'Shift+Esc', action: collapse },
   ]);
 }
@@ -1926,14 +1934,22 @@ function openDiff(s, spec, pin = false) {
 
 function activateDoc(key) {
   const prev = activeTab();
-  if (prev && diffEditor && prev.key !== key) prev.viewState = diffEditor.saveViewState();
+  if (prev && prev.key !== key) {
+    if (isConvTab(prev)) prev.scrollTop = $('#convBody').scrollTop;
+    else if (diffEditor) prev.viewState = diffEditor.saveViewState();
+  }
   docs.active = docs.tabs.some((t) => t.key === key) ? key : 'terminal';
   const tab = activeTab();
-  $('#diffDoc').hidden = !tab;
+  $('#diffDoc').hidden = !tab || isConvTab(tab);
+  $('#convDoc').hidden = !isConvTab(tab);
   $('#termPane').classList.toggle('behind', !!tab);
+  hideRailCard();
   renderDocTabs();
   if (tab) {
-    if (prev !== tab) loadDiff(tab);
+    if (prev !== tab) {
+      if (isConvTab(tab)) showConversation(tab);
+      else loadDiff(tab);
+    }
   } else {
     diffState.seq++;
     const s = state.byId.get(state.expandedId);
@@ -1955,7 +1971,7 @@ function closeDoc(key) {
   } else {
     renderDocTabs();
   }
-  if (!docs.tabs.length) disposeDiffModels();
+  if (!docs.tabs.some((t) => !isConvTab(t))) disposeDiffModels();
 }
 
 function cycleDoc(delta) {
@@ -1976,6 +1992,18 @@ function renderDocTabs() {
 
   const tabs = docs.tabs.map((t) => {
     const s = state.byId.get(t.sessionId);
+    if (isConvTab(t)) {
+      return h('div', {
+        class: 'doc-tab' + (docs.active === t.key ? ' active' : ''),
+        'data-id': t.key,
+        title: `${s?.name ?? ''}: the conversation so far`,
+        onclick: (e) => { if (!e.target.closest('button')) activateDoc(t.key); },
+        onmousedown: (e) => { if (e.button === 1) e.preventDefault(); },
+        onauxclick: (e) => { if (e.button === 1) closeDoc(t.key); },
+      }, iconEl('chat'), h('span', { class: 'doc-title' }, 'Conversation'),
+      h('span', { class: 'doc-sub' }, s?.name ?? ''),
+      h('button', { class: 'icon-btn small', title: 'Close (Ctrl+F4)', onclick: () => closeDoc(t.key) }, iconEl('close')));
+    }
     const sub = t.spec.mode === 'commit' ? t.spec.commit.slice(0, 7) : t.spec.mode === 'staged' ? 'staged' : 'diff';
     return h('div', {
       class: 'doc-tab' + (t.preview ? ' preview' : '') + (docs.active === t.key ? ' active' : ''),
@@ -2082,7 +2110,7 @@ function goToChange(dir, absolute = false) {
 /** Keeps the visible diff live while the session edits the file. */
 function refreshOpenDiff(s) {
   const t = activeTab();
-  if (!t || t.sessionId !== s.id || t.spec.mode === 'commit') return;
+  if (!t || isConvTab(t) || t.sessionId !== s.id || t.spec.mode === 'commit') return;
   loadDiff(t, true);
 }
 
@@ -2100,12 +2128,432 @@ $('#diffMode').addEventListener('click', () => { diffState.sideBySide = !diffSta
 $('#diffWs').addEventListener('click', () => { diffState.ignoreWs = !diffState.ignoreWs; store.set('diffIgnoreWs', diffState.ignoreWs); applyDiffOptions(); });
 $('#diffOpenFile').addEventListener('click', () => {
   const t = activeTab();
-  if (t) request('openFile', { id: t.sessionId, path: t.spec.path }).catch((e) => toast(e.message, true));
+  if (t && !isConvTab(t)) request('openFile', { id: t.sessionId, path: t.spec.path }).catch((e) => toast(e.message, true));
 });
 $('#diffDoc').addEventListener('keydown', (e) => {
   if (e.altKey && e.key === 'ArrowDown') { e.preventDefault(); goToChange(1); }
   if (e.altKey && e.key === 'ArrowUp') { e.preventDefault(); goToChange(-1); }
 });
+
+// ------------------------------------------------------------------ conversation rail and Conversation tab
+// In its full-screen mode Claude keeps no terminal scrollback, so the rail outlines the conversation from Claude's own
+// transcript (one tick per prompt), and the Conversation tab shows the whole of it as text the app can scroll.
+
+const CONV_POLL_MS = 3000;
+const convKey = (sessionId) => 'conv|' + sessionId;
+const isConvTab = (t) => t?.kind === 'conv';
+
+/**
+ * Fetches the session's conversation: the outline for the rail (s.conv) or everything for the tab (s.convFull).
+ * Resolves true when what the page has changed.
+ */
+async function loadConversation(s, full) {
+  const slot = full ? 'convFull' : 'conv';
+  const busy = slot + 'Loading';
+  if (s[busy]) return false;
+  s[busy] = true;
+  try {
+    const have = s[slot];
+    const r = await request('conversation', { id: s.id, full, sessionId: have?.sessionId, version: have?.version, count: have?.turns.length ?? 0 });
+    if (!r.found) {
+      s[slot] = null;
+      return !!have;
+    }
+    if (r.unchanged) return false;
+    // Only the turns from r.from on were sent; earlier ones are as the page already has them.
+    if (r.from > 0 && have?.sessionId === r.sessionId) r.turns = have.turns.slice(0, r.from).concat(r.turns);
+    s[slot] = r;
+    return true;
+  } catch {
+    return false;   // the session went away, or its Claude is between conversations
+  } finally {
+    s[busy] = false;
+  }
+}
+
+setInterval(async () => {
+  if (document.hidden) return;
+  const tab = activeTab();
+  if (isConvTab(tab)) {
+    const s = state.byId.get(tab.sessionId);
+    if (s?.running && await loadConversation(s, true) && docs.active === tab.key) renderConversation(s, tab);
+  } else if (!tab) {
+    const s = state.byId.get(state.expandedId);
+    if (s?.running) refreshTermRail(s);
+  }
+}, CONV_POLL_MS);
+
+async function refreshTermRail(s) {
+  if (await loadConversation(s, false)) renderTermRail(s);
+}
+
+/** The open terminal's rail: the latest prompt is marked, and a click opens that prompt in the Conversation tab. */
+function renderTermRail(s) {
+  const turns = s.conv?.turns || [];
+  renderRail(s.rail, turns.length, turns.length - 1, {
+    pick: (i) => openConversation(s, i),
+    card: (i) => turns[i],
+  });
+}
+
+// ---- the rail
+
+/** Draws n ticks; their spacing is worked out in CSS from the rail's height, so it follows resizes and animations. */
+function renderRail(rail, n, active, handlers) {
+  rail.rail = { n, ...handlers };
+  rail.style.setProperty('--n', String(Math.max(n, 1)));
+  const ticks = [];
+  for (let i = 0; i < n; i++) ticks.push(h('i', { class: i === active ? 'active' : null, style: `--k:${i - (n - 1) / 2}` }));
+  rail.replaceChildren(...ticks);
+  rail.title = n ? '' : 'No conversation to show yet';
+}
+
+function markRailActive(rail, active) {
+  [...rail.children].forEach((t, i) => t.classList.toggle('active', i === active));
+}
+
+/** The tick nearest the pointer (ticks can be a pixel or two apart in a long conversation). */
+function railIndexAt(rail, clientY) {
+  const n = rail.rail?.n || 0;
+  if (!n) return -1;
+  const r = rail.getBoundingClientRect();
+  const gap = Math.min(10, (r.height - 24) / n);
+  const i = Math.round((clientY - r.top - r.height / 2) / gap + (n - 1) / 2);
+  return Math.max(0, Math.min(n - 1, i));
+}
+
+function attachRail(rail) {
+  let hot = -1;
+  const setHot = (i) => {
+    if (i === hot) return;
+    rail.children[hot]?.classList.remove('hot');
+    hot = i;
+    rail.children[hot]?.classList.add('hot');
+  };
+  rail.addEventListener('pointermove', (e) => {
+    const i = railIndexAt(rail, e.clientY);
+    setHot(i);
+    if (i < 0) return hideRailCard();
+    showRailCard(rail, i);
+  });
+  rail.addEventListener('pointerleave', () => { setHot(-1); hideRailCard(); });
+  rail.addEventListener('mousedown', (e) => e.preventDefault());   // keep focus where it is
+  rail.addEventListener('click', (e) => {
+    const i = railIndexAt(rail, e.clientY);
+    if (i >= 0) { hideRailCard(); rail.rail.pick(i); }
+  });
+}
+
+function showRailCard(rail, i) {
+  const t = rail.rail.card(i);
+  const card = $('#railCard');
+  if (!t) return hideRailCard();
+  const reply = t.reply ?? t.items?.find((x) => x.kind === 'text')?.text;
+  const tools = t.tools ?? t.items?.filter((x) => x.kind === 'tool').length ?? 0;
+  const meta = [`Prompt ${i + 1} of ${rail.rail.n}`, t.time && formatTurnTime(t.time), tools && `${tools} tool call${tools === 1 ? '' : 's'}`];
+  fill(card,
+    h('div', { class: 'rc-prompt' }, t.prompt),
+    reply && h('div', { class: 'rc-reply' }, reply.length > 400 ? reply.slice(0, 400) + '…' : reply),
+    h('div', { class: 'rc-meta' }, meta.filter(Boolean).join(' · ')));
+  card.hidden = false;
+  const r = rail.getBoundingClientRect();
+  const n = rail.rail.n;
+  const gap = Math.min(10, (r.height - 24) / n);
+  const y = r.top + r.height / 2 + (i - (n - 1) / 2) * gap;
+  card.style.right = `${Math.max(8, innerWidth - r.left + 6)}px`;
+  card.style.top = `${Math.max(8, Math.min(innerHeight - card.offsetHeight - 8, y - 20))}px`;
+}
+
+function hideRailCard() {
+  const card = document.getElementById('railCard');
+  if (card) card.hidden = true;
+}
+
+function formatTurnTime(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  const today = new Date().toDateString() === d.toDateString();
+  return today
+    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+// ---- the Conversation tab: one per session, next to the diff tabs
+
+const convView = { key: null, sessionId: null, els: [] };
+
+/** Opens (or switches to) the session's Conversation tab, scrolled to prompt `index` (or the end). */
+function openConversation(s, index = null) {
+  const key = convKey(s.id);
+  let tab = docs.tabs.find((t) => t.key === key);
+  if (!tab) {
+    tab = { key, kind: 'conv', sessionId: s.id, preview: false, scrollTop: null };
+    docs.tabs.push(tab);
+  }
+  tab.pendingTurn = index;
+  if (docs.active === key) {
+    if (index != null && convView.key === key && convView.els[index]) { tab.pendingTurn = null; scrollToTurn(index); }
+  } else {
+    activateDoc(key);
+  }
+}
+
+async function showConversation(tab) {
+  const s = state.byId.get(tab.sessionId);
+  if (!s) return;
+  $('#convSession').textContent = s.name;
+  if (convView.key !== tab.key) {
+    turnObserver.disconnect();
+    $('#convBody').replaceChildren();
+    Object.assign(convView, { key: tab.key, sessionId: null, els: [] });
+  } else if (tab.pendingTurn == null && tab.scrollTop != null) {
+    $('#convBody').scrollTop = tab.scrollTop;   // a hidden pane loses its scroll position
+  }
+  if (s.convFull) renderConversation(s, tab);
+  else $('#convSummary').textContent = 'Loading…';
+  if (s.running) await loadConversation(s, true);
+  if (docs.active === tab.key) renderConversation(s, tab);
+  $('#convBody').focus({ preventScroll: true });   // so the keyboard scrolls it
+}
+
+function renderConversation(s, tab) {
+  const body = $('#convBody');
+  const data = s.convFull;
+  if (!data || !data.turns.length) {
+    convView.els = [];
+    convView.sessionId = null;
+    $('#convSummary').textContent = '';
+    fill(body, h('div', { class: 'chat-empty' }, !s.running ? 'This session isn’t running.'
+      : data ? 'No prompts in this conversation yet.' : 'No Claude conversation found in this session.'));
+    renderRail($('#convRail'), 0, -1, { pick() {}, card() {} });
+    return;
+  }
+  const atEnd = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
+  const firstShow = convView.sessionId === null;
+  if (convView.sessionId !== data.sessionId) {
+    // A different conversation (/clear or /resume in the terminal): start over.
+    turnObserver.disconnect();
+    body.replaceChildren();
+    convView.els = [];
+    convView.sessionId = data.sessionId;
+  }
+  // Earlier turns never change; the last shown one may have grown, so it's redrawn with any new ones.
+  const keep = Math.max(0, Math.min(convView.els.length, data.turns.length) - 1);
+  for (const el of convView.els.splice(keep)) { turnObserver.unobserve(el); el.remove(); }
+  for (const t of data.turns.slice(keep)) {
+    const el = turnEl(t);
+    body.append(el);
+    convView.els.push(el);
+  }
+  const n = data.turns.length;
+  // Fill the end now (a placeholder's guessed height would spoil following along or opening at the end); the rest
+  // fills in as it scrolls near the view.
+  for (const el of convView.els.slice(Math.max(keep, n - 3))) fillTurn(el);
+  $('#convSummary').textContent = `${n} prompt${n === 1 ? '' : 's'}`;
+
+  if (tab.pendingTurn != null) {
+    scrollToTurn(Math.min(tab.pendingTurn, n - 1));
+    tab.pendingTurn = null;
+  } else if (firstShow) {
+    body.scrollTop = tab.scrollTop ?? body.scrollHeight;
+  } else if (atEnd) {
+    body.scrollTop = body.scrollHeight;   // following along as Claude answers
+  }
+  renderRail($('#convRail'), n, turnInView(), {
+    pick: (i) => scrollToTurn(i),
+    card: (i) => s.convFull?.turns[i],
+  });
+}
+
+/**
+ * A turn starts as an empty placeholder: a conversation can have thousands, so each is only built (Markdown and all)
+ * when it comes near the view.
+ */
+function turnEl(t) {
+  const el = h('section', { class: 'chat-turn', 'data-index': t.index });
+  el.turn = t;
+  turnObserver.observe(el);
+  return el;
+}
+
+const turnObserver = new IntersectionObserver((entries) => {
+  for (const e of entries) if (e.isIntersecting) fillTurn(e.target);
+}, { root: $('#convBody'), rootMargin: '1500px 0px' });
+
+function fillTurn(el) {
+  if (!el.turn) return;
+  const t = el.turn;
+  el.turn = null;
+  turnObserver.unobserve(el);
+  el.classList.add('filled');
+  const answer = [];
+  let tools = [];
+  const flushTools = () => {
+    if (!tools.length) return;
+    const lines = tools.map((x) => h('div', { class: 'chat-tool', title: `${x.tool} ${x.text}` },
+      h('span', { class: 'chat-tool-name' }, x.tool), ' ', h('span', { class: 'chat-tool-detail' }, x.text)));
+    if (lines.length <= 3) answer.push(h('div', { class: 'chat-tools' }, lines));
+    else {
+      const names = [...new Set(tools.map((x) => x.tool))];
+      answer.push(h('details', { class: 'chat-tools' },
+        h('summary', {}, `${tools.length} tool calls: ${names.slice(0, 4).join(', ')}${names.length > 4 ? '…' : ''}`), lines));
+    }
+    tools = [];
+  };
+  for (const it of t.items) {
+    if (it.kind === 'tool') { tools.push(it); continue; }
+    flushTools();
+    answer.push(h('div', { class: 'md' }, renderMarkdown(it.text)));
+  }
+  flushTools();
+  el.replaceChildren(
+    h('div', { class: 'chat-prompt' },
+      h('div', { class: 'chat-meta' }, `You${t.time ? ' · ' + formatTurnTime(t.time) : ''}`),
+      h('div', { class: 'chat-prompt-text' }, t.prompt)),
+    h('div', { class: 'chat-answer' }, answer));
+}
+
+function scrollToTurn(i) {
+  const el = convView.els[i];
+  if (!el) return;
+  for (const x of convView.els.slice(i, i + 3)) fillTurn(x);   // so the view lands on real content
+  const body = $('#convBody');
+  body.scrollTop = el.offsetTop - 8;
+  // Placeholders around it fill in over the next frames and change height; line up again unless the user has scrolled.
+  let expected = body.scrollTop;
+  for (const ms of [60, 200, 500]) {
+    setTimeout(() => {
+      if (body.scrollTop !== expected || !el.isConnected) return;
+      body.scrollTop = el.offsetTop - 8;
+      expected = body.scrollTop;
+    }, ms);
+  }
+  el.classList.remove('flash');
+  void el.offsetWidth;
+  el.classList.add('flash');
+  setTimeout(() => el.classList.remove('flash'), 900);
+  markRailActive($('#convRail'), i);
+}
+
+/** The prompt at the top of the Conversation tab's view. */
+function turnInView() {
+  const top = $('#convBody').scrollTop + 12;
+  const els = convView.els;
+  let lo = 0, hi = els.length - 1, found = els.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (els[mid].offsetTop + els[mid].offsetHeight > top) { found = mid; hi = mid - 1; } else lo = mid + 1;
+  }
+  return found;
+}
+
+$('#convBody').addEventListener('scroll', debounce(() => {
+  if (isConvTab(activeTab())) markRailActive($('#convRail'), turnInView());
+}, 50));
+attachRail($('#convRail'));
+
+// ---- Markdown: enough for Claude's answers, built as DOM nodes (never HTML strings)
+
+function renderMarkdown(src) {
+  const lines = src.replace(/\r\n?/g, '\n').split('\n');
+  const out = [];
+  const fenceRe = /^\s*(`{3,}|~{3,})/;
+  const listRe = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
+  const hrRe = /^\s{0,3}([-*_])(\s*\1){2,}\s*$/;
+  const headRe = /^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/;
+  const tableSepRe = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/;
+  const cells = (l) => l.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
+  const isTable = (i) => lines[i].includes('|') && i + 1 < lines.length && tableSepRe.test(lines[i + 1]);
+  const startsBlock = (i) => fenceRe.test(lines[i]) || headRe.test(lines[i]) || hrRe.test(lines[i]) ||
+    listRe.test(lines[i]) || /^\s*>/.test(lines[i]) || isTable(i);
+
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    let m;
+    if (!line.trim()) { i++; continue; }
+    if ((m = fenceRe.exec(line))) {
+      const fence = m[1];
+      const code = [];
+      for (i++; i < lines.length && !lines[i].trim().startsWith(fence); i++) code.push(lines[i]);
+      i++;
+      out.push(h('pre', { class: 'md-code' }, h('code', {}, code.join('\n'))));
+    } else if ((m = headRe.exec(line))) {
+      out.push(h('div', { class: `md-h md-h${m[1].length}` }, inline(m[2])));
+      i++;
+    } else if (hrRe.test(line)) {
+      out.push(h('hr'));
+      i++;
+    } else if (/^\s*>/.test(line)) {
+      const quoted = [];
+      for (; i < lines.length && /^\s*>/.test(lines[i]); i++) quoted.push(lines[i].replace(/^\s*>\s?/, ''));
+      out.push(h('blockquote', {}, renderMarkdown(quoted.join('\n'))));
+    } else if (isTable(i)) {
+      const head = cells(line);
+      const rows = [];
+      for (i += 2; i < lines.length && lines[i].includes('|') && lines[i].trim(); i++) rows.push(cells(lines[i]));
+      out.push(h('table', {},
+        h('thead', {}, h('tr', {}, head.map((c) => h('th', {}, inline(c))))),
+        h('tbody', {}, rows.map((r) => h('tr', {}, head.map((_, k) => h('td', {}, inline(r[k] ?? ''))))))));
+    } else if (listRe.test(line)) {
+      const items = [];
+      for (; i < lines.length; i++) {
+        const lm = listRe.exec(lines[i]);
+        if (lm) items.push({ indent: lm[1].length, ordered: /\d/.test(lm[2]), start: parseInt(lm[2], 10), text: lm[3] });
+        else if (lines[i].trim() && /^\s{2,}/.test(lines[i])) items[items.length - 1].text += ' ' + lines[i].trim();
+        else break;
+      }
+      out.push(listEl(items));
+    } else {
+      const para = [];
+      for (; i < lines.length && lines[i].trim() && (para.length === 0 || !startsBlock(i)); i++) para.push(lines[i]);
+      out.push(h('p', {}, para.map((l, k) => [k ? h('br') : null, inline(l.trim())])));
+    }
+  }
+  return out;
+}
+
+/** Nests list items by indentation. */
+function listEl(items) {
+  const stack = [];
+  let root = null;
+  for (const it of items) {
+    while (stack.length > 1 && it.indent < stack[stack.length - 1].indent) stack.pop();
+    let cur = stack[stack.length - 1];
+    if (!cur || it.indent > cur.indent + 1) {
+      const list = h(it.ordered ? 'ol' : 'ul', { start: it.ordered && it.start !== 1 ? it.start : null });
+      if (cur) (cur.el.lastElementChild || cur.el).append(list);
+      else root = list;
+      stack.push(cur = { indent: it.indent, el: list });
+    }
+    cur.el.append(h('li', {}, inline(it.text)));
+  }
+  return root;
+}
+
+const INLINE_RE = /(`+)(.+?)\1(?!`)|\*\*(.+?)\*\*|__(.+?)__|\*([^*\s](?:.*?[^*\s])?)\*|(?<![\w])_([^_\s](?:.*?[^_\s])?)_(?![\w])|\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)|(https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"])/g;
+
+function inline(text) {
+  const out = [];
+  const re = new RegExp(INLINE_RE.source, 'g');
+  let last = 0, m;
+  while ((m = re.exec(text))) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    if (m[1]) out.push(h('code', { class: 'md-inline' }, m[2].replace(/^ (.+) $/, '$1')));
+    else if (m[3] || m[4]) out.push(h('strong', {}, inline(m[3] || m[4])));
+    else if (m[5] || m[6]) out.push(h('em', {}, inline(m[5] || m[6])));
+    else if (m[7]) out.push(mdLink(m[8], inline(m[7])));
+    else out.push(mdLink(m[9], m[9]));
+    last = re.lastIndex;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
+const mdLink = (url, kids) => h('a', {
+  href: '#', title: url,
+  onclick: (e) => { e.preventDefault(); request('openUrl', { uri: url }).catch((err) => toast(err.message, true)); },
+}, kids);
 
 // ------------------------------------------------------------------ scrolling tab rows
 

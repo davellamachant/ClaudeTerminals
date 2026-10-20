@@ -155,6 +155,21 @@ internal sealed class PseudoConsoleProcess : IDisposable
         if (pc != IntPtr.Zero) ClosePseudoConsole(pc);
     }
 
+    /// <summary>Every process still running in this console's job: the started process and everything it launched.</summary>
+    public int[] ProcessIds()
+    {
+        var job = hJob;
+        if (job == IntPtr.Zero) return [];
+        // JOBOBJECT_BASIC_PROCESS_ID_LIST: two DWORD counts, then ULONG_PTR ids. Room for 256 processes is plenty.
+        var buffer = new byte[8 + 256 * IntPtr.Size];
+        if (!QueryInformationJobObject(job, JobObjectBasicProcessIdList, buffer, buffer.Length, out _)) return [];
+        var count = Math.Min(BitConverter.ToInt32(buffer, 4), 256);
+        var ids = new int[count];
+        for (var i = 0; i < count; i++)
+            ids[i] = (int)(IntPtr.Size == 8 ? BitConverter.ToInt64(buffer, 8 + i * 8) : BitConverter.ToInt32(buffer, 8 + i * 4));
+        return ids;
+    }
+
     private static IntPtr CreateKillOnCloseJob()
     {
         var job = CreateJobObjectW(IntPtr.Zero, null);
