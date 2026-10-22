@@ -3,6 +3,7 @@
 # (after checking its notes) is what makes the in-app updater offer it.
 #
 # Runs when a version tag (v1.2.3) is pushed, or by hand. The tag must match <Version> in ClaudeTerminals.csproj.
+# Run by hand with "Create the GitHub release" unticked to try the signing without releasing anything.
 #
 # One-time setup in Azure DevOps:
 #   - Create this pipeline from the GitHub repository (it reads this file).
@@ -16,6 +17,13 @@ trigger:
   branches:
     exclude: [ '*' ]
 pr: none
+
+parameters:
+  # Untick for a trial run: build and sign only, with the installer kept on the run (Artifacts), no GitHub release.
+  - name: createRelease
+    displayName: 'Create the GitHub release (draft)'
+    type: boolean
+    default: true
 
 variables:
   githubConnection: 'GitHub'                 # TODO: the GitHub service connection's name
@@ -31,7 +39,7 @@ steps:
   - task: PowerShell@2
     displayName: 'Check the tag matches the version'
     inputs:
-      pwsh: true
+      pwsh: false   # Windows PowerShell: always on the agent
       targetType: inline
       script: |
         $version = ([xml](Get-Content src/ClaudeTerminals/ClaudeTerminals.csproj)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
@@ -45,14 +53,21 @@ steps:
   - task: PowerShell@2
     displayName: 'Build and sign'
     inputs:
-      pwsh: true
+      pwsh: false   # Windows PowerShell: always on the agent
       filePath: publish.ps1
       arguments: '-Sign -TimestampServer "$(TimeStampServer)"'
 
+  - task: PublishPipelineArtifact@1
+    displayName: 'Keep the signed installer on the run'
+    inputs:
+      targetPath: 'artifacts/ClaudeTerminals-Setup-$(AppVersion).exe'
+      artifact: 'installer'
+
   - task: GitHubRelease@1
     displayName: 'Create draft GitHub release'
+    condition: and(succeeded(), ${{ parameters.createRelease }})
     inputs:
-      gitHubConnection: '$(githubConnection)'
+      gitHubConnection: '${{ variables.githubConnection }}'   # resolved when the pipeline is compiled, as Azure requires
       repositoryName: '$(repository)'
       action: create
       target: '$(Build.SourceVersion)'
