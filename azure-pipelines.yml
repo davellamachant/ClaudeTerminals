@@ -7,7 +7,6 @@
 # One-time setup in Azure DevOps:
 #   - Create this pipeline from the GitHub repository (it reads this file).
 #   - A GitHub service connection with access to the repository; put its name in githubConnection below.
-#   - The pool name below: the agent with the SafeNet token.
 #   - A pipeline variable TimeStampServer (the same RFC 3161 server the NuGet signing uses).
 # The agent needs the .NET 10 SDK, Node.js (npm), Inno Setup 6 and the Windows SDK's signtool.
 
