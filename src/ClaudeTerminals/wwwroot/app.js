@@ -64,6 +64,11 @@ const PATHS = {
 };
 
 function icon(name, cls = '') {
+  // The theme icon is a painter's palette: an outline with a thumb hole and filled paint dots (the only icon mixing
+  // stroke and fill).
+  if (name === 'theme') {
+    return `<svg class="ic ${cls}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M8 1.9C4.5 1.9 1.8 4.6 1.8 8s2.7 6.1 6 6.1c.9 0 1.5-.6 1.5-1.3 0-.4-.2-.7-.4-1-.2-.3-.4-.6-.4-1 0-.8.6-1.3 1.4-1.3h1.7c1.9 0 3-1.3 3-3.1C14.6 4.4 11.6 1.9 8 1.9z"/><g fill="currentColor" stroke="none"><circle cx="4.9" cy="7.6" r="1"/><circle cx="6.5" cy="4.9" r="1"/><circle cx="9.6" cy="4.7" r="1"/><circle cx="11.6" cy="7" r="1"/></g></svg>`;
+  }
   const filled = name === 'folder';
   return `<svg class="ic ${cls}" viewBox="0 0 16 16" fill="${filled ? 'currentColor' : 'none'}" fill-opacity="${filled ? .9 : 1}" stroke="currentColor" stroke-width="${filled ? 0 : 1.3}" stroke-linecap="round" stroke-linejoin="round"><path d="${PATHS[name]}"/></svg>`;
 }
@@ -112,6 +117,13 @@ function request(type, payload = {}) {
 host.addEventListener('message', (e) => {
   const m = e.data;
   switch (m.type) {
+    case 'accent': {
+      accent.palette = m.palette;
+      const before = themeName();
+      theme.windowsLight = m.lightApps ?? null;
+      applyTheme(before);
+      break;
+    }
     case 'reply': {
       const p = pending.get(m.reqId);
       if (!p) return;
@@ -274,10 +286,11 @@ function renderProjectBar() {
       title: `${shown ? 'Hide' : 'Show'} ${what}, keeping the others as they are`,
       onclick: () => toggleProject(p.id),
     }, iconEl(shown ? 'checkOn' : 'checkOff')),
+    // The name toggles like the checkbox; Ctrl+click (or the right-click menu) shows only this project.
     h('button', {
       class: 'project-name',
-      title: `Show only ${what}\n${members.length} session${members.length === 1 ? '' : 's'} · right-click for options`,
-      onclick: () => showOnlyProject(p.id),
+      title: `${shown ? 'Hide' : 'Show'} ${what} · Ctrl+click to show only this\n${members.length} session${members.length === 1 ? '' : 's'} · right-click for options`,
+      onclick: (e) => (e.ctrlKey ? showOnlyProject(p.id) : toggleProject(p.id)),
     }, p.name,
     working ? h('span', { class: 'dot working', title: 'A session is working' }) : null,
     waiting ? h('span', { class: 'badge', title: `${waiting} session${waiting === 1 ? '' : 's'} waiting for you` }, String(waiting)) : null));
@@ -388,14 +401,36 @@ function confirmDeleteProject(p) {
 
 const PAD = 8, GAP = 8, HEADER_H = 30;
 const RAIL_W = 16;   // the conversation rail's gutter at the right of each terminal
+const DEFAULT_COMMAND = 'claude --continue';
 const MAX_WEBGL = 12;
 
-const TERM_THEME = {
+// ------------------------------------------------------------------ theme
+// System (follows Windows' app mode), Light or Dark. The host reports Windows' app mode with the accent colour; until
+// then the browser's own reading of it stands in.
+
+const theme = { pref: store.get('theme', 'system'), windowsLight: null };
+const isLight = () => theme.pref === 'light' ||
+  (theme.pref === 'system' && (theme.windowsLight ?? matchMedia('(prefers-color-scheme: light)').matches));
+const themeName = () => (isLight() ? 'light' : 'dark');
+document.documentElement.dataset.theme = themeName();
+
+const TERM_THEME_DARK = {
   background: '#181818', foreground: '#cccccc', cursor: '#d4d4d4', cursorAccent: '#181818',
   selectionBackground: '#264f78', selectionInactiveBackground: '#3a3d41',
   black: '#0c0c0c', red: '#c50f1f', green: '#13a10e', yellow: '#c19c00', blue: '#3b78ff', magenta: '#881798', cyan: '#3a96dd', white: '#cccccc',
   brightBlack: '#767676', brightRed: '#e74856', brightGreen: '#16c60c', brightYellow: '#f9f1a5', brightBlue: '#3b78ff', brightMagenta: '#b4009e', brightCyan: '#61d6d6', brightWhite: '#f2f2f2',
 };
+// Light terminals, after Visual Studio Code's light terminal palette (Claude gets its light theme to match).
+const TERM_THEME_LIGHT = {
+  background: '#ffffff', foreground: '#1e1e1e', cursor: '#1e1e1e', cursorAccent: '#ffffff',
+  selectionBackground: '#add6ff', selectionInactiveBackground: '#e5ebf1',
+  black: '#000000', red: '#cd3131', green: '#107c10', yellow: '#949800', blue: '#0451a5', magenta: '#bc05bc', cyan: '#0598bc', white: '#555555',
+  brightBlack: '#666666', brightRed: '#cd3131', brightGreen: '#14ce14', brightYellow: '#b5ba00', brightBlue: '#0451a5', brightMagenta: '#bc05bc', brightCyan: '#0598bc', brightWhite: '#a5a5a5',
+  // xterm's own scrollbar and its border default to dark-theme greys.
+  overviewRulerBorder: '#ffffff',
+  scrollbarSliderBackground: '#64646433', scrollbarSliderHoverBackground: '#64646466', scrollbarSliderActiveBackground: '#00000066',
+};
+const termTheme = () => (isLight() ? TERM_THEME_LIGHT : TERM_THEME_DARK);
 
 // ------------------------------------------------------------------ sessions & tiles
 
@@ -464,7 +499,7 @@ function createSession(info) {
     cursorBlink: true,
     scrollback: 10000,
     allowProposedApi: true,
-    theme: TERM_THEME,
+    theme: termTheme(),
     windowsPty: { backend: 'conpty', buildNumber: 22621 },
     rightClickSelectsWord: false,
   });
@@ -524,7 +559,8 @@ function fitTerm(s) {
 function startSession(s) {
   s.started = true;
   fitTerm(s);
-  request('start', { id: s.id, cols: s.term.cols, rows: s.term.rows })
+  s.startedTheme = themeName();
+  request('start', { id: s.id, cols: s.term.cols, rows: s.term.rows, theme: s.startedTheme })
     .then(() => { s.running = true; s.exitCode = null; renderTileHeader(s); renderSessionTabs(); })
     .catch((err) => {
       s.running = false;
@@ -535,10 +571,12 @@ function startSession(s) {
     });
 }
 
-function restartSession(s) {
+/** resume: carry on in the exact conversation the session is in (used when restarting for a new theme). */
+function restartSession(s, { resume = false } = {}) {
   fitTerm(s);
   s.term.reset();
-  request('restart', { id: s.id, cols: s.term.cols, rows: s.term.rows })
+  s.startedTheme = themeName();
+  request('restart', { id: s.id, cols: s.term.cols, rows: s.term.rows, theme: s.startedTheme, resume })
     .then(() => { s.running = true; s.exitCode = null; renderTileHeader(s); renderSessionTabs(); })
     .catch((err) => { s.term.writeln(`\x1b[31m${err.message}\x1b[0m`); });
 }
@@ -672,12 +710,13 @@ function renderSessionTabs() {
   const tabs = shown.map((s, i) => h('div', {
     class: 'session-tab' + (state.expandedId === s.id ? ' active' : ''),
     'data-id': s.id,
-    title: `${s.directory}\n${statusText(s)}\nMiddle-click to close`,
+    title: `${s.directory}\n${statusText(s)}\nClick again to go back to all sessions · middle-click to close`,
     onclick: (e) => {
       if (e.target.closest('.tab-close')) return;
-      // Always opens and focuses the session, even if it's the one already shown (that click used to go back to the
-      // grid, which read as "nothing happened"). The grid button, Shift+Esc or the collapse button go back.
-      expand(s.id);
+      // Clicking the session that's open (its terminal showing) goes back to the tiles; otherwise it opens the session,
+      // or brings its terminal back in front of a diff or Conversation tab.
+      if (state.expandedId === s.id && docs.active === 'terminal') collapse();
+      else expand(s.id);
     },
     onmousedown: (e) => { if (e.button === 1) e.preventDefault(); },   // no autoscroll cursor
     onauxclick: (e) => { if (e.button === 1) confirmRemove(s); },
@@ -919,10 +958,16 @@ function closeMenu() {
 function showMenu(x, y, items) {
   closeMenu();
   // Pressing on the menu mustn't take focus: after Paste in the terminal's menu, typing has to go on in the terminal.
+  // Items: '-' for a separator, { header } for a section title, or { label, action } with optional kbd, danger, and
+  // checked (ticked when true). If any item can be ticked, all get the tick column so their labels line up.
+  const ticks = items.some((it) => it && it.checked !== undefined);
   const menu = h('div', { class: 'menu', onmousedown: (e) => e.preventDefault() }, items.filter(Boolean).map((it) => it === '-'
     ? h('div', { class: 'menu-sep' })
-    : h('div', { class: 'menu-item' + (it.danger ? ' danger' : ''), onclick: () => { closeMenu(); it.action(); } },
-      it.label, it.kbd && h('span', { class: 'kbd' }, it.kbd))));
+    : it.header
+      ? h('div', { class: 'menu-header' }, it.header)
+      : h('div', { class: 'menu-item' + (it.danger ? ' danger' : ''), onclick: () => { closeMenu(); it.action(); } },
+        ticks && h('span', { class: 'menu-check' }, it.checked ? '✓' : ''),
+        it.label, it.kbd && h('span', { class: 'kbd' }, it.kbd))));
   $('#menuHost').append(menu);
   const r = menu.getBoundingClientRect();
   menu.style.left = Math.min(x, innerWidth - r.width - 4) + 'px';
@@ -982,6 +1027,10 @@ function moveSession(s, delta) {
 }
 
 function openModal(title, body, buttons) {
+  // A dialog replacing another closes it.
+  const hook = onModalClose;
+  onModalClose = null;
+  hook?.();
   const hostEl = $('#modalHost');
   const footer = h('div', { class: 'modal-footer' }, buttons);
   hostEl.replaceChildren(h('div', { class: 'modal' }, h('div', { class: 'modal-title' }, title), h('div', { class: 'modal-body' }, body), footer));
@@ -990,7 +1039,13 @@ function openModal(title, body, buttons) {
   setTimeout(() => hostEl.querySelector('input, [data-autofocus], button.primary:not(.danger)')?.focus(), 20);
 }
 
+/** Called once when the open dialog closes, however it's closed (set by dialogs that preview changes). */
+let onModalClose = null;
+
 function closeModal() {
+  const hook = onModalClose;
+  onModalClose = null;
+  hook?.();
   $('#modalHost').hidden = true;
   $('#modalHost').replaceChildren();
   const s = state.byId.get(state.expandedId);
@@ -1130,7 +1185,10 @@ function conversationPicker({ directory = null, onPick }) {
 
 function showAddDialog(mode = 'new') {
   const lastDir = store.get('lastDir', '');
-  const lastCommand = store.get('lastCommand', 'claude');
+  // New sessions carry on the folder's last conversation (plain claude when there is none yet). A remembered "claude"
+  // is the old default rather than a choice, so it gives way to the new one.
+  const remembered = store.get('lastCommand', null);
+  const lastCommand = !remembered || remembered === 'claude' ? DEFAULT_COMMAND : remembered;
   const dir = h('input', { value: '', placeholder: 'D:\\Source\\MyRepo', spellcheck: 'false' });
   const name = h('input', { placeholder: '(folder name)', spellcheck: 'false' });
   const command = h('input', { value: lastCommand, spellcheck: 'false' });
@@ -1174,7 +1232,7 @@ function showAddDialog(mode = 'new') {
   const add = async () => {
     const d = dir.value.trim();
     if (!d) { error.hidden = false; error.textContent = mode === 'resume' ? 'Choose a conversation.' : 'Choose a folder.'; return; }
-    const cmd = command.value.trim() || 'claude';
+    const cmd = command.value.trim() || DEFAULT_COMMAND;
     const list = [{ directory: d, name: name.value.trim(), command: cmd }];
     if (mode === 'new' && !wtHost.hidden && wtHost.dataset.for === d) {   // only ticks made for this folder
       for (const cb of wtHost.querySelectorAll('input[type=checkbox]:checked')) {
@@ -1914,8 +1972,31 @@ function loadMonaco() {
           'scrollbarSlider.background': '#4a4a4f99',
         },
       });
+      monaco.editor.defineTheme('vs2026-light', {
+        base: 'vs',
+        inherit: true,
+        rules: [],
+        colors: {
+          'editor.background': '#ffffff',
+          'editorLineNumber.foreground': '#237893',
+          'editorLineNumber.activeForeground': '#0b216f',
+          'editor.selectionBackground': '#add6ff',
+          'editor.lineHighlightBackground': '#00000000',
+          'editor.lineHighlightBorder': '#eeeeee',
+          'diffEditor.insertedLineBackground': '#9bb95533',
+          'diffEditor.insertedTextBackground': '#9ccc2c55',
+          'diffEditor.removedLineBackground': '#ff000022',
+          'diffEditor.removedTextBackground': '#ff000044',
+          'diffEditor.diagonalFill': '#22222220',
+          'diffEditorGutter.insertedLineBackground': '#9bb95555',
+          'diffEditorGutter.removedLineBackground': '#ff000033',
+          'diffEditorOverview.insertedForeground': '#4b8b2bcc',
+          'diffEditorOverview.removedForeground': '#c53030cc',
+          'scrollbarSlider.background': '#64646466',
+        },
+      });
       diffEditor = monaco.editor.createDiffEditor($('#diffEditor'), {
-        theme: 'vs2026-dark',
+        theme: isLight() ? 'vs2026-light' : 'vs2026-dark',
         automaticLayout: true,
         readOnly: true,
         originalEditable: false,
@@ -2619,6 +2700,57 @@ const mdLink = (url, kids) => h('a', {
   onclick: (e) => { e.preventDefault(); request('openUrl', { uri: url }).catch((err) => toast(err.message, true)); },
 }, kids);
 
+// ------------------------------------------------------------------ Windows accent colour
+// The host sends Windows' accent shades (lightest first, the accent itself at index 3) at start and whenever they change
+// in Settings. Without them, or with the setting off, the app keeps its own purple.
+
+/**
+ * choice: 'windows' (follow Windows' accent), 'purple' (the app's own) or a #rrggbb. Someone who had turned the Windows
+ * accent off before there was a choice gets the purple.
+ */
+const accent = {
+  palette: null,
+  choice: store.get('accentColour', store.get('useWindowsAccent', true) ? 'windows' : 'purple'),
+};
+
+/** Seven shades of one colour, lightest first and the colour itself at 3, like the palette Windows gives for its accent. */
+function shadesOf(hex) {
+  const rgb = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  const mix = (to, t) => '#' + rgb.map((v) => Math.round(v + (to - v) * t).toString(16).padStart(2, '0')).join('');
+  return [mix(255, .6), mix(255, .4), mix(255, .2), hex.toLowerCase(), mix(0, .15), mix(0, .35), mix(0, .55)];
+}
+
+/** WCAG contrast ratio of two #rrggbb colours (1 to 21). */
+function contrast(a, b) {
+  const lum = (hex) => {
+    const [r, g, bl] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+      .map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * r + 0.7152 * g + 0.0722 * bl;
+  };
+  const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+function applyAccent() {
+  const root = document.documentElement.style;
+  const c = accent.choice;
+  const p = c === 'windows' ? accent.palette : /^#[0-9a-f]{6}$/i.test(c) ? shadesOf(c) : null;   // null: the purple
+  if (!p || p.length < 7) {
+    root.removeProperty('--accent');
+    root.removeProperty('--accent-strong');
+    return;
+  }
+  // Fills carry white text (active tabs, buttons, menus): the accent, or the first darker shade white reads well on.
+  const strong = [3, 4, 5, 6].map((i) => p[i]).find((c) => contrast(c, '#ffffff') >= 4.5) ?? p[6];
+  // Lines, ticks and highlights: on the dark chrome a lighter shade, as Windows uses in dark mode; on the light chrome
+  // the accent or a darker one.
+  const line = isLight()
+    ? [3, 4, 5, 6].map((i) => p[i]).find((c) => contrast(c, '#eeeeee') >= 4.5) ?? p[6]
+    : [2, 1, 0].map((i) => p[i]).find((c) => contrast(c, '#1f1f1f') >= 4.5) ?? p[0];
+  root.setProperty('--accent-strong', strong);
+  root.setProperty('--accent', line);
+}
+
 // ------------------------------------------------------------------ updates
 // The host checks the repository's latest GitHub release; an update shows as a button in the title bar. Installing
 // downloads and checks the installer, closes the app, updates silently and reopens it.
@@ -2697,10 +2829,47 @@ function showUpdateDialog() {
   ]);
 }
 
-function appMenu(x, y) {
+/**
+ * Puts the current theme on everything: the page's colours, the terminals, diffs, accent shades and the window's title
+ * bar. When it changed (from `before`), running Claude sessions are offered a restart to pick up their new colours.
+ */
+function applyTheme(before = null) {
+  const name = themeName();
+  document.documentElement.dataset.theme = name;
+  for (const s of state.sessions) s.term.options.theme = termTheme();
+  if (window.monaco) monaco.editor.setTheme(isLight() ? 'vs2026-light' : 'vs2026-dark');
+  applyAccent();
+  post({ type: 'theme', light: isLight() });
+  if (before && before !== name) offerClaudeRestart();
+}
+
+/** Claude only reads its theme when it starts, so running sessions keep their old colours until they restart. */
+function offerClaudeRestart() {
+  const name = themeName();
+  const stale = state.sessions.filter((s) => s.running && s.startedTheme && s.startedTheme !== name &&
+    /^claude(\.exe)?(\s|$)/i.test(s.command.trim()) && !/(^|\s)(--settings|-p|--print)(\s|=|$)/.test(s.command));
+  if (!stale.length) return;
+  const n = stale.length;
+  confirmDialog(`Update Claude's colours?`,
+    `Claude in ${n} running session${n === 1 ? '' : 's'} still uses its ${name === 'light' ? 'dark' : 'light'} colours, ` +
+    `which can be hard to read now. ${n === 1 ? 'It switches' : 'They switch'} when restarted: restart now? Each carries on ` +
+    `in the conversation it's in; anything Claude is in the middle of is interrupted.`,
+    `Restart ${n === 1 ? 'session' : `${n} sessions`}`, false,
+    () => { for (const s of stale) restartSession(s, { resume: true }); });
+}
+
+function setThemePref(pref) {
+  const before = themeName();
+  theme.pref = pref;
+  store.set('theme', pref);
+  applyTheme(before);
+}
+
+/** The version number's menu: updates and release notes. */
+function versionMenu(x, y) {
   showMenu(x, y, [
     { label: 'Check for updates', action: () => checkForUpdates(true) },
-    { label: `${updates.auto ? '✓ ' : ''}Check for updates automatically`, action: () => {
+    { label: 'Check for updates automatically', checked: updates.auto, action: () => {
       updates.auto = !updates.auto;
       store.set('autoUpdateCheck', updates.auto);
       if (updates.auto) checkForUpdates();
@@ -2711,10 +2880,78 @@ function appMenu(x, y) {
   ]);
 }
 
+/** The theme menu (next to the version number): System, Light or Dark, and the accent colour. */
+function themeMenu(x, y) {
+  const c = accent.choice;
+  const colour = c === 'windows' ? accent.palette?.[3] ?? '#7160e8' : c === 'purple' ? '#7160e8' : c;
+  showMenu(x, y, [
+    { header: 'Theme' },
+    { label: 'System (follows Windows)', checked: theme.pref === 'system', action: () => setThemePref('system') },
+    { label: 'Light', checked: theme.pref === 'light', action: () => setThemePref('light') },
+    { label: 'Dark', checked: theme.pref === 'dark', action: () => setThemePref('dark') },
+    '-',
+    { header: 'Accent colour' },
+    { label: [h('span', { class: 'accent-dot', style: `background:${colour}` }), c === 'windows' ? 'Windows accent' : c === 'purple' ? 'Original purple' : 'Custom'],
+      kbd: 'Change…', action: showAccentDialog },
+  ]);
+}
+
+/**
+ * Accent colour: Windows' (following Settings), the original purple, a swatch or a custom colour. Each click previews
+ * on the whole app; Cancel puts back what was there.
+ */
+function showAccentDialog() {
+  const before = accent.choice;
+  const windowsColour = accent.palette?.[3];
+  const custom = h('input', { type: 'color', class: 'swatch-custom-input', tabindex: '-1' });
+  const customBtn = h('button', { class: 'swatch swatch-custom', title: 'Custom colour…', onclick: () => custom.click() }, '…');
+  const windowsBtn = h('button', {
+    class: 'swatch-auto', disabled: !windowsColour,
+    title: windowsColour ? 'Follow the accent colour in Windows Settings, and change with it' : "Windows didn't report an accent colour",
+    onclick: () => pick('windows'),
+  }, windowsColour ? h('span', { class: 'accent-dot', style: `background:${windowsColour}` }) : null, 'Windows accent');
+  const purpleBtn = h('button', { class: 'swatch-auto', title: "The app's own colour", onclick: () => pick('purple') },
+    h('span', { class: 'accent-dot', style: 'background:#7160e8' }), 'Original purple');
+  const swatches = PROJECT_COLORS.map((c) => h('button', { class: 'swatch', style: `--swatch:${c}`, title: c, onclick: () => pick(c) }));
+  const note = h('div', { class: 'field help' });
+  custom.addEventListener('input', () => pick(custom.value));
+
+  function pick(c) {
+    accent.choice = c;
+    applyAccent();   // preview on the whole app
+    windowsBtn.classList.toggle('selected', c === 'windows');
+    purpleBtn.classList.toggle('selected', c === 'purple');
+    for (const sw of swatches) sw.classList.toggle('selected', sw.title === c);
+    const isCustom = /^#/.test(c) && !PROJECT_COLORS.includes(c);
+    customBtn.classList.toggle('selected', isCustom);
+    customBtn.style.setProperty('--swatch', isCustom ? c : 'transparent');
+    if (/^#/.test(c)) custom.value = c;
+    note.textContent = c === 'windows'
+      ? 'Changes when you change the accent colour in Windows Settings.'
+      : 'Very light or dark colours are shaded where needed, so text on them stays readable in both themes.';
+  }
+  let saved = false;
+  openModal('Accent colour', [
+    h('div', { class: 'swatch-row' }, windowsBtn, purpleBtn),
+    h('div', { class: 'swatch-row' }, swatches, customBtn, custom),
+    note,
+  ], [
+    h('button', { class: 'btn', onclick: closeModal }, 'Cancel'),
+    h('button', { class: 'btn primary', onclick: () => { saved = true; store.set('accentColour', accent.choice); closeModal(); } }, 'OK'),
+  ]);
+  // Cancel, Esc or a click outside: put back the colour from before.
+  onModalClose = () => { if (!saved) { accent.choice = before; applyAccent(); } };
+  pick(before);
+}
+
 $('#btnUpdate').addEventListener('click', showUpdateDialog);
-$('#btnApp').innerHTML = icon('more');
-$('#btnApp').addEventListener('click', (e) => { const r = e.currentTarget.getBoundingClientRect(); appMenu(r.right - 260, r.bottom + 2); });
-request('app.version').then((v) => { updates.current ??= v; }).catch(() => {});
+$('#btnTheme').innerHTML = icon('theme');
+$('#btnTheme').addEventListener('click', (e) => { const r = e.currentTarget.getBoundingClientRect(); themeMenu(r.right - 260, r.bottom + 2); });
+request('app.version').then((v) => {
+  updates.current ??= v;
+  $('#appVersion').replaceChildren(`v${v}`, iconEl('chevD'));   // the chevron says it opens a menu
+}).catch(() => {});
+$('#appVersion').addEventListener('click', (e) => { const r = e.currentTarget.getBoundingClientRect(); versionMenu(r.right - 260, r.bottom + 2); });
 // Soon after start (not during it), then every few hours; never when turned off.
 setTimeout(() => { if (updates.auto) checkForUpdates(); }, 15_000);
 setInterval(() => { if (updates.auto) checkForUpdates(); }, UPDATE_EVERY_MS);

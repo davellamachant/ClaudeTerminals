@@ -35,7 +35,7 @@ internal sealed class MainForm : Form
 
     public MainForm()
     {
-        Text = "Claude Terminals";
+        Text = $"Claude Terminals {UpdateService.CurrentVersion}";   // shown in the taskbar and Alt+Tab
         BackColor = Color.FromArgb(0x1f, 0x1f, 0x1f);
         StartPosition = FormStartPosition.CenterScreen;
         Size = new Size(1600, 1000);
@@ -73,6 +73,45 @@ internal sealed class MainForm : Form
         {
             // Sessions just start as they normally would.
         }
+    }
+
+    private System.Windows.Forms.Timer? accentTimer;
+
+    private void PostAccent() => Post(new { type = "accent", palette = AccentColors.Read(), lightApps = AccentColors.AppsUseLightTheme() });
+
+    /// <summary>The window's own colours (title bar, and what shows before the page paints) follow the page's theme.</summary>
+    private void ApplyWindowTheme(bool light)
+    {
+        var dark = light ? 0 : 1;
+        Native.DwmSetWindowAttribute(Handle, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, ref dark, sizeof(int));
+        var background = light ? Color.FromArgb(0xee, 0xee, 0xee) : Color.FromArgb(0x1f, 0x1f, 0x1f);
+        webView.DefaultBackgroundColor = background;
+        BackColor = background;
+    }
+
+    /// <summary>Follows the Windows accent colour when it's changed in Settings.</summary>
+    protected override void WndProc(ref Message m)
+    {
+        base.WndProc(ref m);
+        const int WM_SETTINGCHANGE = 0x001A, WM_DWMCOLORIZATIONCOLORCHANGED = 0x0320;
+        var accentChanged = m.Msg == WM_DWMCOLORIZATIONCOLORCHANGED ||
+            (m.Msg == WM_SETTINGCHANGE && m.LParam != IntPtr.Zero &&
+             System.Runtime.InteropServices.Marshal.PtrToStringUni(m.LParam) == "ImmersiveColorSet");
+        if (!accentChanged || !webReady) return;
+        // Windows sends several of these, and may write the new shades just after: read once things settle.
+        if (accentTimer == null)
+        {
+            accentTimer = new System.Windows.Forms.Timer { Interval = 400 };
+            accentTimer.Tick += OnAccentTimer;
+        }
+        accentTimer.Stop();
+        accentTimer.Start();
+    }
+
+    private void OnAccentTimer(object? sender, EventArgs e)
+    {
+        accentTimer?.Stop();
+        PostAccent();
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -135,10 +174,9 @@ internal sealed class MainForm : Form
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
-        var running = sessions.Values.Count(s => s.IsRunning);
-        if (running > 0 && e.CloseReason == CloseReason.UserClosing && !closingForUpdate &&
-            MessageBox.Show(this, $"{running} session(s) are still running and will be terminated.\n\nClose anyway?", Text,
-                MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK)
+        var running = sessions.Values.Where(s => s.IsRunning).ToList();
+        if (running.Count > 0 && e.CloseReason == CloseReason.UserClosing && !closingForUpdate &&
+            MessageBox.Show(this, CloseMessage(running), Text, MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK)
         {
             e.Cancel = true;
             return;
@@ -146,6 +184,31 @@ internal sealed class MainForm : Form
         flushTimer.Stop();
         foreach (var s in sessions.Values) s.Dispose();
         base.OnFormClosing(e);
+    }
+
+    /// <summary>
+    /// Closing only stops the sessions: Claude keeps every conversation and the sessions start again with the app, so say
+    /// that (and which of them carry on their conversation) rather than that they'll be "terminated".
+    /// </summary>
+    internal static string CloseMessage(IReadOnlyCollection<TerminalSession> running)
+    {
+        var n = running.Count;
+        var carryOn = running.Count(s => TerminalSession.CarriesOnConversation(s.Info.Command));
+        var fresh = n - carryOn;
+        var sessionsAre = n == 1 ? "1 session is" : $"{n} sessions are";
+        var restart = (carryOn, fresh) switch
+        {
+            (_, 0) => n == 1
+                ? "It starts again the next time you open Claude Terminals and picks up where it left off."
+                : "They start again the next time you open Claude Terminals and pick up where they left off.",
+            (0, _) => n == 1
+                ? "It starts again the next time you open Claude Terminals, with a new conversation (the current one can be reopened with \"Resume a different conversation…\")."
+                : "They start again the next time you open Claude Terminals, with new conversations (the current ones can be reopened with \"Resume a different conversation…\").",
+            _ => $"They start again the next time you open Claude Terminals: {carryOn} pick{(carryOn == 1 ? "s" : "")} up where {(carryOn == 1 ? "it" : "they")} left off, " +
+                 $"{fresh} start{(fresh == 1 ? "s" : "")} a new conversation (the current one can be reopened with \"Resume a different conversation…\").",
+        };
+        return $"{sessionsAre} running. Closing stops {(n == 1 ? "it" : "them")}, but nothing is lost: Claude keeps every conversation.\n\n" +
+               $"{restart}\n\nAnything Claude is in the middle of will be interrupted.\n\nClose Claude Terminals?";
     }
 
     // ---------------------------------------------------------------- sessions
@@ -281,6 +344,7 @@ internal sealed class MainForm : Form
         {
             case "ready":
                 webReady = true;
+                PostAccent();   // first: with Windows' app mode the page knows its theme before sessions start
                 Post(SessionList());
                 foreach (var s in sessions.Values) _ = s.RefreshStatusAsync();
                 return null;
@@ -288,7 +352,7 @@ internal sealed class MainForm : Form
             case "start":
             {
                 var s = Get(msg);
-                s.Start(Int(msg, "cols"), Int(msg, "rows"));
+                s.Start(Int(msg, "cols"), Int(msg, "rows"), OptStr(msg, "theme"));
                 return null;
             }
             case "input":
@@ -302,10 +366,16 @@ internal sealed class MainForm : Form
             case "restart":
             {
                 var s = Get(msg);
+                // Restarting to pick up a new theme: carry on in the exact conversation the session is in.
+                if (Bool(msg, "resume") && s.IsRunning && ConversationReader.ResumableConversation(s.ProcessIds()) is { } live)
+                    s.ResumeOnce = live;
                 s.Stop();
-                s.Start(Int(msg, "cols"), Int(msg, "rows"));
+                s.Start(Int(msg, "cols"), Int(msg, "rows"), OptStr(msg, "theme"));
                 return null;
             }
+            case "theme":
+                ApplyWindowTheme(Bool(msg, "light"));
+                return null;
             case "stop":
             {
                 // Stopping disposes the process without raising Exited, so tell the page itself (code null = stopped).
@@ -333,7 +403,7 @@ internal sealed class MainForm : Form
                     {
                         Name = string.IsNullOrWhiteSpace(item.Name) ? Path.GetFileName(item.Dir.TrimEnd('\\')) : item.Name.Trim(),
                         Directory = item.Dir,
-                        Command = string.IsNullOrWhiteSpace(item.Command) ? "claude" : item.Command.Trim(),
+                        Command = string.IsNullOrWhiteSpace(item.Command) ? "claude --continue" : item.Command.Trim(),
                         Project = item.Project,
                     });
                 }
@@ -622,7 +692,7 @@ internal sealed class MainForm : Form
     {
         var map = new Dictionary<string, string>();
         foreach (var s in sessions.Values.Where(s => s.IsRunning))
-            if (ConversationReader.FindLiveSession(s.ProcessIds()) is { } live) map[s.Id] = live.SessionId;
+            if (ConversationReader.ResumableConversation(s.ProcessIds()) is { } live) map[s.Id] = live;
         try { File.WriteAllText(ResumeFile, JsonSerializer.Serialize(map)); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* sessions start fresh instead */ }
     }

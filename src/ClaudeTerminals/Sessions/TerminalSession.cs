@@ -4,7 +4,7 @@ using ClaudeTerminals.Terminal;
 namespace ClaudeTerminals.Sessions;
 
 /// <summary>Runtime state for one configured session: its pseudo console process and its git watcher.</summary>
-internal sealed class TerminalSession : IDisposable
+internal sealed partial class TerminalSession : IDisposable
 {
     private PseudoConsoleProcess? process;
     private GitWatcher? watcher;
@@ -36,7 +36,8 @@ internal sealed class TerminalSession : IDisposable
     public event Action<TerminalSession, int, int>? Exited;
     public event Action<TerminalSession, GitStatus>? StatusChanged;
 
-    public void Start(int cols, int rows)
+    /// <param name="claudeTheme">"light" or "dark": Claude is started in the theme that matches the terminal.</param>
+    public void Start(int cols, int rows, string? claudeTheme = null)
     {
         if (process != null) return;
         var generation = ++Generation;
@@ -53,7 +54,7 @@ internal sealed class TerminalSession : IDisposable
         try
         {
             var env = SessionEnvironment.Build();
-            var command = WithResume(Info.Command, ResumeOnce);
+            var command = PrepareCommand(Info.Command, ResumeOnce, () => ConversationIndex.HasConversation(Info.Directory), ThemeSettingsFile(claudeTheme));
             ResumeOnce = null;
             p.Start(CommandLineResolver.Resolve(command, env), Info.Directory, SessionEnvironment.ToBlock(env), cols, rows);
         }
@@ -68,19 +69,73 @@ internal sealed class TerminalSession : IDisposable
     public void Write(string data) => process?.Write(data);
 
     /// <summary>
-    /// Adds --resume to a plain claude command. Anything that already picks its conversation (or isn't an interactive
-    /// claude) is left alone.
+    /// The command line for this start of a claude session:
+    /// - after an update, the conversation it was in (<paramref name="resumeId"/>) replaces --continue, or is added to a
+    ///   plain claude; a command that names its own conversation is left alone;
+    /// - otherwise --continue is dropped when the folder has no saved conversation yet (<paramref name="hasConversation"/>),
+    ///   since claude would stop with "No conversation found to continue". The saved command keeps it for next time.
+    /// Anything that isn't an interactive claude is left alone.
     /// </summary>
-    internal static string WithResume(string command, string? conversationId)
+    /// <param name="themeSettings">
+    /// A settings file naming Claude's theme to match the app's terminals (Claude can't ask the terminal itself: the
+    /// console layer swallows the question). Added unless the command already passes its own --settings.
+    /// </param>
+    internal static string PrepareCommand(string command, string? resumeId, Func<bool> hasConversation, string? themeSettings = null)
     {
-        if (conversationId == null || !System.Text.RegularExpressions.Regex.IsMatch(conversationId, "^[A-Za-z0-9-]{1,100}$")) return command;
         var tokens = command.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
         if (tokens.Length == 0 || !(tokens[0].Equals("claude", StringComparison.OrdinalIgnoreCase) || tokens[0].Equals("claude.exe", StringComparison.OrdinalIgnoreCase)))
             return command;
-        string[] picksItsOwn = ["-r", "--resume", "-c", "--continue", "-p", "--print", "--session-id", "--fork-session"];
-        if (tokens.Skip(1).Any(t => picksItsOwn.Contains(t.Split('=')[0], StringComparer.OrdinalIgnoreCase))) return command;
-        return command.Trim() + " --resume " + conversationId;
+        var flags = tokens.Skip(1).Select(t => t.Split('=')[0]).ToList();
+        bool Has(params string[] names) => flags.Any(f => names.Contains(f, StringComparer.OrdinalIgnoreCase));
+        if (Has("-p", "--print")) return command;   // no interface, so nothing to theme or continue
+
+        var result = command;
+        if (!Has("-r", "--resume", "--session-id", "--fork-session"))
+        {
+            if (resumeId != null && ConversationId().IsMatch(resumeId))
+                result = WithoutContinue(command) + " --resume " + resumeId;
+            else if (Has("-c", "--continue") && !hasConversation())
+                result = WithoutContinue(command);
+        }
+        if (themeSettings != null && !Has("--settings"))
+            result = result.TrimEnd() + " --settings \"" + themeSettings + "\"";
+        return result;
     }
+
+    /// <summary>The settings file that sets Claude's theme to "light" or "dark", written once into the app's data folder.</summary>
+    internal static string? ThemeSettingsFile(string? theme)
+    {
+        if (theme is not ("light" or "dark")) return null;
+        try
+        {
+            var path = Path.Combine(SessionStore.AppDataFolder, $"claude-theme-{theme}.json");
+            var content = $$"""{"theme":"{{theme}}"}""";
+            if (!File.Exists(path) || File.ReadAllText(path) != content) File.WriteAllText(path, content);
+            return path;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;   // Claude just uses its own theme setting
+        }
+    }
+
+    /// <summary>Whether starting this command again carries on a conversation (--continue or --resume) rather than starting a new one.</summary>
+    internal static bool CarriesOnConversation(string command)
+    {
+        var tokens = command.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (tokens.Length == 0 || !(tokens[0].Equals("claude", StringComparison.OrdinalIgnoreCase) || tokens[0].Equals("claude.exe", StringComparison.OrdinalIgnoreCase)))
+            return false;
+        string[] carryOn = ["-c", "--continue", "-r", "--resume"];
+        return tokens.Skip(1).Any(t => carryOn.Contains(t.Split('=')[0], StringComparer.OrdinalIgnoreCase));
+    }
+
+    private static string WithoutContinue(string command) => ContinueFlag().Replace(command.Trim(), "");
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\s+(?:-c|--continue)(?=\s|$)", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex ContinueFlag();
+
+    [System.Text.RegularExpressions.GeneratedRegex("^[A-Za-z0-9-]{1,100}$")]
+    private static partial System.Text.RegularExpressions.Regex ConversationId();
 
     /// <summary>The running processes in this session's terminal (empty when it isn't running).</summary>
     public int[] ProcessIds() => process?.ProcessIds() ?? [];

@@ -60,14 +60,14 @@ winget install JRSoftware.InnoSetup   # once
 | Action | How |
 |---|---|
 | Expand a session | Click its tile, its tab in the title bar, or press `Ctrl+1`…`Ctrl+9` |
-| Back to all sessions | `Shift+Esc`, the collapse button in the tile header, or the mouse Back button |
+| Back to all sessions | Click the open session's tab again, `Shift+Esc`, the collapse button in the tile header, or the mouse Back button |
 | Next / previous session | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
 | Toggle Git panel | `Ctrl+Shift+G` |
 | New session | `Ctrl+Shift+N`: start a new conversation (optionally one session per worktree) or **resume an existing conversation** |
 | Switch a session to another conversation | Session menu (⋯) → *Resume a different conversation…* |
 | Close a session | The × on its tab in the title bar, or middle-click the tab. After you confirm, the session is removed and its process stopped; the folder isn't touched |
-| Show one project | Click its name in the Projects row |
-| Show several projects | Tick or untick each project's checkbox; **All** shows every project, **None** hides them all |
+| Show one project | Ctrl+click its name in the Projects row, or right-click it → *Show only this project* |
+| Show several projects | Click a project's name or checkbox to show or hide it; **All** shows every project, **None** hides them all |
 | Put a session in a project | Pick the project when adding the session, drag its tab into the project's group, or right-click its tab → *Move to project…* |
 | Reorder tabs | Drag session, project or diff tabs (or right-click → *Move left/right*). Unknown stays last and the Terminal tab first |
 | Rename, recolour, reorder or delete a project | Right-click the project. *Edit project* sets its name and colour (a swatch, a custom colour or Automatic). Deleting it keeps its sessions; they just have no project |
@@ -93,7 +93,13 @@ Plain `Esc` always goes to the terminal, because Claude Code uses it to interrup
 
 **Conversation rail and tab:** the ticks down the right edge of the open terminal are the prompts you've sent in that session, newest at the bottom. Hovering one shows the prompt and the start of Claude's reply; clicking opens the session's **Conversation** tab next to the diff tabs, scrolled to that prompt. It shows the whole conversation as text: your prompts, Claude's answers with their formatting, and its tool calls (long runs folded). It follows along while Claude works, and its own rail jumps between prompts. Both come from Claude Code's saved transcript (the session's Claude process names it in `~/.claude/sessions`), so they work in Claude's full-screen mode, which keeps no terminal scrollback. Nothing is sent anywhere.
 
-**Updates:** a few seconds after starting, and every 6 hours, the app checks this repository's latest GitHub release (an anonymous request; nothing about you or your sessions is sent). When there's a newer version, an **Update to x.y.z** button appears in the title bar, showing what's new. *Update and restart* downloads the installer, checks it against the SHA-256 GitHub publishes for it (it won't run a file that doesn't match), closes the app, installs silently and reopens it. Running sessions carry on in the conversations they were in. The ⋯ menu at the top right has *Check for updates* and turns the automatic check off.
+**Theme:** *System*, *Light* or *Dark*, from the theme button (the palette next to the version number at the top right). *System* (the default) follows Windows' app mode (Settings › Personalisation › Colours), and changes with it. The terminals go light too, and each Claude is started in its matching theme (`--settings` with `{"theme":"light"}` or `"dark"`): Claude can't detect the terminal's colours itself, because the Windows console layer doesn't pass the question through. Sessions whose command passes its own `--settings` are left alone. Claude reads its theme when it starts, so after switching, the app offers to restart running Claude sessions; each carries on in its conversation.
+
+**Colours:** by default the app uses your Windows accent colour (Settings › Personalisation › Colours) for tabs, buttons and highlights, and follows it when you change it. To pick another, use *Accent colour…* under the theme button: Windows accent, the original purple, eight swatches or any custom colour, previewed as you click (Cancel or Esc puts back what you had). Shades are chosen so white text and the background stay readable in both themes, so a very light or dark colour is toned where needed.
+
+**Updates:** a few seconds after starting, and every 6 hours, the app checks this repository's latest GitHub release (an anonymous request; nothing about you or your sessions is sent). When there's a newer version, an **Update to x.y.z** button appears in the title bar, showing what's new. *Update and restart* downloads the installer, checks it against the SHA-256 GitHub publishes for it (it won't run a file that doesn't match), closes the app, installs silently and reopens it. Running sessions carry on in the conversations they were in. The version is shown at the right of the Projects row and in the window title; clicking it offers *Check for updates* and turns the automatic check off.
+
+**New sessions continue by default:** their command is `claude --continue`, so restarting the app (or a session) carries on the folder's last conversation. When the folder has no saved conversation yet, the app starts plain `claude` instead of letting Claude stop with "No conversation found to continue"; the command keeps `--continue` for next time.
 
 **Resuming:** the picker reads Claude Code's saved conversations from `~/.claude/projects`. A resumed session keeps `claude --resume <id>` as its command, so it reopens the same conversation every time the app starts. Close the conversation in any other terminal first. Conversations updated in the last few minutes are tagged *active now* as a reminder.
 
