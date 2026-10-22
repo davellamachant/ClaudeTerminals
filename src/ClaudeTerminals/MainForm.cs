@@ -84,6 +84,16 @@ internal sealed class MainForm : Form
             core.SetVirtualHostNameToFolderMapping("app.local", root, CoreWebView2HostResourceAccessKind.Allow);
             core.WebMessageReceived += OnWebMessage;
             core.NewWindowRequested += (_, args) => args.Handled = true;
+            // The terminal's Paste menu item reads the clipboard; without this WebView2 asks "Allow clipboard access?"
+            // the first time, a prompt that also takes focus away from the terminal. Only the app's own origin gets it
+            // (requests name the origin, not the page; navigation never leaves the app page anyway).
+            core.PermissionRequested += (_, args) =>
+            {
+                if (args.PermissionKind == CoreWebView2PermissionKind.ClipboardRead &&
+                    Uri.TryCreate(args.Uri, UriKind.Absolute, out var origin) &&
+                    origin.Scheme == Uri.UriSchemeHttps && string.Equals(origin.Host, "app.local", StringComparison.OrdinalIgnoreCase))
+                    args.State = CoreWebView2PermissionState.Allow;
+            };
             // The page's files come from the install folder and only change when the app is updated, but the browser
             // caches them heuristically from their timestamps; after an upgrade it could keep running the previous
             // version's app.js, possibly mixed with new files. Start each launch with an empty HTTP cache.
@@ -393,6 +403,37 @@ internal sealed class MainForm : Form
                 var dir = Str(msg, "directory");
                 return Directory.Exists(dir) ? await GitService.GetWorktreesAsync(dir) : new List<WorktreeInfo>();
             }
+            case "conversation":
+            {
+                // The conversation the session's Claude is in: a light outline for the rail, or everything for the
+                // Conversation tab (full). Nothing is sent again while the page already has this version, and a page
+                // that has `count` turns of this conversation only gets its last one (which may have grown) and newer.
+                var s = Get(msg);
+                var full = Bool(msg, "full");
+                var conv = await Task.Run(() => ConversationReader.ForProcesses(s.ProcessIds()));
+                if (conv == null) return new { found = false };
+                var same = OptStr(msg, "sessionId") == conv.SessionId;
+                if (same && msg.TryGetProperty("version", out var v) && v.ValueKind == JsonValueKind.Number && v.GetInt64() == conv.Version)
+                    return new { found = true, unchanged = true };
+                var from = same ? Math.Clamp(Int(msg, "count") - 1, 0, conv.Turns.Count) : 0;
+                return new
+                {
+                    found = true,
+                    sessionId = conv.SessionId,
+                    version = conv.Version,
+                    from,
+                    turns = conv.Turns.Skip(from).Select(t => full
+                        ? (object)new { index = t.Index, time = t.Time, prompt = t.Prompt, items = t.Items }
+                        : new
+                        {
+                            index = t.Index,
+                            time = t.Time,
+                            prompt = Preview(t.Prompt, 300),
+                            reply = Preview(t.Items.FirstOrDefault(i => i.Kind == "text")?.Text, 300),
+                            tools = t.Items.Count(i => i.Kind == "tool"),
+                        }),
+                };
+            }
             case "conversations":
             {
                 var dir = OptStr(msg, "directory");
@@ -466,6 +507,9 @@ internal sealed class MainForm : Form
                 if (!result.Ok) throw new InvalidOperationException(string.IsNullOrEmpty(result.Error) ? result.Text : result.Error);
                 return result.Text.Trim();
             }
+            case "git.suggestMessage":
+                // Visual Studio-style "Generate commit message": Claude describes what Commit would take.
+                return await CommitMessageService.SuggestAsync(GitDir(msg));
             case "git.pr":
             {
                 // The open pull request for the session's branch (GitHub or Azure DevOps), plus links for its menu.
@@ -541,6 +585,14 @@ internal sealed class MainForm : Form
 
     private static bool Bool(JsonElement e, string name) =>
         e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.True;
+
+    /// <summary>The start of a text on one line, for the conversation rail's hover cards.</summary>
+    private static string? Preview(string? text, int max)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        text = string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        return text.Length <= max ? text : text[..max] + "…";
+    }
 
     // Script and interpreter types that Windows' own unsafe-type list (AssocIsDangerous) may not cover.
     private static readonly HashSet<string> ScriptExtensions = new(StringComparer.OrdinalIgnoreCase)

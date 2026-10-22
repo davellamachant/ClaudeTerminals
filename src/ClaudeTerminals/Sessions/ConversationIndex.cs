@@ -19,22 +19,25 @@ internal static partial class ConversationIndex
 
     private static readonly ConcurrentDictionary<string, (DateTime Stamp, ConversationInfo Info)> Cache = new(StringComparer.OrdinalIgnoreCase);
 
-    private static string ProjectsRoot
+    /// <summary>Claude Code's config folder: CLAUDE_CONFIG_DIR, or ~/.claude.</summary>
+    internal static string ConfigDir
     {
         get
         {
             var configDir = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR");
-            if (string.IsNullOrWhiteSpace(configDir))
-                configDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude");
-            return Path.Combine(configDir, "projects");
+            return string.IsNullOrWhiteSpace(configDir)
+                ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude")
+                : configDir;
         }
     }
+
+    internal static string ProjectsRoot => Path.Combine(ConfigDir, "projects");
 
     [GeneratedRegex("[^A-Za-z0-9]")]
     private static partial Regex NonAlphanumeric();
 
     /// <summary>Claude names each project folder after its cwd with every non-alphanumeric character replaced by '-'.</summary>
-    private static string Encode(string directory) => NonAlphanumeric().Replace(Path.GetFullPath(directory).TrimEnd('\\'), "-");
+    internal static string Encode(string directory) => NonAlphanumeric().Replace(Path.GetFullPath(directory).TrimEnd('\\'), "-");
 
     public static List<ConversationInfo> List(string? directory, int max)
     {

@@ -59,6 +59,8 @@ const PATHS = {
   pr: 'M4 4.5a1.5 1.5 0 1 0 0-.01M4 6v4.5M4 13a1.5 1.5 0 1 0 0-.01M12 13a1.5 1.5 0 1 0 0-.01M12 11.5V6.5A2 2 0 0 0 10 4.5H7M8.5 3 7 4.5 8.5 6',
   checkOn: 'M2.5 2.5h11v11h-11zM5 8.2l2 2 4-4.4',
   checkOff: 'M2.5 2.5h11v11h-11z',
+  chat: 'M2.5 3h11v7.5H7.5l-3 2.5v-2.5h-2z',
+  sparkle: 'M7 2l1.2 3.3L11.5 6.5 8.2 7.7 7 11 5.8 7.7 2.5 6.5l3.3-1.2zM12 9.5l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z',
 };
 
 function icon(name, cls = '') {
@@ -215,6 +217,7 @@ function applyProjectFilter(instant = false) {
   for (const s of state.sessions) renderTileHeader(s);
   renderProjectBar();
   renderSessionTabs();
+  syncDocTabs();   // the current session, and so the project whose tabs are shown, may have changed
   renderSessionPicker();
   renderGit();
 }
@@ -384,6 +387,7 @@ function confirmDeleteProject(p) {
 }
 
 const PAD = 8, GAP = 8, HEADER_H = 30;
+const RAIL_W = 16;   // the conversation rail's gutter at the right of each terminal
 const MAX_WEBGL = 12;
 
 const TERM_THEME = {
@@ -449,7 +453,9 @@ function createSession(info) {
     if (state.expandedId !== s.id) expand(s.id);
   });
   s.header.addEventListener('contextmenu', (e) => { e.preventDefault(); sessionMenu(s, e.clientX, e.clientY); });
-  s.tile = h('div', { class: 'tile', 'data-id': s.id }, s.header, h('div', { class: 'tile-body' }, s.surface, s.cover, s.exitedBadge));
+  s.rail = h('div', { class: 'chat-rail' });
+  attachRail(s.rail);
+  s.tile = h('div', { class: 'tile', 'data-id': s.id }, s.header, h('div', { class: 'tile-body' }, s.surface, s.rail, s.cover, s.exitedBadge));
 
   const term = new Terminal({
     fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace',
@@ -489,6 +495,13 @@ function createSession(info) {
   term.onResize(({ cols, rows }) => { if (s.running) post({ type: 'resize', id: s.id, cols, rows }); });
   term.onTitleChange((t) => { s.title = t; renderTileHeader(s); });
   term.onBell(() => { if (state.expandedId !== s.id) setAttention(s, true); });
+  // The right button only opens the menu. Left to xterm, a right press is reported to Claude when it tracks the mouse,
+  // and Claude pastes on right-click, so the clipboard was pasted as the menu opened.
+  for (const type of ['mousedown', 'mouseup', 'mousemove']) {
+    s.surface.addEventListener(type, (e) => {
+      if (e.button === 2 || (e.buttons & 2)) e.stopPropagation();
+    }, true);
+  }
   s.surface.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     if (state.expandedId === s.id) terminalMenu(s, e.clientX, e.clientY);
@@ -705,7 +718,7 @@ function renderSessionTabs() {
 
 function surfaceSize() {
   const r = $('#termPane').getBoundingClientRect();
-  return { w: Math.max(200, Math.floor(r.width - 2 * PAD - 2 - 8)), h: Math.max(100, Math.floor(r.height - 2 * PAD - HEADER_H - 2 - 4)) };
+  return { w: Math.max(200, Math.floor(r.width - 2 * PAD - 2 - 8 - RAIL_W)), h:Math.max(100, Math.floor(r.height - 2 * PAD - HEADER_H - 2 - 4)) };
 }
 
 const refit = debounce(() => {
@@ -784,6 +797,8 @@ function expand(id) {
   for (const x of state.sessions) renderTileHeader(x);
   renderSessionTabs();
   setTimeout(() => s.term.focus(), 30);
+  renderTermRail(s);
+  refreshTermRail(s);
   // Last, so a fault in the Git panel can never stop the terminal from opening.
   if (switched) {
     try { renderGit(); } catch (err) { console.error('Git panel render failed', err); }
@@ -836,6 +851,8 @@ function handleShortcut(e) {
   }
   if (e.ctrlKey && !e.shiftKey && (k === 'PageUp' || k === 'PageDown')) { cycleDoc(k === 'PageUp' ? -1 : 1); return true; }
   if (e.ctrlKey && k === 'F4') { if (activeTab()) closeDoc(docs.active); return true; }
+  // Ctrl+W closes a diff or Conversation tab. On the terminal it isn't taken: it deletes a word in Claude's prompt.
+  if (e.ctrlKey && !e.shiftKey && !e.altKey && (k === 'w' || k === 'W') && activeTab()) { closeDoc(docs.active); return true; }
   if (e.ctrlKey && k === 'Tab') { cycle(e.shiftKey ? -1 : 1); return true; }
   if (e.ctrlKey && e.shiftKey && (k === 'G' || k === 'g')) { toggleGit(); return true; }
   if (e.ctrlKey && e.shiftKey && (k === 'N' || k === 'n')) { showAddDialog(); return true; }
@@ -901,7 +918,8 @@ function closeMenu() {
 
 function showMenu(x, y, items) {
   closeMenu();
-  const menu = h('div', { class: 'menu' }, items.filter(Boolean).map((it) => it === '-'
+  // Pressing on the menu mustn't take focus: after Paste in the terminal's menu, typing has to go on in the terminal.
+  const menu = h('div', { class: 'menu', onmousedown: (e) => e.preventDefault() }, items.filter(Boolean).map((it) => it === '-'
     ? h('div', { class: 'menu-sep' })
     : h('div', { class: 'menu-item' + (it.danger ? ' danger' : ''), onclick: () => { closeMenu(); it.action(); } },
       it.label, it.kbd && h('span', { class: 'kbd' }, it.kbd))));
@@ -918,6 +936,7 @@ function sessionMenu(s, x, y) {
   showMenu(x, y, [
     state.expandedId === s.id ? { label: 'Back to all sessions', kbd: 'Shift+Esc', action: collapse } : { label: 'Expand', action: () => expand(s.id) },
     { label: 'Show Git changes', action: () => showGit(s.id) },
+    { label: 'Show conversation', action: () => openConversation(s) },
     '-',
     { label: 'Resume a different conversation…', action: () => showResumeDialog(s) },
     { label: 'Rename / edit command…', action: () => showEditDialog(s) },
@@ -934,12 +953,15 @@ function sessionMenu(s, x, y) {
 }
 
 function terminalMenu(s, x, y) {
+  // These leave you in the terminal, ready to type (Enter after Paste, say).
+  const inTerminal = (fn) => async () => { await fn(); s.term.focus(); };
   showMenu(x, y, [
-    { label: 'Copy', kbd: 'Ctrl+C', action: () => s.term.hasSelection() && navigator.clipboard.writeText(s.term.getSelection()) },
-    { label: 'Paste', kbd: 'Ctrl+V', action: () => navigator.clipboard.readText().then((t) => t && s.term.paste(t)) },
-    { label: 'Select all', action: () => s.term.selectAll() },
-    { label: 'Clear scrollback', action: () => s.term.clear() },
+    { label: 'Copy', kbd: 'Ctrl+C', action: inTerminal(() => s.term.hasSelection() && navigator.clipboard.writeText(s.term.getSelection())) },
+    { label: 'Paste', kbd: 'Ctrl+V', action: inTerminal(() => navigator.clipboard.readText().then((t) => t && s.term.paste(t))) },
+    { label: 'Select all', action: inTerminal(() => s.term.selectAll()) },
+    { label: 'Clear scrollback', action: inTerminal(() => s.term.clear()) },
     '-',
+    { label: 'Show conversation', action: () => openConversation(s) },
     { label: 'Back to all sessions', kbd: 'Shift+Esc', action: collapse },
   ]);
 }
@@ -1271,6 +1293,7 @@ function showGit(id) {
     state.currentId = id;
     store.set('currentId', id);
     layout();
+    syncDocTabs();
   }
   if (!state.gitVisible) {
     state.gitVisible = true;
@@ -1475,19 +1498,55 @@ function commitArea(s) {
   msg.value = s.commitDraft;
   const btn = h('button', { class: 'btn primary' });
   const count = h('span', { class: 'dim' });
-  const wrap = h('div', { class: 'git-commit' }, msg, h('div', { class: 'git-commit-actions' }, btn, count));
+  const suggest = h('button', { class: 'btn commit-suggest', onclick: () => suggestCommitMessage(s) }, iconEl('sparkle'), 'Suggest');
+  const wrap = h('div', { class: 'git-commit' }, msg,
+    h('div', { class: 'git-commit-actions' }, btn, count, h('div', { class: 'spacer' }), suggest));
   const update = () => {
     const g = s.git;
     const total = g ? g.staged.length + g.unstaged.length : 0;
     btn.textContent = g?.staged.length ? 'Commit Staged' : 'Commit All';
     btn.disabled = !msg.value.trim() || total === 0;
     count.textContent = total ? `${total} change${total === 1 ? '' : 's'}` : '';
+    suggest.disabled = total === 0 || !!s.suggesting;
+    suggest.classList.toggle('busy', !!s.suggesting);
+    suggest.title = s.suggesting ? 'Writing a commit message…'
+      : `Suggest a commit message for the ${g?.staged.length ? 'staged changes' : 'changes'} (Claude)`;
   };
   msg.addEventListener('input', () => { s.commitDraft = msg.value; s.commitEdits = (s.commitEdits || 0) + 1; update(); });
   msg.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.ctrlKey && !btn.disabled) btn.click(); });
   btn.addEventListener('click', () => doCommit(s, !s.git?.staged.length));
   s.commitUi = { wrap, msg, update };
   return s.commitUi;
+}
+
+/**
+ * Visual Studio's "Generate commit message": Claude writes one for what Commit would take. It replaces the box's text
+ * as an edit, so Ctrl+Z brings back what was there.
+ */
+async function suggestCommitMessage(s) {
+  if (s.suggesting) return;
+  s.suggesting = true;
+  s.commitUi?.update();
+  try {
+    const text = await request('git.suggestMessage', { id: s.id });
+    const msg = s.commitUi?.msg;
+    if (msg?.isConnected) {
+      msg.focus();
+      msg.select();
+      document.execCommand('insertText', false, text);   // fires input, which saves the draft
+      msg.setSelectionRange(0, 0);
+      msg.scrollTop = 0;
+    } else {
+      s.commitDraft = text;   // the panel moved on to another session meanwhile
+      if (msg) msg.value = text;
+    }
+  } catch (e) {
+    s.info = { text: e.message, error: true };
+    if (currentSession() === s) renderGit();
+  } finally {
+    s.suggesting = false;
+    s.commitUi?.update();
+  }
 }
 
 async function doCommit(s, all) {
@@ -1902,6 +1961,24 @@ const docs = { tabs: [], active: 'terminal' };
 const docKey = (sessionId, spec) => [sessionId, spec.mode, spec.commit || '', spec.path].join('|');
 const activeTab = () => docs.tabs.find((t) => t.key === docs.active) || null;
 
+/**
+ * Diff and Conversation tabs belong to their session's project, and only the current session's project's tabs are
+ * shown (the session the Git panel is on, which expanding a session also makes current). Others wait until you're back.
+ */
+function tabShown(t) {
+  const cur = currentSession();
+  const s = state.byId.get(t.sessionId);
+  return !cur || !s || groupOf(s) === groupOf(cur);
+}
+const shownTabs = () => docs.tabs.filter(tabShown);
+
+/** After the current project changes: a tab that's now someone else's makes way for the terminal. */
+function syncDocTabs() {
+  const t = activeTab();
+  if (t && !tabShown(t)) showTerminalDoc();
+  else renderDocTabs();
+}
+
 /** Single-click opens the reusable (italic) preview tab; pin=true opens or keeps a permanent tab. */
 function openDiff(s, spec, pin = false) {
   const key = docKey(s.id, spec);
@@ -1910,7 +1987,7 @@ function openDiff(s, spec, pin = false) {
     if (pin) tab.preview = false;
   } else {
     tab = { key, sessionId: s.id, spec, preview: !pin, viewState: null };
-    const previewIdx = pin ? -1 : docs.tabs.findIndex((t) => t.preview);
+    const previewIdx = pin ? -1 : docs.tabs.findIndex((t) => t.preview && tabShown(t));   // one preview tab per project
     if (previewIdx >= 0) docs.tabs[previewIdx] = tab;
     else docs.tabs.push(tab);
   }
@@ -1919,14 +1996,22 @@ function openDiff(s, spec, pin = false) {
 
 function activateDoc(key) {
   const prev = activeTab();
-  if (prev && diffEditor && prev.key !== key) prev.viewState = diffEditor.saveViewState();
-  docs.active = docs.tabs.some((t) => t.key === key) ? key : 'terminal';
+  if (prev && prev.key !== key) {
+    if (isConvTab(prev)) prev.scrollTop = $('#convBody').scrollTop;
+    else if (diffEditor) prev.viewState = diffEditor.saveViewState();
+  }
+  docs.active = docs.tabs.some((t) => t.key === key && tabShown(t)) ? key : 'terminal';
   const tab = activeTab();
-  $('#diffDoc').hidden = !tab;
+  $('#diffDoc').hidden = !tab || isConvTab(tab);
+  $('#convDoc').hidden = !isConvTab(tab);
   $('#termPane').classList.toggle('behind', !!tab);
+  hideRailCard();
   renderDocTabs();
   if (tab) {
-    if (prev !== tab) loadDiff(tab);
+    if (prev !== tab) {
+      if (isConvTab(tab)) showConversation(tab);
+      else loadDiff(tab);
+    }
   } else {
     diffState.seq++;
     const s = state.byId.get(state.expandedId);
@@ -1943,16 +2028,17 @@ function closeDoc(key) {
   docs.tabs.splice(i, 1);
   if (wasActive) {
     docs.active = 'terminal';   // don't save view state for the tab being closed
-    const next = docs.tabs[i] || docs.tabs[i - 1];
+    const shown = docs.tabs.map(tabShown);
+    const next = docs.tabs.slice(i).find((_, k) => shown[i + k]) || docs.tabs.slice(0, i).reverse().find((_, k) => shown[i - 1 - k]);
     activateDoc(next ? next.key : 'terminal');
   } else {
     renderDocTabs();
   }
-  if (!docs.tabs.length) disposeDiffModels();
+  if (!docs.tabs.some((t) => !isConvTab(t))) disposeDiffModels();
 }
 
 function cycleDoc(delta) {
-  const keys = ['terminal', ...docs.tabs.map((t) => t.key)];
+  const keys = ['terminal', ...shownTabs().map((t) => t.key)];
   const i = keys.indexOf(docs.active);
   activateDoc(keys[(i + delta + keys.length) % keys.length]);
 }
@@ -1967,8 +2053,20 @@ function renderDocTabs() {
   }, iconEl('terminal'), h('span', { class: 'doc-title' }, ex ? ex.name : 'All sessions'), ex ? projectTag(ex) : null,
   waiting ? h('span', { class: 'badge', title: `${waiting} session(s) waiting for you` }, String(waiting)) : null);
 
-  const tabs = docs.tabs.map((t) => {
+  const tabs = shownTabs().map((t) => {
     const s = state.byId.get(t.sessionId);
+    if (isConvTab(t)) {
+      return h('div', {
+        class: 'doc-tab' + (docs.active === t.key ? ' active' : ''),
+        'data-id': t.key,
+        title: `${s?.name ?? ''}: the conversation so far`,
+        onclick: (e) => { if (!e.target.closest('button')) activateDoc(t.key); },
+        onmousedown: (e) => { if (e.button === 1) e.preventDefault(); },
+        onauxclick: (e) => { if (e.button === 1) closeDoc(t.key); },
+      }, iconEl('chat'), h('span', { class: 'doc-title' }, 'Conversation'),
+      h('span', { class: 'doc-sub' }, s?.name ?? ''),
+      h('button', { class: 'icon-btn small', title: 'Close (Ctrl+W)', onclick: () => closeDoc(t.key) }, iconEl('close')));
+    }
     const sub = t.spec.mode === 'commit' ? t.spec.commit.slice(0, 7) : t.spec.mode === 'staged' ? 'staged' : 'diff';
     return h('div', {
       class: 'doc-tab' + (t.preview ? ' preview' : '') + (docs.active === t.key ? ' active' : ''),
@@ -1980,7 +2078,7 @@ function renderDocTabs() {
       onauxclick: (e) => { if (e.button === 1) closeDoc(t.key); },
     }, h('span', { class: 'doc-title' }, t.spec.path.split('/').pop()),
     h('span', { class: 'doc-sub' }, `${s?.name ?? ''} · ${sub}`),
-    h('button', { class: 'icon-btn small', title: 'Close (Ctrl+F4)', onclick: () => closeDoc(t.key) }, iconEl('close')));
+    h('button', { class: 'icon-btn small', title: 'Close (Ctrl+W)', onclick: () => closeDoc(t.key) }, iconEl('close')));
   });
   fill($('#docTabs'), termTab, tabs);
   revealActive($('#docTabs'), '.doc-tab.active');
@@ -2075,7 +2173,7 @@ function goToChange(dir, absolute = false) {
 /** Keeps the visible diff live while the session edits the file. */
 function refreshOpenDiff(s) {
   const t = activeTab();
-  if (!t || t.sessionId !== s.id || t.spec.mode === 'commit') return;
+  if (!t || isConvTab(t) || t.sessionId !== s.id || t.spec.mode === 'commit') return;
   loadDiff(t, true);
 }
 
@@ -2093,12 +2191,433 @@ $('#diffMode').addEventListener('click', () => { diffState.sideBySide = !diffSta
 $('#diffWs').addEventListener('click', () => { diffState.ignoreWs = !diffState.ignoreWs; store.set('diffIgnoreWs', diffState.ignoreWs); applyDiffOptions(); });
 $('#diffOpenFile').addEventListener('click', () => {
   const t = activeTab();
-  if (t) request('openFile', { id: t.sessionId, path: t.spec.path }).catch((e) => toast(e.message, true));
+  if (t && !isConvTab(t)) request('openFile', { id: t.sessionId, path: t.spec.path }).catch((e) => toast(e.message, true));
 });
 $('#diffDoc').addEventListener('keydown', (e) => {
   if (e.altKey && e.key === 'ArrowDown') { e.preventDefault(); goToChange(1); }
   if (e.altKey && e.key === 'ArrowUp') { e.preventDefault(); goToChange(-1); }
 });
+
+// ------------------------------------------------------------------ conversation rail and Conversation tab
+// In its full-screen mode Claude keeps no terminal scrollback, so the rail outlines the conversation from Claude's own
+// transcript (one tick per prompt), and the Conversation tab shows the whole of it as text the app can scroll.
+
+const CONV_POLL_MS = 3000;
+const convKey = (sessionId) => 'conv|' + sessionId;
+const isConvTab = (t) => t?.kind === 'conv';
+
+/**
+ * Fetches the session's conversation: the outline for the rail (s.conv) or everything for the tab (s.convFull).
+ * Resolves true when what the page has changed.
+ */
+async function loadConversation(s, full) {
+  const slot = full ? 'convFull' : 'conv';
+  const busy = slot + 'Loading';
+  if (s[busy]) return false;
+  s[busy] = true;
+  try {
+    const have = s[slot];
+    const r = await request('conversation', { id: s.id, full, sessionId: have?.sessionId, version: have?.version, count: have?.turns.length ?? 0 });
+    if (!r.found) {
+      s[slot] = null;
+      return !!have;
+    }
+    if (r.unchanged) return false;
+    // Only the turns from r.from on were sent; earlier ones are as the page already has them.
+    if (r.from > 0 && have?.sessionId === r.sessionId) r.turns = have.turns.slice(0, r.from).concat(r.turns);
+    s[slot] = r;
+    return true;
+  } catch {
+    return false;   // the session went away, or its Claude is between conversations
+  } finally {
+    s[busy] = false;
+  }
+}
+
+setInterval(async () => {
+  if (document.hidden) return;
+  const tab = activeTab();
+  if (isConvTab(tab)) {
+    const s = state.byId.get(tab.sessionId);
+    if (s?.running && await loadConversation(s, true) && docs.active === tab.key) renderConversation(s, tab);
+  } else if (!tab) {
+    const s = state.byId.get(state.expandedId);
+    if (s?.running) refreshTermRail(s);
+  }
+}, CONV_POLL_MS);
+
+async function refreshTermRail(s) {
+  if (await loadConversation(s, false)) renderTermRail(s);
+}
+
+/** The open terminal's rail: the latest prompt is marked, and a click opens that prompt in the Conversation tab. */
+function renderTermRail(s) {
+  const turns = s.conv?.turns || [];
+  renderRail(s.rail, turns.length, turns.length - 1, {
+    pick: (i) => openConversation(s, i),
+    card: (i) => turns[i],
+  });
+}
+
+// ---- the rail
+
+/** Draws n ticks; their spacing is worked out in CSS from the rail's height, so it follows resizes and animations. */
+function renderRail(rail, n, active, handlers) {
+  rail.rail = { n, ...handlers };
+  rail.style.setProperty('--n', String(Math.max(n, 1)));
+  const ticks = [];
+  for (let i = 0; i < n; i++) ticks.push(h('i', { class: i === active ? 'active' : null, style: `--k:${i - (n - 1) / 2}` }));
+  rail.replaceChildren(...ticks);
+  rail.title = n ? '' : 'No conversation to show yet';
+}
+
+function markRailActive(rail, active) {
+  [...rail.children].forEach((t, i) => t.classList.toggle('active', i === active));
+}
+
+/** The tick nearest the pointer (ticks can be a pixel or two apart in a long conversation). */
+function railIndexAt(rail, clientY) {
+  const n = rail.rail?.n || 0;
+  if (!n) return -1;
+  const r = rail.getBoundingClientRect();
+  const gap = Math.min(10, (r.height - 24) / n);
+  const i = Math.round((clientY - r.top - r.height / 2) / gap + (n - 1) / 2);
+  return Math.max(0, Math.min(n - 1, i));
+}
+
+function attachRail(rail) {
+  let hot = -1;
+  const setHot = (i) => {
+    if (i === hot) return;
+    rail.children[hot]?.classList.remove('hot');
+    hot = i;
+    rail.children[hot]?.classList.add('hot');
+  };
+  rail.addEventListener('pointermove', (e) => {
+    const i = railIndexAt(rail, e.clientY);
+    setHot(i);
+    if (i < 0) return hideRailCard();
+    showRailCard(rail, i);
+  });
+  rail.addEventListener('pointerleave', () => { setHot(-1); hideRailCard(); });
+  rail.addEventListener('mousedown', (e) => e.preventDefault());   // keep focus where it is
+  rail.addEventListener('click', (e) => {
+    const i = railIndexAt(rail, e.clientY);
+    if (i >= 0) { hideRailCard(); rail.rail.pick(i); }
+  });
+}
+
+function showRailCard(rail, i) {
+  const t = rail.rail.card(i);
+  const card = $('#railCard');
+  if (!t) return hideRailCard();
+  const reply = t.reply ?? t.items?.find((x) => x.kind === 'text')?.text;
+  const tools = t.tools ?? t.items?.filter((x) => x.kind === 'tool').length ?? 0;
+  const meta = [`Prompt ${i + 1} of ${rail.rail.n}`, t.time && formatTurnTime(t.time), tools && `${tools} tool call${tools === 1 ? '' : 's'}`];
+  fill(card,
+    h('div', { class: 'rc-prompt' }, t.prompt),
+    reply && h('div', { class: 'rc-reply' }, reply.length > 400 ? reply.slice(0, 400) + '…' : reply),
+    h('div', { class: 'rc-meta' }, meta.filter(Boolean).join(' · ')));
+  card.hidden = false;
+  const r = rail.getBoundingClientRect();
+  const n = rail.rail.n;
+  const gap = Math.min(10, (r.height - 24) / n);
+  const y = r.top + r.height / 2 + (i - (n - 1) / 2) * gap;
+  card.style.right = `${Math.max(8, innerWidth - r.left + 6)}px`;
+  card.style.top = `${Math.max(8, Math.min(innerHeight - card.offsetHeight - 8, y - 20))}px`;
+}
+
+function hideRailCard() {
+  const card = document.getElementById('railCard');
+  if (card) card.hidden = true;
+}
+
+function formatTurnTime(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  const today = new Date().toDateString() === d.toDateString();
+  return today
+    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+// ---- the Conversation tab: one per session, next to the diff tabs
+
+const convView = { key: null, sessionId: null, els: [] };
+
+/** Opens (or switches to) the session's Conversation tab, scrolled to prompt `index` (or the end). */
+function openConversation(s, index = null) {
+  if (currentSession() && groupOf(currentSession()) !== groupOf(s)) expand(s.id);
+  const key = convKey(s.id);
+  let tab = docs.tabs.find((t) => t.key === key);
+  if (!tab) {
+    tab = { key, kind: 'conv', sessionId: s.id, preview: false, scrollTop: null };
+    docs.tabs.push(tab);
+  }
+  tab.pendingTurn = index;
+  if (docs.active === key) {
+    if (index != null && convView.key === key && convView.els[index]) { tab.pendingTurn = null; scrollToTurn(index); }
+  } else {
+    activateDoc(key);
+  }
+}
+
+async function showConversation(tab) {
+  const s = state.byId.get(tab.sessionId);
+  if (!s) return;
+  $('#convSession').textContent = s.name;
+  if (convView.key !== tab.key) {
+    turnObserver.disconnect();
+    $('#convBody').replaceChildren();
+    Object.assign(convView, { key: tab.key, sessionId: null, els: [] });
+  } else if (tab.pendingTurn == null && tab.scrollTop != null) {
+    $('#convBody').scrollTop = tab.scrollTop;   // a hidden pane loses its scroll position
+  }
+  if (s.convFull) renderConversation(s, tab);
+  else $('#convSummary').textContent = 'Loading…';
+  if (s.running) await loadConversation(s, true);
+  if (docs.active === tab.key) renderConversation(s, tab);
+  $('#convBody').focus({ preventScroll: true });   // so the keyboard scrolls it
+}
+
+function renderConversation(s, tab) {
+  const body = $('#convBody');
+  const data = s.convFull;
+  if (!data || !data.turns.length) {
+    convView.els = [];
+    convView.sessionId = null;
+    $('#convSummary').textContent = '';
+    fill(body, h('div', { class: 'chat-empty' }, !s.running ? 'This session isn’t running.'
+      : data ? 'No prompts in this conversation yet.' : 'No Claude conversation found in this session.'));
+    renderRail($('#convRail'), 0, -1, { pick() {}, card() {} });
+    return;
+  }
+  const atEnd = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
+  const firstShow = convView.sessionId === null;
+  if (convView.sessionId !== data.sessionId) {
+    // A different conversation (/clear or /resume in the terminal): start over.
+    turnObserver.disconnect();
+    body.replaceChildren();
+    convView.els = [];
+    convView.sessionId = data.sessionId;
+  }
+  // Earlier turns never change; the last shown one may have grown, so it's redrawn with any new ones.
+  const keep = Math.max(0, Math.min(convView.els.length, data.turns.length) - 1);
+  for (const el of convView.els.splice(keep)) { turnObserver.unobserve(el); el.remove(); }
+  for (const t of data.turns.slice(keep)) {
+    const el = turnEl(t);
+    body.append(el);
+    convView.els.push(el);
+  }
+  const n = data.turns.length;
+  // Fill the end now (a placeholder's guessed height would spoil following along or opening at the end); the rest
+  // fills in as it scrolls near the view.
+  for (const el of convView.els.slice(Math.max(keep, n - 3))) fillTurn(el);
+  $('#convSummary').textContent = `${n} prompt${n === 1 ? '' : 's'}`;
+
+  if (tab.pendingTurn != null) {
+    scrollToTurn(Math.min(tab.pendingTurn, n - 1));
+    tab.pendingTurn = null;
+  } else if (firstShow) {
+    body.scrollTop = tab.scrollTop ?? body.scrollHeight;
+  } else if (atEnd) {
+    body.scrollTop = body.scrollHeight;   // following along as Claude answers
+  }
+  renderRail($('#convRail'), n, turnInView(), {
+    pick: (i) => scrollToTurn(i),
+    card: (i) => s.convFull?.turns[i],
+  });
+}
+
+/**
+ * A turn starts as an empty placeholder: a conversation can have thousands, so each is only built (Markdown and all)
+ * when it comes near the view.
+ */
+function turnEl(t) {
+  const el = h('section', { class: 'chat-turn', 'data-index': t.index });
+  el.turn = t;
+  turnObserver.observe(el);
+  return el;
+}
+
+const turnObserver = new IntersectionObserver((entries) => {
+  for (const e of entries) if (e.isIntersecting) fillTurn(e.target);
+}, { root: $('#convBody'), rootMargin: '1500px 0px' });
+
+function fillTurn(el) {
+  if (!el.turn) return;
+  const t = el.turn;
+  el.turn = null;
+  turnObserver.unobserve(el);
+  el.classList.add('filled');
+  const answer = [];
+  let tools = [];
+  const flushTools = () => {
+    if (!tools.length) return;
+    const lines = tools.map((x) => h('div', { class: 'chat-tool', title: `${x.tool} ${x.text}` },
+      h('span', { class: 'chat-tool-name' }, x.tool), ' ', h('span', { class: 'chat-tool-detail' }, x.text)));
+    if (lines.length <= 3) answer.push(h('div', { class: 'chat-tools' }, lines));
+    else {
+      const names = [...new Set(tools.map((x) => x.tool))];
+      answer.push(h('details', { class: 'chat-tools' },
+        h('summary', {}, `${tools.length} tool calls: ${names.slice(0, 4).join(', ')}${names.length > 4 ? '…' : ''}`), lines));
+    }
+    tools = [];
+  };
+  for (const it of t.items) {
+    if (it.kind === 'tool') { tools.push(it); continue; }
+    flushTools();
+    answer.push(h('div', { class: 'md' }, renderMarkdown(it.text)));
+  }
+  flushTools();
+  el.replaceChildren(
+    h('div', { class: 'chat-prompt' },
+      h('div', { class: 'chat-meta' }, `You${t.time ? ' · ' + formatTurnTime(t.time) : ''}`),
+      h('div', { class: 'chat-prompt-text' }, t.prompt)),
+    h('div', { class: 'chat-answer' }, answer));
+}
+
+function scrollToTurn(i) {
+  const el = convView.els[i];
+  if (!el) return;
+  for (const x of convView.els.slice(i, i + 3)) fillTurn(x);   // so the view lands on real content
+  const body = $('#convBody');
+  body.scrollTop = el.offsetTop - 8;
+  // Placeholders around it fill in over the next frames and change height; line up again unless the user has scrolled.
+  let expected = body.scrollTop;
+  for (const ms of [60, 200, 500]) {
+    setTimeout(() => {
+      if (body.scrollTop !== expected || !el.isConnected) return;
+      body.scrollTop = el.offsetTop - 8;
+      expected = body.scrollTop;
+    }, ms);
+  }
+  el.classList.remove('flash');
+  void el.offsetWidth;
+  el.classList.add('flash');
+  setTimeout(() => el.classList.remove('flash'), 900);
+  markRailActive($('#convRail'), i);
+}
+
+/** The prompt at the top of the Conversation tab's view. */
+function turnInView() {
+  const top = $('#convBody').scrollTop + 12;
+  const els = convView.els;
+  let lo = 0, hi = els.length - 1, found = els.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (els[mid].offsetTop + els[mid].offsetHeight > top) { found = mid; hi = mid - 1; } else lo = mid + 1;
+  }
+  return found;
+}
+
+$('#convBody').addEventListener('scroll', debounce(() => {
+  if (isConvTab(activeTab())) markRailActive($('#convRail'), turnInView());
+}, 50));
+attachRail($('#convRail'));
+
+// ---- Markdown: enough for Claude's answers, built as DOM nodes (never HTML strings)
+
+function renderMarkdown(src) {
+  const lines = src.replace(/\r\n?/g, '\n').split('\n');
+  const out = [];
+  const fenceRe = /^\s*(`{3,}|~{3,})/;
+  const listRe = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
+  const hrRe = /^\s{0,3}([-*_])(\s*\1){2,}\s*$/;
+  const headRe = /^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/;
+  const tableSepRe = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/;
+  const cells = (l) => l.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
+  const isTable = (i) => lines[i].includes('|') && i + 1 < lines.length && tableSepRe.test(lines[i + 1]);
+  const startsBlock = (i) => fenceRe.test(lines[i]) || headRe.test(lines[i]) || hrRe.test(lines[i]) ||
+    listRe.test(lines[i]) || /^\s*>/.test(lines[i]) || isTable(i);
+
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    let m;
+    if (!line.trim()) { i++; continue; }
+    if ((m = fenceRe.exec(line))) {
+      const fence = m[1];
+      const code = [];
+      for (i++; i < lines.length && !lines[i].trim().startsWith(fence); i++) code.push(lines[i]);
+      i++;
+      out.push(h('pre', { class: 'md-code' }, h('code', {}, code.join('\n'))));
+    } else if ((m = headRe.exec(line))) {
+      out.push(h('div', { class: `md-h md-h${m[1].length}` }, inline(m[2])));
+      i++;
+    } else if (hrRe.test(line)) {
+      out.push(h('hr'));
+      i++;
+    } else if (/^\s*>/.test(line)) {
+      const quoted = [];
+      for (; i < lines.length && /^\s*>/.test(lines[i]); i++) quoted.push(lines[i].replace(/^\s*>\s?/, ''));
+      out.push(h('blockquote', {}, renderMarkdown(quoted.join('\n'))));
+    } else if (isTable(i)) {
+      const head = cells(line);
+      const rows = [];
+      for (i += 2; i < lines.length && lines[i].includes('|') && lines[i].trim(); i++) rows.push(cells(lines[i]));
+      out.push(h('table', {},
+        h('thead', {}, h('tr', {}, head.map((c) => h('th', {}, inline(c))))),
+        h('tbody', {}, rows.map((r) => h('tr', {}, head.map((_, k) => h('td', {}, inline(r[k] ?? ''))))))));
+    } else if (listRe.test(line)) {
+      const items = [];
+      for (; i < lines.length; i++) {
+        const lm = listRe.exec(lines[i]);
+        if (lm) items.push({ indent: lm[1].length, ordered: /\d/.test(lm[2]), start: parseInt(lm[2], 10), text: lm[3] });
+        else if (lines[i].trim() && /^\s{2,}/.test(lines[i])) items[items.length - 1].text += ' ' + lines[i].trim();
+        else break;
+      }
+      out.push(listEl(items));
+    } else {
+      const para = [];
+      for (; i < lines.length && lines[i].trim() && (para.length === 0 || !startsBlock(i)); i++) para.push(lines[i]);
+      out.push(h('p', {}, para.map((l, k) => [k ? h('br') : null, inline(l.trim())])));
+    }
+  }
+  return out;
+}
+
+/** Nests list items by indentation. */
+function listEl(items) {
+  const stack = [];
+  let root = null;
+  for (const it of items) {
+    while (stack.length > 1 && it.indent < stack[stack.length - 1].indent) stack.pop();
+    let cur = stack[stack.length - 1];
+    if (!cur || it.indent > cur.indent + 1) {
+      const list = h(it.ordered ? 'ol' : 'ul', { start: it.ordered && it.start !== 1 ? it.start : null });
+      if (cur) (cur.el.lastElementChild || cur.el).append(list);
+      else root = list;
+      stack.push(cur = { indent: it.indent, el: list });
+    }
+    cur.el.append(h('li', {}, inline(it.text)));
+  }
+  return root;
+}
+
+const INLINE_RE = /(`+)(.+?)\1(?!`)|\*\*(.+?)\*\*|__(.+?)__|\*([^*\s](?:.*?[^*\s])?)\*|(?<![\w])_([^_\s](?:.*?[^_\s])?)_(?![\w])|\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)|(https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"])/g;
+
+function inline(text) {
+  const out = [];
+  const re = new RegExp(INLINE_RE.source, 'g');
+  let last = 0, m;
+  while ((m = re.exec(text))) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    if (m[1]) out.push(h('code', { class: 'md-inline' }, m[2].replace(/^ (.+) $/, '$1')));
+    else if (m[3] || m[4]) out.push(h('strong', {}, inline(m[3] || m[4])));
+    else if (m[5] || m[6]) out.push(h('em', {}, inline(m[5] || m[6])));
+    else if (m[7]) out.push(mdLink(m[8], inline(m[7])));
+    else out.push(mdLink(m[9], m[9]));
+    last = re.lastIndex;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
+const mdLink = (url, kids) => h('a', {
+  href: '#', title: url,
+  onclick: (e) => { e.preventDefault(); request('openUrl', { uri: url }).catch((err) => toast(err.message, true)); },
+}, kids);
 
 // ------------------------------------------------------------------ scrolling tab rows
 

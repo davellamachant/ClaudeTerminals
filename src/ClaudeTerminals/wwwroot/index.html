@@ -51,6 +51,18 @@
           <div id="diffEditor"></div>
           <div id="diffNotice" hidden></div>
         </section>
+
+        <section id="convDoc" hidden>
+          <div class="diff-toolbar">
+            <span id="convSummary" class="diff-summary"></span>
+            <div class="spacer"></div>
+            <span id="convSession" class="dim"></span>
+          </div>
+          <div class="chat-wrap">
+            <div id="convBody" tabindex="-1"></div>
+            <div id="convRail" class="chat-rail"></div>
+          </div>
+        </section>
         </div>
       </div>
 
@@ -76,6 +88,7 @@
 
   <div id="modalHost" hidden></div>
   <div id="menuHost"></div>
+  <div id="railCard" hidden></div>
   <div id="toastHost"></div>
 
   <script src="lib/xterm/xterm.js"></script>
