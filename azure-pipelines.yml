@@ -49,6 +49,36 @@ steps:
         Write-Host "##vso[task.setvariable variable=AppVersion]$version"
         Write-Host "Building Claude Terminals $version"
 
+  # Tools the build needs, set up on the agent if they're missing (signtool comes with the Windows SDK, already there).
+  - task: NodeTool@0
+    displayName: 'Node.js (front-end libraries)'
+    inputs:
+      versionSpec: '22.x'
+
+  - task: UseDotNet@2
+    displayName: '.NET 10 SDK'
+    inputs:
+      packageType: sdk
+      version: '10.x'
+
+  - task: PowerShell@2
+    displayName: 'Inno Setup 6'
+    inputs:
+      pwsh: false
+      targetType: inline
+      script: |
+        $found = @("$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe", "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ }
+        if ($found) { Write-Host "Inno Setup: $($found[0])"; return }
+        # A fixed version, installed for the agent's account only (no admin needed). It must carry a valid signature
+        # from Inno Setup's publisher, Pyrsys B.V.
+        $setup = Join-Path $env:AGENT_TEMPDIRECTORY 'innosetup-6.7.3.exe'
+        Invoke-WebRequest 'https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe' -OutFile $setup -UseBasicParsing
+        $sig = Get-AuthenticodeSignature $setup
+        if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notlike 'CN=Pyrsys B.V.*') { throw "The Inno Setup download isn't signed by its publisher: $($sig.Status) $($sig.SignerCertificate.Subject)" }
+        Start-Process $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CURRENTUSER' -Wait
+        if (-not (Test-Path "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe")) { throw 'Inno Setup did not install.' }
+        Write-Host 'Inno Setup installed.'
+
   - task: PowerShell@2
     displayName: 'Build and sign'
     inputs:
