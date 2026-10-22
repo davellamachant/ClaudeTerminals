@@ -84,14 +84,14 @@ public sealed class UpdateServiceTests
     [InlineData("claude", "claude --resume abc-123")]
     [InlineData("claude --model opus", "claude --model opus --resume abc-123")]
     [InlineData("Claude.exe", "Claude.exe --resume abc-123")]
+    [InlineData("claude --continue", "claude --resume abc-123")]       // the exact conversation, not just the folder's latest
+    [InlineData("claude -c --model opus", "claude --model opus --resume abc-123")]
     [InlineData("claude --resume other", "claude --resume other")]     // already picks its conversation
-    [InlineData("claude -c", "claude -c")]
-    [InlineData("claude --continue", "claude --continue")]
     [InlineData("claude -p hello", "claude -p hello")]
     [InlineData("pwsh", "pwsh")]                                       // not Claude
     [InlineData("node fake.mjs", "node fake.mjs")]
-    public void After_an_update_a_plain_claude_session_resumes_its_conversation(string command, string expected) =>
-        Assert.Equal(expected, TerminalSession.WithResume(command, "abc-123"));
+    public void After_an_update_a_claude_session_resumes_its_conversation(string command, string expected) =>
+        Assert.Equal(expected, TerminalSession.PrepareCommand(command, "abc-123", () => true));
 
     [Theory]
     [InlineData(null)]
@@ -99,5 +99,25 @@ public sealed class UpdateServiceTests
     [InlineData("abc&calc")]
     [InlineData("\"quoted\"")]
     public void Only_a_plain_conversation_id_is_ever_added(string? id) =>
-        Assert.Equal("claude", TerminalSession.WithResume("claude", id));
+        Assert.Equal("claude", TerminalSession.PrepareCommand("claude", id, () => true));
+
+    [Theory]
+    [InlineData("claude --continue", true, "claude --continue")]
+    [InlineData("claude --continue", false, "claude")]                // nothing to continue yet: start a new one
+    [InlineData("claude -c --model opus", false, "claude --model opus")]
+    [InlineData("claude --model opus --continue", false, "claude --model opus")]
+    [InlineData("claude", false, "claude")]
+    [InlineData("claude --resume abc", false, "claude --resume abc")]
+    [InlineData("node fake.mjs --continue", false, "node fake.mjs --continue")]   // not Claude
+    public void Continue_is_dropped_only_when_the_folder_has_no_conversation(string command, bool has, string expected) =>
+        Assert.Equal(expected, TerminalSession.PrepareCommand(command, null, () => has));
+
+    [Fact]
+    public void The_folder_is_only_checked_when_the_command_continues()
+    {
+        var checkedFolder = false;
+        TerminalSession.PrepareCommand("claude --model opus", null, () => checkedFolder = true);
+        TerminalSession.PrepareCommand("pwsh", null, () => checkedFolder = true);
+        Assert.False(checkedFolder);
+    }
 }

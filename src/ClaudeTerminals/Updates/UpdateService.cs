@@ -20,7 +20,8 @@ internal static partial class UpdateService
     private const string Repo = "davellamachant/ClaudeTerminals";
 
     /// <summary>For testing against a local server; plain http is then allowed, but only to this machine.</summary>
-    private static readonly string? TestUrl = Environment.GetEnvironmentVariable("CLAUDE_TERMINALS_UPDATE_URL");
+    private static readonly string? TestUrl =
+        Environment.GetEnvironmentVariable("CLAUDE_TERMINALS_UPDATE_URL") is { } url && !string.IsNullOrWhiteSpace(url) ? url : null;   // set but empty = not set
 
     private static string LatestUrl => TestUrl ?? $"https://api.github.com/repos/{Repo}/releases/latest";
 

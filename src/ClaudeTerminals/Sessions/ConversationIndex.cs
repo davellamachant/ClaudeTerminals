@@ -77,6 +77,9 @@ internal static partial class ConversationIndex
         return result;
     }
 
+    /// <summary>Whether Claude has a saved conversation for this folder, i.e. whether claude --continue has one to continue.</summary>
+    public static bool HasConversation(string directory) => List(directory, 1).Count > 0;
+
     private static IEnumerable<string> SafeEnumerate(string dir)
     {
         try

@@ -387,7 +387,8 @@ function confirmDeleteProject(p) {
 }
 
 const PAD = 8, GAP = 8, HEADER_H = 30;
-const RAIL_W = 16;   // the conversation rail's gutter at the right of each terminal
+const RAIL_W = 16;
+const DEFAULT_COMMAND = 'claude --continue';   // the conversation rail's gutter at the right of each terminal
 const MAX_WEBGL = 12;
 
 const TERM_THEME = {
@@ -1130,7 +1131,10 @@ function conversationPicker({ directory = null, onPick }) {
 
 function showAddDialog(mode = 'new') {
   const lastDir = store.get('lastDir', '');
-  const lastCommand = store.get('lastCommand', 'claude');
+  // New sessions carry on the folder's last conversation (plain claude when there is none yet). A remembered "claude"
+  // is the old default rather than a choice, so it gives way to the new one.
+  const remembered = store.get('lastCommand', null);
+  const lastCommand = !remembered || remembered === 'claude' ? DEFAULT_COMMAND : remembered;
   const dir = h('input', { value: '', placeholder: 'D:\\Source\\MyRepo', spellcheck: 'false' });
   const name = h('input', { placeholder: '(folder name)', spellcheck: 'false' });
   const command = h('input', { value: lastCommand, spellcheck: 'false' });
@@ -1174,7 +1178,7 @@ function showAddDialog(mode = 'new') {
   const add = async () => {
     const d = dir.value.trim();
     if (!d) { error.hidden = false; error.textContent = mode === 'resume' ? 'Choose a conversation.' : 'Choose a folder.'; return; }
-    const cmd = command.value.trim() || 'claude';
+    const cmd = command.value.trim() || DEFAULT_COMMAND;
     const list = [{ directory: d, name: name.value.trim(), command: cmd }];
     if (mode === 'new' && !wtHost.hidden && wtHost.dataset.for === d) {   // only ticks made for this folder
       for (const cb of wtHost.querySelectorAll('input[type=checkbox]:checked')) {
@@ -2714,7 +2718,11 @@ function appMenu(x, y) {
 $('#btnUpdate').addEventListener('click', showUpdateDialog);
 $('#btnApp').innerHTML = icon('more');
 $('#btnApp').addEventListener('click', (e) => { const r = e.currentTarget.getBoundingClientRect(); appMenu(r.right - 260, r.bottom + 2); });
-request('app.version').then((v) => { updates.current ??= v; }).catch(() => {});
+request('app.version').then((v) => {
+  updates.current ??= v;
+  $('#appVersion').textContent = `v${v}`;
+}).catch(() => {});
+$('#appVersion').addEventListener('click', (e) => { const r = e.currentTarget.getBoundingClientRect(); appMenu(r.right - 260, r.bottom + 2); });
 // Soon after start (not during it), then every few hours; never when turned off.
 setTimeout(() => { if (updates.auto) checkForUpdates(); }, 15_000);
 setInterval(() => { if (updates.auto) checkForUpdates(); }, UPDATE_EVERY_MS);

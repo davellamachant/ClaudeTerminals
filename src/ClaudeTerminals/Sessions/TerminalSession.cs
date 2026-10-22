@@ -4,7 +4,7 @@ using ClaudeTerminals.Terminal;
 namespace ClaudeTerminals.Sessions;
 
 /// <summary>Runtime state for one configured session: its pseudo console process and its git watcher.</summary>
-internal sealed class TerminalSession : IDisposable
+internal sealed partial class TerminalSession : IDisposable
 {
     private PseudoConsoleProcess? process;
     private GitWatcher? watcher;
@@ -53,7 +53,7 @@ internal sealed class TerminalSession : IDisposable
         try
         {
             var env = SessionEnvironment.Build();
-            var command = WithResume(Info.Command, ResumeOnce);
+            var command = PrepareCommand(Info.Command, ResumeOnce, () => ConversationIndex.HasConversation(Info.Directory));
             ResumeOnce = null;
             p.Start(CommandLineResolver.Resolve(command, env), Info.Directory, SessionEnvironment.ToBlock(env), cols, rows);
         }
@@ -68,19 +68,38 @@ internal sealed class TerminalSession : IDisposable
     public void Write(string data) => process?.Write(data);
 
     /// <summary>
-    /// Adds --resume to a plain claude command. Anything that already picks its conversation (or isn't an interactive
-    /// claude) is left alone.
+    /// The command line for this start of a claude session:
+    /// - after an update, the conversation it was in (<paramref name="resumeId"/>) replaces --continue, or is added to a
+    ///   plain claude; a command that names its own conversation is left alone;
+    /// - otherwise --continue is dropped when the folder has no saved conversation yet (<paramref name="hasConversation"/>),
+    ///   since claude would stop with "No conversation found to continue". The saved command keeps it for next time.
+    /// Anything that isn't an interactive claude is left alone.
     /// </summary>
-    internal static string WithResume(string command, string? conversationId)
+    internal static string PrepareCommand(string command, string? resumeId, Func<bool> hasConversation)
     {
-        if (conversationId == null || !System.Text.RegularExpressions.Regex.IsMatch(conversationId, "^[A-Za-z0-9-]{1,100}$")) return command;
         var tokens = command.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
         if (tokens.Length == 0 || !(tokens[0].Equals("claude", StringComparison.OrdinalIgnoreCase) || tokens[0].Equals("claude.exe", StringComparison.OrdinalIgnoreCase)))
             return command;
-        string[] picksItsOwn = ["-r", "--resume", "-c", "--continue", "-p", "--print", "--session-id", "--fork-session"];
-        if (tokens.Skip(1).Any(t => picksItsOwn.Contains(t.Split('=')[0], StringComparer.OrdinalIgnoreCase))) return command;
-        return command.Trim() + " --resume " + conversationId;
+        var flags = tokens.Skip(1).Select(t => t.Split('=')[0]).ToList();
+        string[] continueFlags = ["-c", "--continue"];
+        string[] picksItsOwn = ["-r", "--resume", "-p", "--print", "--session-id", "--fork-session"];
+        if (flags.Any(f => picksItsOwn.Contains(f, StringComparer.OrdinalIgnoreCase))) return command;
+        var continues = flags.Any(f => continueFlags.Contains(f, StringComparer.OrdinalIgnoreCase));
+
+        if (resumeId != null && ConversationId().IsMatch(resumeId))
+            return WithoutContinue(command) + " --resume " + resumeId;
+        if (continues && !hasConversation())
+            return WithoutContinue(command);
+        return command;
     }
+
+    private static string WithoutContinue(string command) => ContinueFlag().Replace(command.Trim(), "");
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\s+(?:-c|--continue)(?=\s|$)", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex ContinueFlag();
+
+    [System.Text.RegularExpressions.GeneratedRegex("^[A-Za-z0-9-]{1,100}$")]
+    private static partial System.Text.RegularExpressions.Regex ConversationId();
 
     /// <summary>The running processes in this session's terminal (empty when it isn't running).</summary>
     public int[] ProcessIds() => process?.ProcessIds() ?? [];

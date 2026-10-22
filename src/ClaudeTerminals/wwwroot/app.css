@@ -351,6 +351,12 @@ textarea.commit-msg { resize: vertical; min-height: 54px; height: 54px; user-sel
   height: 36px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 6px;
   background: #141414; border-bottom: 1px solid var(--border-soft);
 }
+/* The app's version, at the far right of the Projects row; opens the app menu. */
+.app-version {
+  margin-left: auto; flex: none; padding: 2px 6px; border: none; border-radius: 4px; background: none;
+  color: var(--text-dim); font: inherit; font-size: 12px; cursor: pointer;
+}
+.app-version:hover { color: var(--text); background: var(--hover); }
 .project-tabs { display: flex; align-items: center; gap: 4px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
 .project-bar-label { color: var(--text-faint); font-size: 11px; text-transform: uppercase; letter-spacing: .4px; margin-right: 4px; }
 .project-tab {

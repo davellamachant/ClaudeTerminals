@@ -35,7 +35,7 @@ internal sealed class MainForm : Form
 
     public MainForm()
     {
-        Text = "Claude Terminals";
+        Text = $"Claude Terminals {UpdateService.CurrentVersion}";   // shown in the taskbar and Alt+Tab
         BackColor = Color.FromArgb(0x1f, 0x1f, 0x1f);
         StartPosition = FormStartPosition.CenterScreen;
         Size = new Size(1600, 1000);
@@ -333,7 +333,7 @@ internal sealed class MainForm : Form
                     {
                         Name = string.IsNullOrWhiteSpace(item.Name) ? Path.GetFileName(item.Dir.TrimEnd('\\')) : item.Name.Trim(),
                         Directory = item.Dir,
-                        Command = string.IsNullOrWhiteSpace(item.Command) ? "claude" : item.Command.Trim(),
+                        Command = string.IsNullOrWhiteSpace(item.Command) ? "claude --continue" : item.Command.Trim(),
                         Project = item.Project,
                     });
                 }
