@@ -274,10 +274,11 @@ function renderProjectBar() {
       title: `${shown ? 'Hide' : 'Show'} ${what}, keeping the others as they are`,
       onclick: () => toggleProject(p.id),
     }, iconEl(shown ? 'checkOn' : 'checkOff')),
+    // The name toggles like the checkbox; Ctrl+click (or the right-click menu) shows only this project.
     h('button', {
       class: 'project-name',
-      title: `Show only ${what}\n${members.length} session${members.length === 1 ? '' : 's'} · right-click for options`,
-      onclick: () => showOnlyProject(p.id),
+      title: `${shown ? 'Hide' : 'Show'} ${what} · Ctrl+click to show only this\n${members.length} session${members.length === 1 ? '' : 's'} · right-click for options`,
+      onclick: (e) => (e.ctrlKey ? showOnlyProject(p.id) : toggleProject(p.id)),
     }, p.name,
     working ? h('span', { class: 'dot working', title: 'A session is working' }) : null,
     waiting ? h('span', { class: 'badge', title: `${waiting} session${waiting === 1 ? '' : 's'} waiting for you` }, String(waiting)) : null));
