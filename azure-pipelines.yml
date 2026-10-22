@@ -2,20 +2,19 @@
 # SafeNet code signing token, then creates a draft GitHub release with the installer attached. Publishing the draft
 # (after checking its notes) is what makes the in-app updater offer it.
 #
-# Runs when a version tag (v1.2.3) is pushed, or by hand. The tag must match <Version> in ClaudeTerminals.csproj.
-# Run by hand with "Create the GitHub release" unticked to try the signing without releasing anything.
+# Run by hand (Run pipeline) on main or on a version tag. On a tag, the tag must be v<Version> from
+# ClaudeTerminals.csproj; the release is created for v<Version> either way. Untick "Create the GitHub release" for a
+# trial run that only builds and signs, keeping the installer on the run (Artifacts).
 #
 # One-time setup in Azure DevOps:
-#   - Create this pipeline from the GitHub repository (it reads this file).
-#   - A GitHub service connection with access to the repository; put its name in githubConnection below.
+#   - This pipeline, created from the GitHub repository (it reads this file).
+#   - The GitHub service connection named in githubConnection below, with access to the repository and permitted
+#     for this pipeline.
 #   - A pipeline variable TimeStampServer (the same RFC 3161 server the NuGet signing uses).
 # The agent needs the .NET 10 SDK, Node.js (npm), Inno Setup 6 and the Windows SDK's signtool.
 
-trigger:
-  tags:
-    include: [ 'v*' ]
-  branches:
-    exclude: [ '*' ]
+# Releases are started by hand: no pushes, tags or pull requests start this pipeline.
+trigger: none
 pr: none
 
 parameters:
@@ -26,7 +25,7 @@ parameters:
     default: true
 
 variables:
-  githubConnection: 'GitHub'                 # TODO: the GitHub service connection's name
+  githubConnection: 'davellamachant'         # the GitHub service connection (Project settings › Service connections)
   repository: 'davellamachant/ClaudeTerminals'
 
 pool:
@@ -63,19 +62,20 @@ steps:
       targetPath: 'artifacts/ClaudeTerminals-Setup-$(AppVersion).exe'
       artifact: 'installer'
 
-  - task: GitHubRelease@1
-    displayName: 'Create draft GitHub release'
-    condition: and(succeeded(), ${{ parameters.createRelease }})
-    inputs:
-      gitHubConnection: '${{ variables.githubConnection }}'   # resolved when the pipeline is compiled, as Azure requires
-      repositoryName: '$(repository)'
-      action: create
-      target: '$(Build.SourceVersion)'
-      tagSource: userSpecifiedTag
-      tag: 'v$(AppVersion)'
-      title: 'Claude Terminals $(AppVersion)'
-      releaseNotesSource: inline
-      releaseNotesInline: 'Release notes to follow.'
-      assets: 'artifacts/ClaudeTerminals-Setup-$(AppVersion).exe'
-      isDraft: true
-      addChangeLog: false
+  # Left out of a trial run entirely, so trying the signing doesn't need the GitHub connection.
+  - ${{ if parameters.createRelease }}:
+    - task: GitHubRelease@1
+      displayName: 'Create draft GitHub release'
+      inputs:
+        gitHubConnection: '${{ variables.githubConnection }}'   # resolved when the pipeline is compiled, as Azure requires
+        repositoryName: '$(repository)'
+        action: create
+        target: '$(Build.SourceVersion)'
+        tagSource: userSpecifiedTag
+        tag: 'v$(AppVersion)'
+        title: 'Claude Terminals $(AppVersion)'
+        releaseNotesSource: inline
+        releaseNotesInline: 'Release notes to follow.'
+        assets: 'artifacts/ClaudeTerminals-Setup-$(AppVersion).exe'
+        isDraft: true
+        addChangeLog: false
