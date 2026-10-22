@@ -52,7 +52,7 @@ function Assert-Signed([string[]]$Files) {
 
 # Front-end libraries (xterm.js, Monaco) are copied from web\node_modules during publish.
 if (-not (Test-Path (Join-Path $root 'web\node_modules\monaco-editor'))) {
-    Write-Host 'Restoring front-end libraries…'
+    Write-Host 'Restoring front-end libraries...'
     Push-Location (Join-Path $root 'web')
     try { npm ci; if ($LASTEXITCODE) { throw 'npm ci failed' } } finally { Pop-Location }
 }
