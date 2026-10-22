@@ -41,6 +41,11 @@ SetupIconFile=..\src\ClaudeTerminals\app.ico
 UninstallDisplayIcon={app}\{#AppExe}
 UninstallDisplayName={#AppName}
 WizardStyle=modern
+#ifdef Sign
+; publish.ps1 -Sign defines the "signtool" command (ISCC /S); setup and the uninstaller it embeds are both signed.
+SignTool=signtool
+SignedUninstaller=yes
+#endif
 Compression=lzma2/max
 SolidCompression=yes
 
