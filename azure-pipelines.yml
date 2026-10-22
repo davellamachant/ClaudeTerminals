@@ -86,7 +86,12 @@ steps:
       # Inline, with the server passed as an environment variable: Azure's argument validation rejects the quoted
       # value in an Arguments field ("Detected characters in arguments that may not be executed correctly").
       targetType: inline
-      script: '& ./publish.ps1 -Sign -TimestampServer $env:TIMESTAMP_SERVER'
+      script: |
+        # An undefined variable reaches the script as the literal text "$(TimeStampServer)".
+        if (-not $env:TIMESTAMP_SERVER -or $env:TIMESTAMP_SERVER.StartsWith('$(')) {
+          throw 'The pipeline variable TimeStampServer is not set (Edit > Variables): the RFC 3161 timestamp server used for signing.'
+        }
+        & ./publish.ps1 -Sign -TimestampServer $env:TIMESTAMP_SERVER
     env:
       TIMESTAMP_SERVER: $(TimeStampServer)
 
