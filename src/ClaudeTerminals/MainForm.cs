@@ -525,7 +525,8 @@ internal sealed class MainForm : Form
                             index = t.Index,
                             time = t.Time,
                             prompt = Preview(t.Prompt, 300),
-                            reply = Preview(t.Items.FirstOrDefault(i => i.Kind == "text")?.Text, 300),
+                            // Markdown with its line breaks: the page turns it into plain text for the hover card.
+                            reply = t.Items.FirstOrDefault(i => i.Kind == "text")?.Text is { } r ? (r.Length <= 1200 ? r : r[..1200]) : null,
                             tools = t.Items.Count(i => i.Kind == "tool"),
                         }),
                 };

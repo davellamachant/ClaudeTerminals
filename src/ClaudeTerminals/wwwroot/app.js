@@ -2392,7 +2392,7 @@ function showRailCard(rail, i) {
   const t = rail.rail.card(i);
   const card = $('#railCard');
   if (!t) return hideRailCard();
-  const reply = t.reply ?? t.items?.find((x) => x.kind === 'text')?.text;
+  const reply = plainText(t.reply ?? t.items?.find((x) => x.kind === 'text')?.text ?? '');
   const tools = t.tools ?? t.items?.filter((x) => x.kind === 'tool').length ?? 0;
   const meta = [`Prompt ${i + 1} of ${rail.rail.n}`, t.time && formatTurnTime(t.time), tools && `${tools} tool call${tools === 1 ? '' : 's'}`];
   fill(card,
@@ -2406,6 +2406,22 @@ function showRailCard(rail, i) {
   const y = r.top + r.height / 2 + (i - (n - 1) / 2) * gap;
   card.style.right = `${Math.max(8, innerWidth - r.left + 6)}px`;
   card.style.top = `${Math.max(8, Math.min(innerHeight - card.offsetHeight - 8, y - 20))}px`;
+}
+
+/**
+ * Claude's Markdown as plain text for the hover card: formatting marks go, and code blocks and tables (which don't
+ * read in three lines) are left out.
+ */
+function plainText(md) {
+  return md
+    .replace(/^\s*(`{3,}|~{3,})[\s\S]*?^\s*\1\s*$/gm, ' ')   // fenced code blocks
+    .replace(/^\s*(`{3,}|~{3,})[\s\S]*$/m, ' ')               // one left open (the preview was cut off)
+    .replace(/^\s*\|.*$/gm, ' ')                               // table rows
+    .replace(/^\s{0,3}(#{1,6}|>)\s*/gm, '')                    // headings, quotes
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')                   // links: just their text
+    .replace(/\*\*|__|`/g, '')                                 // bold, inline code
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function hideRailCard() {
