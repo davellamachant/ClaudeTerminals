@@ -60,6 +60,8 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopico
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
+; The app's updater installs silently with /RELAUNCH=1: reopen it afterwards, as the user (not elevated, if setup was).
+Filename: "{app}\{#AppExe}"; Flags: nowait runasoriginaluser; Check: RelaunchAfterUpdate
 
 [UninstallDelete]
 ; Browser cache only. Saved sessions in %APPDATA%\ClaudeTerminals are kept for a reinstall.
@@ -80,6 +82,11 @@ end;
 function IsWebView2Installed(): Boolean;
 begin
   Result := HasWebView2Version(HKLM, WebView2Key32) or HasWebView2Version(HKLM, WebView2Key) or HasWebView2Version(HKCU, WebView2Key);
+end;
+
+function RelaunchAfterUpdate(): Boolean;
+begin
+  Result := WizardSilent() and (ExpandConstant('{param:relaunch|0}') = '1');
 end;
 
 function InitializeSetup(): Boolean;

@@ -21,6 +21,12 @@ internal sealed class TerminalSession : IDisposable
     public bool IsRunning => process != null;
     public string? RepoRoot { get; private set; }
 
+    /// <summary>
+    /// A conversation to reopen at the next start, once: set after an update restarted the app, so a plain "claude"
+    /// session carries on where it was instead of starting a new conversation.
+    /// </summary>
+    public string? ResumeOnce { get; set; }
+
     /// <summary>Counts processes started; <see cref="Exited"/> carries the number of the one that exited.</summary>
     public int Generation { get; private set; }
 
@@ -47,7 +53,9 @@ internal sealed class TerminalSession : IDisposable
         try
         {
             var env = SessionEnvironment.Build();
-            p.Start(CommandLineResolver.Resolve(Info.Command, env), Info.Directory, SessionEnvironment.ToBlock(env), cols, rows);
+            var command = WithResume(Info.Command, ResumeOnce);
+            ResumeOnce = null;
+            p.Start(CommandLineResolver.Resolve(command, env), Info.Directory, SessionEnvironment.ToBlock(env), cols, rows);
         }
         catch
         {
@@ -58,6 +66,21 @@ internal sealed class TerminalSession : IDisposable
     }
 
     public void Write(string data) => process?.Write(data);
+
+    /// <summary>
+    /// Adds --resume to a plain claude command. Anything that already picks its conversation (or isn't an interactive
+    /// claude) is left alone.
+    /// </summary>
+    internal static string WithResume(string command, string? conversationId)
+    {
+        if (conversationId == null || !System.Text.RegularExpressions.Regex.IsMatch(conversationId, "^[A-Za-z0-9-]{1,100}$")) return command;
+        var tokens = command.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (tokens.Length == 0 || !(tokens[0].Equals("claude", StringComparison.OrdinalIgnoreCase) || tokens[0].Equals("claude.exe", StringComparison.OrdinalIgnoreCase)))
+            return command;
+        string[] picksItsOwn = ["-r", "--resume", "-c", "--continue", "-p", "--print", "--session-id", "--fork-session"];
+        if (tokens.Skip(1).Any(t => picksItsOwn.Contains(t.Split('=')[0], StringComparer.OrdinalIgnoreCase))) return command;
+        return command.Trim() + " --resume " + conversationId;
+    }
 
     /// <summary>The running processes in this session's terminal (empty when it isn't running).</summary>
     public int[] ProcessIds() => process?.ProcessIds() ?? [];

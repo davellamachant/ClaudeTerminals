@@ -522,3 +522,11 @@ body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; user-selec
 .md hr { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
 .md a { color: #4daafc; text-decoration: none; }
 .md a:hover { text-decoration: underline; }
+
+/* ---------------------------------------------------------------- updates */
+.tb-btn.update-btn { color: #fff; background: color-mix(in srgb, var(--ok) 28%, transparent); border-radius: 4px; gap: 4px; }
+.tb-btn.update-btn:hover { background: color-mix(in srgb, var(--ok) 42%, transparent); }
+.update-notes { max-height: 50vh; overflow-y: auto; margin: 8px 0 12px; padding: 8px 12px; border: 1px solid var(--border-soft); border-radius: 6px; background: #1b1b1c; user-select: text; }
+.update-what { color: var(--text-dim); }
+.update-status { margin-top: 8px; }
+.update-status.error { color: var(--danger); }

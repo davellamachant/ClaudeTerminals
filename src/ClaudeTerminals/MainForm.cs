@@ -3,6 +3,7 @@ using System.Text.Json;
 using ClaudeTerminals.Git;
 using ClaudeTerminals.Sessions;
 using ClaudeTerminals.Terminal;
+using ClaudeTerminals.Updates;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 
@@ -26,6 +27,11 @@ internal sealed class MainForm : Form
     private readonly Dictionary<string, StringBuilder> pendingOutput = [];
     private readonly System.Windows.Forms.Timer flushTimer = new() { Interval = 16 };
     private bool webReady;
+    private bool closingForUpdate;
+    private UpdateInfo? update;
+
+    /// <summary>Each session's conversation, noted just before an update restarts the app (see <see cref="TerminalSession.ResumeOnce"/>).</summary>
+    private static string ResumeFile => Path.Combine(SessionStore.AppDataFolder, "resume-after-update.json");
 
     public MainForm()
     {
@@ -46,6 +52,26 @@ internal sealed class MainForm : Form
             // A session whose project no longer exists (e.g. projects.json was lost) just has no project.
             if (info.Project != null && !projects.Any(p => p.Id == info.Project)) info.Project = null;
             AddSessionRuntime(info);
+        }
+        ApplyResumeAfterUpdate();
+    }
+
+    /// <summary>After an update, sessions carry on in the conversations they were in (read once, then deleted).</summary>
+    private void ApplyResumeAfterUpdate()
+    {
+        try
+        {
+            var file = new FileInfo(ResumeFile);
+            if (!file.Exists) return;
+            var fresh = DateTime.UtcNow - file.LastWriteTimeUtc < TimeSpan.FromMinutes(30);   // an old note is stale
+            var map = fresh ? JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(file.FullName)) : null;
+            file.Delete();
+            foreach (var (id, conversation) in map ?? [])
+                if (sessions.TryGetValue(id, out var s)) s.ResumeOnce = conversation;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            // Sessions just start as they normally would.
         }
     }
 
@@ -110,7 +136,7 @@ internal sealed class MainForm : Form
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
         var running = sessions.Values.Count(s => s.IsRunning);
-        if (running > 0 && e.CloseReason == CloseReason.UserClosing &&
+        if (running > 0 && e.CloseReason == CloseReason.UserClosing && !closingForUpdate &&
             MessageBox.Show(this, $"{running} session(s) are still running and will be terminated.\n\nClose anyway?", Text,
                 MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK)
         {
@@ -507,6 +533,33 @@ internal sealed class MainForm : Form
                 if (!result.Ok) throw new InvalidOperationException(string.IsNullOrEmpty(result.Error) ? result.Text : result.Error);
                 return result.Text.Trim();
             }
+            case "app.version":
+                return UpdateService.CurrentVersion.ToString();
+            case "update.check":
+            {
+                // The page decides when to ask (at start, then every few hours, or from the menu).
+                update = await UpdateService.CheckAsync();
+                return new
+                {
+                    current = UpdateService.CurrentVersion.ToString(),
+                    available = update != null,
+                    version = update?.Version.ToString(),
+                    name = update?.Name,
+                    pageUrl = update?.PageUrl,
+                    notes = update?.Notes,
+                    canInstall = update?.Sha256 != null,
+                };
+            }
+            case "update.install":
+            {
+                var info = update ?? throw new InvalidOperationException("Check for updates first.");
+                var installer = await UpdateService.DownloadAsync(info);
+                NoteConversationsForResume();
+                UpdateService.InstallAfterExit(installer);
+                // Close once this reply is on its way; setup waits for the process to end.
+                BeginInvoke(() => { closingForUpdate = true; Close(); });
+                return null;
+            }
             case "git.suggestMessage":
                 // Visual Studio-style "Generate commit message": Claude describes what Commit would take.
                 return await CommitMessageService.SuggestAsync(GitDir(msg));
@@ -563,6 +616,15 @@ internal sealed class MainForm : Form
             }
         }
         return null;
+    }
+
+    private void NoteConversationsForResume()
+    {
+        var map = new Dictionary<string, string>();
+        foreach (var s in sessions.Values.Where(s => s.IsRunning))
+            if (ConversationReader.FindLiveSession(s.ProcessIds()) is { } live) map[s.Id] = live.SessionId;
+        try { File.WriteAllText(ResumeFile, JsonSerializer.Serialize(map)); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* sessions start fresh instead */ }
     }
 
     private TerminalSession Get(JsonElement msg) =>

@@ -2619,6 +2619,106 @@ const mdLink = (url, kids) => h('a', {
   onclick: (e) => { e.preventDefault(); request('openUrl', { uri: url }).catch((err) => toast(err.message, true)); },
 }, kids);
 
+// ------------------------------------------------------------------ updates
+// The host checks the repository's latest GitHub release; an update shows as a button in the title bar. Installing
+// downloads and checks the installer, closes the app, updates silently and reopens it.
+
+const UPDATE_EVERY_MS = 6 * 60 * 60 * 1000;
+const updates = { info: null, current: null, checking: false, installing: false, auto: store.get('autoUpdateCheck', true) };
+
+async function checkForUpdates(manual = false) {
+  if (updates.checking) return;
+  updates.checking = true;
+  try {
+    const r = await request('update.check');
+    updates.current = r.current;
+    updates.info = r.available ? r : null;
+    renderUpdateButton();
+    if (manual) {
+      if (r.available) showUpdateDialog();
+      else toast(`Claude Terminals ${r.current} is the latest version.`);
+    }
+  } catch (e) {
+    if (manual) toast(`Couldn't check for updates: ${e.message}`, true);
+  } finally {
+    updates.checking = false;
+  }
+}
+
+function renderUpdateButton() {
+  const b = $('#btnUpdate');
+  b.hidden = !updates.info;
+  if (updates.info) {
+    b.replaceChildren(iconEl('down'), `Update to ${updates.info.version}`);
+    b.title = `${updates.info.name} is available. Click for what's new.`;
+  }
+}
+
+/** The release notes without their install instructions and checksum, which are for people downloading by hand. */
+const updateNotes = (notes) => (notes || '').split(/^###\s*Install\b/m)[0].trim();
+
+function showUpdateDialog() {
+  const u = updates.info;
+  if (!u) return;
+  const running = state.sessions.filter((s) => s.running).length;
+  const status = h('div', { class: 'update-status' });
+  const install = h('button', { class: 'btn primary', hidden: !u.canInstall }, 'Update and restart');
+  install.addEventListener('click', async () => {
+    if (updates.installing) return;
+    updates.installing = true;
+    install.disabled = true;
+    install.textContent = 'Downloading…';
+    status.classList.remove('error');
+    status.textContent = '';
+    try {
+      await request('update.install');
+      install.textContent = 'Closing…';   // the host closes the app; setup takes over
+    } catch (e) {
+      status.classList.add('error');
+      status.textContent = e.message;
+      install.disabled = false;
+      install.textContent = 'Update and restart';
+    } finally {
+      updates.installing = false;
+    }
+  });
+  openModal(`${u.name} is available`, [
+    h('div', { class: 'update-from dim' }, `You have ${updates.current}.`),
+    h('div', { class: 'update-notes md' }, renderMarkdown(updateNotes(u.notes) || 'No release notes.')),
+    h('div', { class: 'update-what' }, u.canInstall
+      ? `Claude Terminals will close, install the update and reopen.${running ? ` ${running} running session${running === 1 ? '' : 's'} will restart and carry on in ${running === 1 ? 'its' : 'their'} conversation${running === 1 ? '' : 's'}.` : ''}`
+      : 'This release can’t be installed automatically (it has no checksum). Download it from the release page.'),
+    status,
+  ], [
+    h('button', { class: 'btn', onclick: () => request('openUrl', { uri: u.pageUrl }) }, 'Release page'),
+    h('div', { class: 'spacer' }),
+    h('button', { class: 'btn', onclick: closeModal }, 'Later'),
+    install,
+  ]);
+}
+
+function appMenu(x, y) {
+  showMenu(x, y, [
+    { label: 'Check for updates', action: () => checkForUpdates(true) },
+    { label: `${updates.auto ? '✓ ' : ''}Check for updates automatically`, action: () => {
+      updates.auto = !updates.auto;
+      store.set('autoUpdateCheck', updates.auto);
+      if (updates.auto) checkForUpdates();
+    } },
+    '-',
+    { label: `Claude Terminals ${updates.current ?? ''}`.trim() + ' · release notes',
+      action: () => request('openUrl', { uri: 'https://github.com/davellamachant/ClaudeTerminals/releases' }) },
+  ]);
+}
+
+$('#btnUpdate').addEventListener('click', showUpdateDialog);
+$('#btnApp').innerHTML = icon('more');
+$('#btnApp').addEventListener('click', (e) => { const r = e.currentTarget.getBoundingClientRect(); appMenu(r.right - 260, r.bottom + 2); });
+request('app.version').then((v) => { updates.current ??= v; }).catch(() => {});
+// Soon after start (not during it), then every few hours; never when turned off.
+setTimeout(() => { if (updates.auto) checkForUpdates(); }, 15_000);
+setInterval(() => { if (updates.auto) checkForUpdates(); }, UPDATE_EVERY_MS);
+
 // ------------------------------------------------------------------ scrolling tab rows
 
 /**
