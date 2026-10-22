@@ -1,0 +1,81 @@
+# Release build for Claude Terminals: builds and code-signs the installer on the agent that holds the company's
+# SafeNet code signing token, then creates a draft GitHub release with the installer attached. Publishing the draft
+# (after checking its notes) is what makes the in-app updater offer it.
+#
+# Runs when a version tag (v1.2.3) is pushed, or by hand. The tag must match <Version> in ClaudeTerminals.csproj.
+# Run by hand with "Create the GitHub release" unticked to try the signing without releasing anything.
+#
+# One-time setup in Azure DevOps:
+#   - Create this pipeline from the GitHub repository (it reads this file).
+#   - A GitHub service connection with access to the repository; put its name in githubConnection below.
+#   - A pipeline variable TimeStampServer (the same RFC 3161 server the NuGet signing uses).
+# The agent needs the .NET 10 SDK, Node.js (npm), Inno Setup 6 and the Windows SDK's signtool.
+
+trigger:
+  tags:
+    include: [ 'v*' ]
+  branches:
+    exclude: [ '*' ]
+pr: none
+
+parameters:
+  # Untick for a trial run: build and sign only, with the installer kept on the run (Artifacts), no GitHub release.
+  - name: createRelease
+    displayName: 'Create the GitHub release (draft)'
+    type: boolean
+    default: true
+
+variables:
+  githubConnection: 'GitHub'                 # TODO: the GitHub service connection's name
+  repository: 'davellamachant/ClaudeTerminals'
+
+pool:
+  name: 'SelfHostedPool'                     # the pool with the code signing agent (SafeNet token)
+
+steps:
+  - checkout: self
+    clean: true
+
+  - task: PowerShell@2
+    displayName: 'Check the tag matches the version'
+    inputs:
+      pwsh: false   # Windows PowerShell: always on the agent
+      targetType: inline
+      script: |
+        $version = ([xml](Get-Content src/ClaudeTerminals/ClaudeTerminals.csproj)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+        $tag = '$(Build.SourceBranchName)'
+        if ('$(Build.SourceBranch)' -like 'refs/tags/*' -and $tag -ne "v$version") {
+          throw "Tag $tag doesn't match the project version $version."
+        }
+        Write-Host "##vso[task.setvariable variable=AppVersion]$version"
+        Write-Host "Building Claude Terminals $version"
+
+  - task: PowerShell@2
+    displayName: 'Build and sign'
+    inputs:
+      pwsh: false   # Windows PowerShell: always on the agent
+      filePath: publish.ps1
+      arguments: '-Sign -TimestampServer "$(TimeStampServer)"'
+
+  - task: PublishPipelineArtifact@1
+    displayName: 'Keep the signed installer on the run'
+    inputs:
+      targetPath: 'artifacts/ClaudeTerminals-Setup-$(AppVersion).exe'
+      artifact: 'installer'
+
+  - task: GitHubRelease@1
+    displayName: 'Create draft GitHub release'
+    condition: and(succeeded(), ${{ parameters.createRelease }})
+    inputs:
+      gitHubConnection: '${{ variables.githubConnection }}'   # resolved when the pipeline is compiled, as Azure requires
+      repositoryName: '$(repository)'
+      action: create
+      target: '$(Build.SourceVersion)'
+      tagSource: userSpecifiedTag
+      tag: 'v$(AppVersion)'
+      title: 'Claude Terminals $(AppVersion)'
+      releaseNotesSource: inline
+      releaseNotesInline: 'Release notes to follow.'
+      assets: 'artifacts/ClaudeTerminals-Setup-$(AppVersion).exe'
+      isDraft: true
+      addChangeLog: false
