@@ -135,10 +135,9 @@ internal sealed class MainForm : Form
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
-        var running = sessions.Values.Count(s => s.IsRunning);
-        if (running > 0 && e.CloseReason == CloseReason.UserClosing && !closingForUpdate &&
-            MessageBox.Show(this, $"{running} session(s) are still running and will be terminated.\n\nClose anyway?", Text,
-                MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK)
+        var running = sessions.Values.Where(s => s.IsRunning).ToList();
+        if (running.Count > 0 && e.CloseReason == CloseReason.UserClosing && !closingForUpdate &&
+            MessageBox.Show(this, CloseMessage(running), Text, MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK)
         {
             e.Cancel = true;
             return;
@@ -146,6 +145,31 @@ internal sealed class MainForm : Form
         flushTimer.Stop();
         foreach (var s in sessions.Values) s.Dispose();
         base.OnFormClosing(e);
+    }
+
+    /// <summary>
+    /// Closing only stops the sessions: Claude keeps every conversation and the sessions start again with the app, so say
+    /// that (and which of them carry on their conversation) rather than that they'll be "terminated".
+    /// </summary>
+    internal static string CloseMessage(IReadOnlyCollection<TerminalSession> running)
+    {
+        var n = running.Count;
+        var carryOn = running.Count(s => TerminalSession.CarriesOnConversation(s.Info.Command));
+        var fresh = n - carryOn;
+        var sessionsAre = n == 1 ? "1 session is" : $"{n} sessions are";
+        var restart = (carryOn, fresh) switch
+        {
+            (_, 0) => n == 1
+                ? "It starts again the next time you open Claude Terminals and picks up where it left off."
+                : "They start again the next time you open Claude Terminals and pick up where they left off.",
+            (0, _) => n == 1
+                ? "It starts again the next time you open Claude Terminals, with a new conversation (the current one can be reopened with \"Resume a different conversation…\")."
+                : "They start again the next time you open Claude Terminals, with new conversations (the current ones can be reopened with \"Resume a different conversation…\").",
+            _ => $"They start again the next time you open Claude Terminals: {carryOn} pick{(carryOn == 1 ? "s" : "")} up where {(carryOn == 1 ? "it" : "they")} left off, " +
+                 $"{fresh} start{(fresh == 1 ? "s" : "")} a new conversation (the current one can be reopened with \"Resume a different conversation…\").",
+        };
+        return $"{sessionsAre} running. Closing stops {(n == 1 ? "it" : "them")}, but nothing is lost: Claude keeps every conversation.\n\n" +
+               $"{restart}\n\nAnything Claude is in the middle of will be interrupted.\n\nClose Claude Terminals?";
     }
 
     // ---------------------------------------------------------------- sessions

@@ -93,6 +93,16 @@ internal sealed partial class TerminalSession : IDisposable
         return command;
     }
 
+    /// <summary>Whether starting this command again carries on a conversation (--continue or --resume) rather than starting a new one.</summary>
+    internal static bool CarriesOnConversation(string command)
+    {
+        var tokens = command.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (tokens.Length == 0 || !(tokens[0].Equals("claude", StringComparison.OrdinalIgnoreCase) || tokens[0].Equals("claude.exe", StringComparison.OrdinalIgnoreCase)))
+            return false;
+        string[] carryOn = ["-c", "--continue", "-r", "--resume"];
+        return tokens.Skip(1).Any(t => carryOn.Contains(t.Split('=')[0], StringComparer.OrdinalIgnoreCase));
+    }
+
     private static string WithoutContinue(string command) => ContinueFlag().Replace(command.Trim(), "");
 
     [System.Text.RegularExpressions.GeneratedRegex(@"\s+(?:-c|--continue)(?=\s|$)", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
