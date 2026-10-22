@@ -80,7 +80,7 @@ internal static partial class ConversationReader
             }
             if (Str(e, "sessionId") is not { } sessionId) continue;
             // Process ids are reused: the file must belong to this process, not an earlier one with the same id.
-            var procStart = e.TryGetProperty("procStart", out var ps) && ps.TryGetInt64(out var v) ? v : 0;
+            var procStart = Int64(e, "procStart");
             if (procStart != 0 && !StartedAt(pid, procStart)) continue;
             var interactive = Str(e, "kind") is null or "interactive";
             var candidate = (sessionId, Str(e, "cwd"), procStart, interactive);
@@ -89,6 +89,18 @@ internal static partial class ConversationReader
                 best = candidate;
         }
         return best == null ? null : (best.Value.SessionId, best.Value.Cwd);
+    }
+
+    /// <summary>A whole number written as a JSON number or, as Claude Code writes procStart (too big for JavaScript), a string; 0 otherwise.</summary>
+    private static long Int64(JsonElement e, string name)
+    {
+        if (!e.TryGetProperty(name, out var v)) return 0;
+        return v.ValueKind switch
+        {
+            JsonValueKind.Number when v.TryGetInt64(out var n) => n,
+            JsonValueKind.String when long.TryParse(v.GetString(), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var n) => n,
+            _ => 0,
+        };
     }
 
     /// <summary>procStart is the process creation time as a FILETIME.</summary>

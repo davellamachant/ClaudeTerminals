@@ -162,7 +162,8 @@ public sealed class ConversationReaderTests : IDisposable
             Directory.CreateDirectory(sessions);
             File.WriteAllText(Path.Combine(sessions, $"{pid}.json"), JsonSerializer.Serialize(new
             {
-                pid, sessionId = "abc", cwd = work, kind = "interactive", procStart = p.StartTime.ToUniversalTime().ToFileTimeUtc(),
+                // Claude Code writes procStart as a string (it's too big for a JavaScript number).
+                pid, sessionId = "abc", cwd = work, kind = "interactive", procStart = p.StartTime.ToUniversalTime().ToFileTimeUtc().ToString(),
             }));
         }
 
@@ -180,9 +181,38 @@ public sealed class ConversationReaderTests : IDisposable
         Directory.CreateDirectory(sessions);
         File.WriteAllText(Path.Combine(sessions, $"{pid}.json"), JsonSerializer.Serialize(new
         {
-            pid, sessionId = "stale", kind = "interactive", procStart = DateTime.UtcNow.AddDays(-3).ToFileTimeUtc(),
+            pid, sessionId = "stale", kind = "interactive", procStart = DateTime.UtcNow.AddDays(-3).ToFileTimeUtc().ToString(),
         }));
 
         Assert.Null(ConversationReader.FindLiveSession([pid]));
+    }
+
+    [Theory]
+    [InlineData(true)]    // as Claude Code writes it
+    [InlineData(false)]   // as a plain JSON number
+    public void The_process_start_time_is_read_whether_written_as_a_string_or_a_number(bool asString)
+    {
+        var pid = Environment.ProcessId;
+        using var p = Process.GetCurrentProcess();
+        var start = p.StartTime.ToUniversalTime().ToFileTimeUtc();
+        var sessions = Path.Combine(config, "sessions");
+        Directory.CreateDirectory(sessions);
+        File.WriteAllText(Path.Combine(sessions, $"{pid}.json"),
+            $$"""{"pid":{{pid}},"sessionId":"live","kind":"interactive","procStart":{{(asString ? $"\"{start}\"" : start.ToString())}}}""");
+
+        Assert.Equal("live", ConversationReader.FindLiveSession([pid])?.SessionId);
+    }
+
+    [Fact]
+    public void A_session_file_it_cant_make_sense_of_is_skipped_without_losing_the_others()
+    {
+        var pid = Environment.ProcessId;
+        var sessions = Path.Combine(config, "sessions");
+        Directory.CreateDirectory(sessions);
+        File.WriteAllText(Path.Combine(sessions, "1.json"), """{"pid":1,"sessionId":{"odd":true},"procStart":[1,2]}""");
+        File.WriteAllText(Path.Combine(sessions, "2.json"), "[1, 2, 3]");
+        File.WriteAllText(Path.Combine(sessions, $"{pid}.json"), $$"""{"pid":{{pid}},"sessionId":"good","kind":"interactive"}""");
+
+        Assert.Equal("good", ConversationReader.FindLiveSession([1, 2, pid])?.SessionId);
     }
 }
