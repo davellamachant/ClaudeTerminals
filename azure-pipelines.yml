@@ -53,8 +53,12 @@ steps:
     displayName: 'Build and sign'
     inputs:
       pwsh: false   # Windows PowerShell: always on the agent
-      filePath: publish.ps1
-      arguments: '-Sign -TimestampServer "$(TimeStampServer)"'
+      # Inline, with the server passed as an environment variable: Azure's argument validation rejects the quoted
+      # value in an Arguments field ("Detected characters in arguments that may not be executed correctly").
+      targetType: inline
+      script: '& ./publish.ps1 -Sign -TimestampServer $env:TIMESTAMP_SERVER'
+    env:
+      TIMESTAMP_SERVER: $(TimeStampServer)
 
   - task: PublishPipelineArtifact@1
     displayName: 'Keep the signed installer on the run'
