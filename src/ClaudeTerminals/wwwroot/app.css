@@ -179,6 +179,10 @@ button.chip:hover { border-color: var(--border); color: var(--text); }
 .git-branch .ab svg.ic { width: 12px; height: 12px; }
 .git-commit { padding: 4px 10px 8px; display: flex; flex-direction: column; gap: 6px; border-bottom: 1px solid var(--border-soft); }
 textarea.commit-msg { resize: vertical; min-height: 54px; height: 54px; user-select: text; }
+.commit-suggest { display: inline-flex; align-items: center; gap: 4px; }
+.commit-suggest .ic { color: var(--accent); }
+.commit-suggest.busy .ic { animation: suggest-pulse 1s ease-in-out infinite; }
+@keyframes suggest-pulse { 50% { opacity: .3; } }
 .git-commit-actions { display: flex; gap: 6px; align-items: center; }
 .infobar {
   margin: 6px 10px 0; padding: 6px 8px; border-radius: 4px; display: flex; gap: 6px; align-items: flex-start;

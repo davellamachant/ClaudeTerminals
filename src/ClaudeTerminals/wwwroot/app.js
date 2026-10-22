@@ -60,6 +60,7 @@ const PATHS = {
   checkOn: 'M2.5 2.5h11v11h-11zM5 8.2l2 2 4-4.4',
   checkOff: 'M2.5 2.5h11v11h-11z',
   chat: 'M2.5 3h11v7.5H7.5l-3 2.5v-2.5h-2z',
+  sparkle: 'M7 2l1.2 3.3L11.5 6.5 8.2 7.7 7 11 5.8 7.7 2.5 6.5l3.3-1.2zM12 9.5l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z',
 };
 
 function icon(name, cls = '') {
@@ -216,6 +217,7 @@ function applyProjectFilter(instant = false) {
   for (const s of state.sessions) renderTileHeader(s);
   renderProjectBar();
   renderSessionTabs();
+  syncDocTabs();   // the current session, and so the project whose tabs are shown, may have changed
   renderSessionPicker();
   renderGit();
 }
@@ -849,6 +851,8 @@ function handleShortcut(e) {
   }
   if (e.ctrlKey && !e.shiftKey && (k === 'PageUp' || k === 'PageDown')) { cycleDoc(k === 'PageUp' ? -1 : 1); return true; }
   if (e.ctrlKey && k === 'F4') { if (activeTab()) closeDoc(docs.active); return true; }
+  // Ctrl+W closes a diff or Conversation tab. On the terminal it isn't taken: it deletes a word in Claude's prompt.
+  if (e.ctrlKey && !e.shiftKey && !e.altKey && (k === 'w' || k === 'W') && activeTab()) { closeDoc(docs.active); return true; }
   if (e.ctrlKey && k === 'Tab') { cycle(e.shiftKey ? -1 : 1); return true; }
   if (e.ctrlKey && e.shiftKey && (k === 'G' || k === 'g')) { toggleGit(); return true; }
   if (e.ctrlKey && e.shiftKey && (k === 'N' || k === 'n')) { showAddDialog(); return true; }
@@ -914,7 +918,8 @@ function closeMenu() {
 
 function showMenu(x, y, items) {
   closeMenu();
-  const menu = h('div', { class: 'menu' }, items.filter(Boolean).map((it) => it === '-'
+  // Pressing on the menu mustn't take focus: after Paste in the terminal's menu, typing has to go on in the terminal.
+  const menu = h('div', { class: 'menu', onmousedown: (e) => e.preventDefault() }, items.filter(Boolean).map((it) => it === '-'
     ? h('div', { class: 'menu-sep' })
     : h('div', { class: 'menu-item' + (it.danger ? ' danger' : ''), onclick: () => { closeMenu(); it.action(); } },
       it.label, it.kbd && h('span', { class: 'kbd' }, it.kbd))));
@@ -948,11 +953,13 @@ function sessionMenu(s, x, y) {
 }
 
 function terminalMenu(s, x, y) {
+  // These leave you in the terminal, ready to type (Enter after Paste, say).
+  const inTerminal = (fn) => async () => { await fn(); s.term.focus(); };
   showMenu(x, y, [
-    { label: 'Copy', kbd: 'Ctrl+C', action: () => s.term.hasSelection() && navigator.clipboard.writeText(s.term.getSelection()) },
-    { label: 'Paste', kbd: 'Ctrl+V', action: () => navigator.clipboard.readText().then((t) => t && s.term.paste(t)) },
-    { label: 'Select all', action: () => s.term.selectAll() },
-    { label: 'Clear scrollback', action: () => s.term.clear() },
+    { label: 'Copy', kbd: 'Ctrl+C', action: inTerminal(() => s.term.hasSelection() && navigator.clipboard.writeText(s.term.getSelection())) },
+    { label: 'Paste', kbd: 'Ctrl+V', action: inTerminal(() => navigator.clipboard.readText().then((t) => t && s.term.paste(t))) },
+    { label: 'Select all', action: inTerminal(() => s.term.selectAll()) },
+    { label: 'Clear scrollback', action: inTerminal(() => s.term.clear()) },
     '-',
     { label: 'Show conversation', action: () => openConversation(s) },
     { label: 'Back to all sessions', kbd: 'Shift+Esc', action: collapse },
@@ -1286,6 +1293,7 @@ function showGit(id) {
     state.currentId = id;
     store.set('currentId', id);
     layout();
+    syncDocTabs();
   }
   if (!state.gitVisible) {
     state.gitVisible = true;
@@ -1490,19 +1498,55 @@ function commitArea(s) {
   msg.value = s.commitDraft;
   const btn = h('button', { class: 'btn primary' });
   const count = h('span', { class: 'dim' });
-  const wrap = h('div', { class: 'git-commit' }, msg, h('div', { class: 'git-commit-actions' }, btn, count));
+  const suggest = h('button', { class: 'btn commit-suggest', onclick: () => suggestCommitMessage(s) }, iconEl('sparkle'), 'Suggest');
+  const wrap = h('div', { class: 'git-commit' }, msg,
+    h('div', { class: 'git-commit-actions' }, btn, count, h('div', { class: 'spacer' }), suggest));
   const update = () => {
     const g = s.git;
     const total = g ? g.staged.length + g.unstaged.length : 0;
     btn.textContent = g?.staged.length ? 'Commit Staged' : 'Commit All';
     btn.disabled = !msg.value.trim() || total === 0;
     count.textContent = total ? `${total} change${total === 1 ? '' : 's'}` : '';
+    suggest.disabled = total === 0 || !!s.suggesting;
+    suggest.classList.toggle('busy', !!s.suggesting);
+    suggest.title = s.suggesting ? 'Writing a commit message…'
+      : `Suggest a commit message for the ${g?.staged.length ? 'staged changes' : 'changes'} (Claude)`;
   };
   msg.addEventListener('input', () => { s.commitDraft = msg.value; s.commitEdits = (s.commitEdits || 0) + 1; update(); });
   msg.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.ctrlKey && !btn.disabled) btn.click(); });
   btn.addEventListener('click', () => doCommit(s, !s.git?.staged.length));
   s.commitUi = { wrap, msg, update };
   return s.commitUi;
+}
+
+/**
+ * Visual Studio's "Generate commit message": Claude writes one for what Commit would take. It replaces the box's text
+ * as an edit, so Ctrl+Z brings back what was there.
+ */
+async function suggestCommitMessage(s) {
+  if (s.suggesting) return;
+  s.suggesting = true;
+  s.commitUi?.update();
+  try {
+    const text = await request('git.suggestMessage', { id: s.id });
+    const msg = s.commitUi?.msg;
+    if (msg?.isConnected) {
+      msg.focus();
+      msg.select();
+      document.execCommand('insertText', false, text);   // fires input, which saves the draft
+      msg.setSelectionRange(0, 0);
+      msg.scrollTop = 0;
+    } else {
+      s.commitDraft = text;   // the panel moved on to another session meanwhile
+      if (msg) msg.value = text;
+    }
+  } catch (e) {
+    s.info = { text: e.message, error: true };
+    if (currentSession() === s) renderGit();
+  } finally {
+    s.suggesting = false;
+    s.commitUi?.update();
+  }
 }
 
 async function doCommit(s, all) {
@@ -1917,6 +1961,24 @@ const docs = { tabs: [], active: 'terminal' };
 const docKey = (sessionId, spec) => [sessionId, spec.mode, spec.commit || '', spec.path].join('|');
 const activeTab = () => docs.tabs.find((t) => t.key === docs.active) || null;
 
+/**
+ * Diff and Conversation tabs belong to their session's project, and only the current session's project's tabs are
+ * shown (the session the Git panel is on, which expanding a session also makes current). Others wait until you're back.
+ */
+function tabShown(t) {
+  const cur = currentSession();
+  const s = state.byId.get(t.sessionId);
+  return !cur || !s || groupOf(s) === groupOf(cur);
+}
+const shownTabs = () => docs.tabs.filter(tabShown);
+
+/** After the current project changes: a tab that's now someone else's makes way for the terminal. */
+function syncDocTabs() {
+  const t = activeTab();
+  if (t && !tabShown(t)) showTerminalDoc();
+  else renderDocTabs();
+}
+
 /** Single-click opens the reusable (italic) preview tab; pin=true opens or keeps a permanent tab. */
 function openDiff(s, spec, pin = false) {
   const key = docKey(s.id, spec);
@@ -1925,7 +1987,7 @@ function openDiff(s, spec, pin = false) {
     if (pin) tab.preview = false;
   } else {
     tab = { key, sessionId: s.id, spec, preview: !pin, viewState: null };
-    const previewIdx = pin ? -1 : docs.tabs.findIndex((t) => t.preview);
+    const previewIdx = pin ? -1 : docs.tabs.findIndex((t) => t.preview && tabShown(t));   // one preview tab per project
     if (previewIdx >= 0) docs.tabs[previewIdx] = tab;
     else docs.tabs.push(tab);
   }
@@ -1938,7 +2000,7 @@ function activateDoc(key) {
     if (isConvTab(prev)) prev.scrollTop = $('#convBody').scrollTop;
     else if (diffEditor) prev.viewState = diffEditor.saveViewState();
   }
-  docs.active = docs.tabs.some((t) => t.key === key) ? key : 'terminal';
+  docs.active = docs.tabs.some((t) => t.key === key && tabShown(t)) ? key : 'terminal';
   const tab = activeTab();
   $('#diffDoc').hidden = !tab || isConvTab(tab);
   $('#convDoc').hidden = !isConvTab(tab);
@@ -1966,7 +2028,8 @@ function closeDoc(key) {
   docs.tabs.splice(i, 1);
   if (wasActive) {
     docs.active = 'terminal';   // don't save view state for the tab being closed
-    const next = docs.tabs[i] || docs.tabs[i - 1];
+    const shown = docs.tabs.map(tabShown);
+    const next = docs.tabs.slice(i).find((_, k) => shown[i + k]) || docs.tabs.slice(0, i).reverse().find((_, k) => shown[i - 1 - k]);
     activateDoc(next ? next.key : 'terminal');
   } else {
     renderDocTabs();
@@ -1975,7 +2038,7 @@ function closeDoc(key) {
 }
 
 function cycleDoc(delta) {
-  const keys = ['terminal', ...docs.tabs.map((t) => t.key)];
+  const keys = ['terminal', ...shownTabs().map((t) => t.key)];
   const i = keys.indexOf(docs.active);
   activateDoc(keys[(i + delta + keys.length) % keys.length]);
 }
@@ -1990,7 +2053,7 @@ function renderDocTabs() {
   }, iconEl('terminal'), h('span', { class: 'doc-title' }, ex ? ex.name : 'All sessions'), ex ? projectTag(ex) : null,
   waiting ? h('span', { class: 'badge', title: `${waiting} session(s) waiting for you` }, String(waiting)) : null);
 
-  const tabs = docs.tabs.map((t) => {
+  const tabs = shownTabs().map((t) => {
     const s = state.byId.get(t.sessionId);
     if (isConvTab(t)) {
       return h('div', {
@@ -2002,7 +2065,7 @@ function renderDocTabs() {
         onauxclick: (e) => { if (e.button === 1) closeDoc(t.key); },
       }, iconEl('chat'), h('span', { class: 'doc-title' }, 'Conversation'),
       h('span', { class: 'doc-sub' }, s?.name ?? ''),
-      h('button', { class: 'icon-btn small', title: 'Close (Ctrl+F4)', onclick: () => closeDoc(t.key) }, iconEl('close')));
+      h('button', { class: 'icon-btn small', title: 'Close (Ctrl+W)', onclick: () => closeDoc(t.key) }, iconEl('close')));
     }
     const sub = t.spec.mode === 'commit' ? t.spec.commit.slice(0, 7) : t.spec.mode === 'staged' ? 'staged' : 'diff';
     return h('div', {
@@ -2015,7 +2078,7 @@ function renderDocTabs() {
       onauxclick: (e) => { if (e.button === 1) closeDoc(t.key); },
     }, h('span', { class: 'doc-title' }, t.spec.path.split('/').pop()),
     h('span', { class: 'doc-sub' }, `${s?.name ?? ''} · ${sub}`),
-    h('button', { class: 'icon-btn small', title: 'Close (Ctrl+F4)', onclick: () => closeDoc(t.key) }, iconEl('close')));
+    h('button', { class: 'icon-btn small', title: 'Close (Ctrl+W)', onclick: () => closeDoc(t.key) }, iconEl('close')));
   });
   fill($('#docTabs'), termTab, tabs);
   revealActive($('#docTabs'), '.doc-tab.active');
@@ -2284,6 +2347,7 @@ const convView = { key: null, sessionId: null, els: [] };
 
 /** Opens (or switches to) the session's Conversation tab, scrolled to prompt `index` (or the end). */
 function openConversation(s, index = null) {
+  if (currentSession() && groupOf(currentSession()) !== groupOf(s)) expand(s.id);
   const key = convKey(s.id);
   let tab = docs.tabs.find((t) => t.key === key);
   if (!tab) {

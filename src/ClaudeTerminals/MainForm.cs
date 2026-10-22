@@ -84,6 +84,16 @@ internal sealed class MainForm : Form
             core.SetVirtualHostNameToFolderMapping("app.local", root, CoreWebView2HostResourceAccessKind.Allow);
             core.WebMessageReceived += OnWebMessage;
             core.NewWindowRequested += (_, args) => args.Handled = true;
+            // The terminal's Paste menu item reads the clipboard; without this WebView2 asks "Allow clipboard access?"
+            // the first time, a prompt that also takes focus away from the terminal. Only the app's own origin gets it
+            // (requests name the origin, not the page; navigation never leaves the app page anyway).
+            core.PermissionRequested += (_, args) =>
+            {
+                if (args.PermissionKind == CoreWebView2PermissionKind.ClipboardRead &&
+                    Uri.TryCreate(args.Uri, UriKind.Absolute, out var origin) &&
+                    origin.Scheme == Uri.UriSchemeHttps && string.Equals(origin.Host, "app.local", StringComparison.OrdinalIgnoreCase))
+                    args.State = CoreWebView2PermissionState.Allow;
+            };
             // The page's files come from the install folder and only change when the app is updated, but the browser
             // caches them heuristically from their timestamps; after an upgrade it could keep running the previous
             // version's app.js, possibly mixed with new files. Start each launch with an empty HTTP cache.
@@ -497,6 +507,9 @@ internal sealed class MainForm : Form
                 if (!result.Ok) throw new InvalidOperationException(string.IsNullOrEmpty(result.Error) ? result.Text : result.Error);
                 return result.Text.Trim();
             }
+            case "git.suggestMessage":
+                // Visual Studio-style "Generate commit message": Claude describes what Commit would take.
+                return await CommitMessageService.SuggestAsync(GitDir(msg));
             case "git.pr":
             {
                 // The open pull request for the session's branch (GitHub or Azure DevOps), plus links for its menu.
