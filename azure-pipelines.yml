@@ -10,7 +10,7 @@
 #   - This pipeline, created from the GitHub repository (it reads this file).
 #   - The GitHub service connection named in githubConnection below, with access to the repository and permitted
 #     for this pipeline.
-#   - A pipeline variable TimeStampServer (the same RFC 3161 server the NuGet signing uses).
+#   - Optionally a pipeline variable TimeStampServer; without it Sectigo's (the certificate's CA) is used.
 # The agent needs the .NET 10 SDK, Node.js (npm), Inno Setup 6 and the Windows SDK's signtool.
 
 # Releases are started by hand: no pushes, tags or pull requests start this pipeline.
@@ -87,11 +87,12 @@ steps:
       # value in an Arguments field ("Detected characters in arguments that may not be executed correctly").
       targetType: inline
       script: |
-        # An undefined variable reaches the script as the literal text "$(TimeStampServer)".
-        if (-not $env:TIMESTAMP_SERVER -or $env:TIMESTAMP_SERVER.StartsWith('$(')) {
-          throw 'The pipeline variable TimeStampServer is not set (Edit > Variables): the RFC 3161 timestamp server used for signing.'
-        }
-        & ./publish.ps1 -Sign -TimestampServer $env:TIMESTAMP_SERVER
+        # The certificate is Sectigo's, so its timestamp server is the default; a TimeStampServer pipeline variable, if
+        # defined, is used instead (an undefined one reaches the script as the literal text "$(TimeStampServer)").
+        $server = $env:TIMESTAMP_SERVER
+        if (-not $server -or $server.StartsWith('$(')) { $server = 'http://timestamp.sectigo.com' }
+        Write-Host "Timestamp server: $server"
+        & ./publish.ps1 -Sign -TimestampServer $server
     env:
       TIMESTAMP_SERVER: $(TimeStampServer)
 
