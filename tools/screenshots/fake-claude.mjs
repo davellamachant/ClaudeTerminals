@@ -148,6 +148,60 @@ if (!s) {
   process.exit(1);
 }
 
+// ------------------------------------------------------------------ the conversation rail
+// With the demo's Claude config folder as the second argument, the session registers itself the way Claude Code does
+// (<config>/sessions/<pid>.json) and saves its conversation, so the app's conversation rail and tab have one to show.
+// Earlier turns come first; the last is the one on screen.
+
+const earlier = {
+  checkout: [
+    ['Add a /api/cart/totals endpoint that returns subtotal, tax and shipping',
+      "Added **`GET /api/cart/totals`** in `src/routes/cart.ts`. It returns:\n\n| Field | From |\n|---|---|\n| `subtotal` | line items × quantity |\n| `tax` | the shipping address's rate |\n| `shipping` | free over $50, otherwise the flat rate |\n\nAll amounts are integers in cents, so nothing is lost to floating point.",
+      [['Read', 'src/routes/cart.ts'], ['Update', 'src/routes/cart.ts'], ['Bash', 'npm test -- cart']]],
+    ['Tax is off by a cent for some carts. Round per line item instead of on the total',
+      "Found it: tax was rounded once on the whole cart, so carts with many small items drifted by a cent. It's now rounded **per line item**, which matches how the payment provider itemises receipts.\n\n- `src/lib/tax.ts`: `taxFor(line)` rounds each line\n- `src/routes/cart.ts`: totals add up the rounded lines",
+      [['Read', 'src/lib/tax.ts'], ['Update', 'src/lib/tax.ts'], ['Update', 'src/routes/cart.ts']]],
+    ['Write tests for the rounding edge cases',
+      'Added 6 cases to `tests/tax.test.ts`, including a cart of 40 items at $0.15 and a 7.25% rate. All pass:\n\n```\nTax rounding\n  ✓ rounds each line, not the total\n  ✓ keeps whole-cent totals for 40 × $0.15\n  ✓ handles a 0% rate\n```',
+      [['Write', 'tests/tax.test.ts'], ['Bash', 'npm test -- tax']]],
+    ['Use the Stripe test keys from .env.example in the README setup steps',
+      'The README\'s *Getting started* now copies `.env.example` to `.env` and explains that the `sk_test_…` keys in it only ever hit Stripe\'s test mode.',
+      [['Read', '.env.example'], ['Update', 'README.md']]],
+    ['Show the tax line on the order confirmation email',
+      'The confirmation email now lists **Subtotal**, **Tax** and **Shipping** above the total, using the same rounded amounts as the cart.',
+      [['Read', 'src/email/order-confirmation.tsx'], ['Update', 'src/email/order-confirmation.tsx']]],
+  ],
+};
+
+function saveConversation(config) {
+  const fs = process.getBuiltinModule('node:fs');
+  const path = process.getBuiltinModule('node:path');
+  const crypto = process.getBuiltinModule('node:crypto');
+  const cwd = process.cwd();
+  const sessionId = crypto.randomUUID();
+  const encoded = path.resolve(cwd).replace(/[\\/]+$/, '').replace(/[^A-Za-z0-9]/g, '-');
+  const dir = path.join(config, 'projects', encoded);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.mkdirSync(path.join(config, 'sessions'), { recursive: true });
+
+  const prompt = s.lines.map(visible).find((l) => l.startsWith('> '))?.slice(2) ?? s.title;
+  const turns = [...(earlier[scenario] ?? []), [prompt, null, []]];
+  const start = Date.now() - turns.length * 11 * 60_000;   // one prompt every eleven minutes or so
+  const entries = [];
+  turns.forEach(([text, reply, tools], i) => {
+    const timestamp = new Date(start + i * 11 * 60_000).toISOString();
+    entries.push({ type: 'user', sessionId, cwd, timestamp, isSidechain: false, message: { role: 'user', content: text } });
+    const content = tools.map(([name, arg]) => ({ type: 'tool_use', id: `t${i}${name}`, name, input: name === 'Bash' ? { command: arg } : { file_path: arg } }));
+    if (reply) content.push({ type: 'text', text: reply });
+    if (content.length) entries.push({ type: 'assistant', sessionId, cwd, timestamp, isSidechain: false, message: { role: 'assistant', content } });
+  });
+  fs.writeFileSync(path.join(dir, `${sessionId}.jsonl`), entries.map((e) => JSON.stringify(e)).join('\n') + '\n');
+  fs.writeFileSync(path.join(config, 'sessions', `${process.pid}.json`),
+    JSON.stringify({ pid: process.pid, sessionId, cwd, kind: 'interactive' }));
+}
+
+if (process.argv[3]) saveConversation(process.argv[3]);
+
 const tailRow = s.lines.length + 1;   // 1-based row where the spinner / prompt area starts
 const spinFrames = ['·', '✢', '✳', '✶', '✻', '✽', '✻', '✶', '✳', '✢'];
 const started = Date.now() - 37_000;  // look like it has been working for a while

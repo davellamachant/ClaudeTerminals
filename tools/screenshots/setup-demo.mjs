@@ -633,7 +633,8 @@ for (const [cwd, gitBranch, title, prompt, daysAgo] of conversations) {
 // ------------------------------------------------------------------ Claude Terminals profile
 
 const fake = path.join(here, 'fake-claude.mjs');
-const session = (Id, Name, Directory, scenario, Project = null) => ({ Id, Name, Directory, Command: `node "${fake}" ${scenario}`, Project });
+// The config folder lets each fake session register itself and save its conversation (for the conversation rail).
+const session = (Id, Name, Directory, scenario, Project = null) => ({ Id, Name, Directory, Command: `node "${fake}" ${scenario} "${claudeConfig}"`, Project });
 const profile = path.join(root, 'profile');
 fs.mkdirSync(profile, { recursive: true });
 // Three projects, plus a session with none so the Unknown group shows too.

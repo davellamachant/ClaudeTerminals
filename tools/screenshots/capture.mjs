@@ -51,9 +51,18 @@ async function shot(name) {
 }
 
 fs.mkdirSync(outDir, { recursive: true });
+// The page appears before its script has run: wait until the app's functions exist.
+for (let i = 0; ; i++) {
+  const r = await send('Runtime.evaluate', { expression: `typeof setFontSize === 'function' && typeof state === 'object'`, returnByValue: true });
+  if (r.result.value === true) break;
+  if (i > 120) throw new Error('The app page never finished loading');
+  await sleep(250);
+}
 await send('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: HEIGHT, deviceScaleFactor: SCALE, mobile: false });
 // A slightly larger terminal font keeps the scaled-down tile previews readable (demo profile only).
 await js('setFontSize(17);');
+// The same look whatever the PC: dark, with the app's own purple rather than this Windows' accent colour.
+await js(`setThemePref('dark'); accent.choice = 'purple'; store.set('accentColour', 'purple'); applyAccent();`);
 
 // Let every session start, the "working" ones spin, and web-frontend reach its permission prompt.
 await js(`
@@ -106,6 +115,23 @@ await js(`${reset} showGit('checkout');
   document.querySelectorAll('.conv-item')[1]?.click();`);
 await shot('resume');
 
-await js(reset);
+// 6. The conversation rail beside the open terminal, with the hover card for an earlier prompt (shown as hovering does).
+await js(`${reset} expand('checkout');
+  const s = state.byId.get('checkout');
+  for (let i = 0; i < 40 && !(s.conv && s.conv.turns.length > 3); i++) await new Promise((r) => setTimeout(r, 250));
+  await new Promise((r) => setTimeout(r, 500));
+  s.rail.children[2].classList.add('hot');
+  showRailCard(s.rail, 2);`);
+await shot('rail');
+await js(`hideRailCard(); document.querySelector('.chat-rail i.hot')?.classList.remove('hot');`);
+
+// 7. The light theme, on the Conversation tab: the whole conversation as text, opened at an earlier prompt.
+await js(`${reset} setThemePref('light'); expand('checkout');
+  openConversation(state.byId.get('checkout'), 1);
+  for (let i = 0; i < 20 && !document.querySelector('.chat-turn.filled'); i++) await new Promise((r) => setTimeout(r, 250));
+  await new Promise((r) => setTimeout(r, 800));`);
+await shot('conversation');
+
+await js(`${reset} setThemePref('dark');`);
 await send('Emulation.clearDeviceMetricsOverride');
 ws.close();
