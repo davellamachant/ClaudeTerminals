@@ -75,6 +75,35 @@ internal sealed class MainForm : Form
         }
     }
 
+    private System.Windows.Forms.Timer? accentTimer;
+
+    private void PostAccent() => Post(new { type = "accent", palette = AccentColors.Read() });
+
+    /// <summary>Follows the Windows accent colour when it's changed in Settings.</summary>
+    protected override void WndProc(ref Message m)
+    {
+        base.WndProc(ref m);
+        const int WM_SETTINGCHANGE = 0x001A, WM_DWMCOLORIZATIONCOLORCHANGED = 0x0320;
+        var accentChanged = m.Msg == WM_DWMCOLORIZATIONCOLORCHANGED ||
+            (m.Msg == WM_SETTINGCHANGE && m.LParam != IntPtr.Zero &&
+             System.Runtime.InteropServices.Marshal.PtrToStringUni(m.LParam) == "ImmersiveColorSet");
+        if (!accentChanged || !webReady) return;
+        // Windows sends several of these, and may write the new shades just after: read once things settle.
+        if (accentTimer == null)
+        {
+            accentTimer = new System.Windows.Forms.Timer { Interval = 400 };
+            accentTimer.Tick += OnAccentTimer;
+        }
+        accentTimer.Stop();
+        accentTimer.Start();
+    }
+
+    private void OnAccentTimer(object? sender, EventArgs e)
+    {
+        accentTimer?.Stop();
+        PostAccent();
+    }
+
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
@@ -306,6 +335,7 @@ internal sealed class MainForm : Form
             case "ready":
                 webReady = true;
                 Post(SessionList());
+                PostAccent();
                 foreach (var s in sessions.Values) _ = s.RefreshStatusAsync();
                 return null;
 

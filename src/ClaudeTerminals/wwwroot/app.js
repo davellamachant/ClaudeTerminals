@@ -112,6 +112,10 @@ function request(type, payload = {}) {
 host.addEventListener('message', (e) => {
   const m = e.data;
   switch (m.type) {
+    case 'accent':
+      accent.palette = m.palette;
+      applyAccent();
+      break;
     case 'reply': {
       const p = pending.get(m.reqId);
       if (!p) return;
@@ -2625,6 +2629,39 @@ const mdLink = (url, kids) => h('a', {
   onclick: (e) => { e.preventDefault(); request('openUrl', { uri: url }).catch((err) => toast(err.message, true)); },
 }, kids);
 
+// ------------------------------------------------------------------ Windows accent colour
+// The host sends Windows' accent shades (lightest first, the accent itself at index 3) at start and whenever they change
+// in Settings. Without them, or with the setting off, the app keeps its own purple.
+
+const accent = { palette: null, use: store.get('useWindowsAccent', true) };
+
+/** WCAG contrast ratio of two #rrggbb colours (1 to 21). */
+function contrast(a, b) {
+  const lum = (hex) => {
+    const [r, g, bl] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+      .map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * r + 0.7152 * g + 0.0722 * bl;
+  };
+  const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+function applyAccent() {
+  const root = document.documentElement.style;
+  const p = accent.use ? accent.palette : null;
+  if (!p || p.length < 7) {
+    root.removeProperty('--accent');
+    root.removeProperty('--accent-strong');
+    return;
+  }
+  // Fills carry white text (active tabs, buttons, menus): the accent, or the first darker shade white reads well on.
+  const strong = [3, 4, 5, 6].map((i) => p[i]).find((c) => contrast(c, '#ffffff') >= 4.5) ?? p[6];
+  // Lines, ticks and highlights sit on the dark chrome: a lighter shade, as Windows uses in dark mode.
+  const light = [2, 1, 0].map((i) => p[i]).find((c) => contrast(c, '#1f1f1f') >= 4.5) ?? p[0];
+  root.setProperty('--accent-strong', strong);
+  root.setProperty('--accent', light);
+}
+
 // ------------------------------------------------------------------ updates
 // The host checks the repository's latest GitHub release; an update shows as a button in the title bar. Installing
 // downloads and checks the installer, closes the app, updates silently and reopens it.
@@ -2710,6 +2747,12 @@ function appMenu(x, y) {
       updates.auto = !updates.auto;
       store.set('autoUpdateCheck', updates.auto);
       if (updates.auto) checkForUpdates();
+    } },
+    '-',
+    { label: `${accent.use ? '✓ ' : ''}Use Windows accent colour`, action: () => {
+      accent.use = !accent.use;
+      store.set('useWindowsAccent', accent.use);
+      applyAccent();
     } },
     '-',
     { label: `Claude Terminals ${updates.current ?? ''}`.trim() + ' · release notes',
