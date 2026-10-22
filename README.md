@@ -60,7 +60,7 @@ winget install JRSoftware.InnoSetup   # once
 | Action | How |
 |---|---|
 | Expand a session | Click its tile, its tab in the title bar, or press `Ctrl+1`…`Ctrl+9` |
-| Back to all sessions | `Shift+Esc`, the collapse button in the tile header, or the mouse Back button |
+| Back to all sessions | Click the open session's tab again, `Shift+Esc`, the collapse button in the tile header, or the mouse Back button |
 | Next / previous session | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
 | Toggle Git panel | `Ctrl+Shift+G` |
 | New session | `Ctrl+Shift+N`: start a new conversation (optionally one session per worktree) or **resume an existing conversation** |

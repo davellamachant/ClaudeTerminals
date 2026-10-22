@@ -674,12 +674,13 @@ function renderSessionTabs() {
   const tabs = shown.map((s, i) => h('div', {
     class: 'session-tab' + (state.expandedId === s.id ? ' active' : ''),
     'data-id': s.id,
-    title: `${s.directory}\n${statusText(s)}\nMiddle-click to close`,
+    title: `${s.directory}\n${statusText(s)}\nClick again to go back to all sessions · middle-click to close`,
     onclick: (e) => {
       if (e.target.closest('.tab-close')) return;
-      // Always opens and focuses the session, even if it's the one already shown (that click used to go back to the
-      // grid, which read as "nothing happened"). The grid button, Shift+Esc or the collapse button go back.
-      expand(s.id);
+      // Clicking the session that's open (its terminal showing) goes back to the tiles; otherwise it opens the session,
+      // or brings its terminal back in front of a diff or Conversation tab.
+      if (state.expandedId === s.id && docs.active === 'terminal') collapse();
+      else expand(s.id);
     },
     onmousedown: (e) => { if (e.button === 1) e.preventDefault(); },   // no autoscroll cursor
     onauxclick: (e) => { if (e.button === 1) confirmRemove(s); },
