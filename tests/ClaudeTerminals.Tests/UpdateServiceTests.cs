@@ -112,6 +112,25 @@ public sealed class UpdateServiceTests
     public void Continue_is_dropped_only_when_the_folder_has_no_conversation(string command, bool has, string expected) =>
         Assert.Equal(expected, TerminalSession.PrepareCommand(command, null, () => has));
 
+    [Theory]
+    [InlineData("claude", "claude --settings \"T.json\"")]
+    [InlineData("claude --continue", "claude --continue --settings \"T.json\"")]
+    [InlineData("claude --resume abc", "claude --resume abc --settings \"T.json\"")]   // a resumed session gets the theme too
+    [InlineData("claude --settings mine.json", "claude --settings mine.json")]          // the user's own settings win
+    [InlineData("claude --settings=mine.json", "claude --settings=mine.json")]
+    [InlineData("claude -p hello", "claude -p hello")]                                  // no interface to theme
+    [InlineData("pwsh", "pwsh")]
+    public void Claude_is_started_in_the_theme_of_its_terminal(string command, string expected) =>
+        Assert.Equal(expected, TerminalSession.PrepareCommand(command, null, () => true, "T.json"));
+
+    [Fact]
+    public void A_theme_restart_resumes_the_conversation_and_sets_the_theme()
+    {
+        Assert.Equal("claude --resume abc-123 --settings \"T.json\"", TerminalSession.PrepareCommand("claude --continue", "abc-123", () => true, "T.json"));
+        Assert.Null(TerminalSession.ThemeSettingsFile("solarized"));
+        Assert.Null(TerminalSession.ThemeSettingsFile(null));
+    }
+
     [Fact]
     public void The_folder_is_only_checked_when_the_command_continues()
     {

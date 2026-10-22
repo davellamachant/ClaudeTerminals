@@ -204,6 +204,26 @@ public sealed class ConversationReaderTests : IDisposable
     }
 
     [Fact]
+    public void Only_a_conversation_Claude_has_saved_is_resumed()
+    {
+        var pid = Environment.ProcessId;
+        var work = Path.Combine(config, "work2");
+        Directory.CreateDirectory(work);
+        var sessions = Path.Combine(config, "sessions");
+        Directory.CreateDirectory(sessions);
+        File.WriteAllText(Path.Combine(sessions, $"{pid}.json"),
+            JsonSerializer.Serialize(new { pid, sessionId = "fresh", cwd = work, kind = "interactive" }));
+
+        // Before its first prompt Claude has a session id but nothing saved: --resume would fail.
+        Assert.Null(ConversationReader.ResumableConversation([pid]));
+
+        var dir = Path.Combine(config, "projects", ConversationIndex.Encode(work));
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "fresh.jsonl"), User("first prompt"));
+        Assert.Equal("fresh", ConversationReader.ResumableConversation([pid]));
+    }
+
+    [Fact]
     public void A_session_file_it_cant_make_sense_of_is_skipped_without_losing_the_others()
     {
         var pid = Environment.ProcessId;

@@ -36,7 +36,8 @@ internal sealed partial class TerminalSession : IDisposable
     public event Action<TerminalSession, int, int>? Exited;
     public event Action<TerminalSession, GitStatus>? StatusChanged;
 
-    public void Start(int cols, int rows)
+    /// <param name="claudeTheme">"light" or "dark": Claude is started in the theme that matches the terminal.</param>
+    public void Start(int cols, int rows, string? claudeTheme = null)
     {
         if (process != null) return;
         var generation = ++Generation;
@@ -53,7 +54,7 @@ internal sealed partial class TerminalSession : IDisposable
         try
         {
             var env = SessionEnvironment.Build();
-            var command = PrepareCommand(Info.Command, ResumeOnce, () => ConversationIndex.HasConversation(Info.Directory));
+            var command = PrepareCommand(Info.Command, ResumeOnce, () => ConversationIndex.HasConversation(Info.Directory), ThemeSettingsFile(claudeTheme));
             ResumeOnce = null;
             p.Start(CommandLineResolver.Resolve(command, env), Info.Directory, SessionEnvironment.ToBlock(env), cols, rows);
         }
@@ -75,22 +76,47 @@ internal sealed partial class TerminalSession : IDisposable
     ///   since claude would stop with "No conversation found to continue". The saved command keeps it for next time.
     /// Anything that isn't an interactive claude is left alone.
     /// </summary>
-    internal static string PrepareCommand(string command, string? resumeId, Func<bool> hasConversation)
+    /// <param name="themeSettings">
+    /// A settings file naming Claude's theme to match the app's terminals (Claude can't ask the terminal itself: the
+    /// console layer swallows the question). Added unless the command already passes its own --settings.
+    /// </param>
+    internal static string PrepareCommand(string command, string? resumeId, Func<bool> hasConversation, string? themeSettings = null)
     {
         var tokens = command.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
         if (tokens.Length == 0 || !(tokens[0].Equals("claude", StringComparison.OrdinalIgnoreCase) || tokens[0].Equals("claude.exe", StringComparison.OrdinalIgnoreCase)))
             return command;
         var flags = tokens.Skip(1).Select(t => t.Split('=')[0]).ToList();
-        string[] continueFlags = ["-c", "--continue"];
-        string[] picksItsOwn = ["-r", "--resume", "-p", "--print", "--session-id", "--fork-session"];
-        if (flags.Any(f => picksItsOwn.Contains(f, StringComparer.OrdinalIgnoreCase))) return command;
-        var continues = flags.Any(f => continueFlags.Contains(f, StringComparer.OrdinalIgnoreCase));
+        bool Has(params string[] names) => flags.Any(f => names.Contains(f, StringComparer.OrdinalIgnoreCase));
+        if (Has("-p", "--print")) return command;   // no interface, so nothing to theme or continue
 
-        if (resumeId != null && ConversationId().IsMatch(resumeId))
-            return WithoutContinue(command) + " --resume " + resumeId;
-        if (continues && !hasConversation())
-            return WithoutContinue(command);
-        return command;
+        var result = command;
+        if (!Has("-r", "--resume", "--session-id", "--fork-session"))
+        {
+            if (resumeId != null && ConversationId().IsMatch(resumeId))
+                result = WithoutContinue(command) + " --resume " + resumeId;
+            else if (Has("-c", "--continue") && !hasConversation())
+                result = WithoutContinue(command);
+        }
+        if (themeSettings != null && !Has("--settings"))
+            result = result.TrimEnd() + " --settings \"" + themeSettings + "\"";
+        return result;
+    }
+
+    /// <summary>The settings file that sets Claude's theme to "light" or "dark", written once into the app's data folder.</summary>
+    internal static string? ThemeSettingsFile(string? theme)
+    {
+        if (theme is not ("light" or "dark")) return null;
+        try
+        {
+            var path = Path.Combine(SessionStore.AppDataFolder, $"claude-theme-{theme}.json");
+            var content = $$"""{"theme":"{{theme}}"}""";
+            if (!File.Exists(path) || File.ReadAllText(path) != content) File.WriteAllText(path, content);
+            return path;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;   // Claude just uses its own theme setting
+        }
     }
 
     /// <summary>Whether starting this command again carries on a conversation (--continue or --resume) rather than starting a new one.</summary>

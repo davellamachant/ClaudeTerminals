@@ -77,7 +77,17 @@ internal sealed class MainForm : Form
 
     private System.Windows.Forms.Timer? accentTimer;
 
-    private void PostAccent() => Post(new { type = "accent", palette = AccentColors.Read() });
+    private void PostAccent() => Post(new { type = "accent", palette = AccentColors.Read(), lightApps = AccentColors.AppsUseLightTheme() });
+
+    /// <summary>The window's own colours (title bar, and what shows before the page paints) follow the page's theme.</summary>
+    private void ApplyWindowTheme(bool light)
+    {
+        var dark = light ? 0 : 1;
+        Native.DwmSetWindowAttribute(Handle, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, ref dark, sizeof(int));
+        var background = light ? Color.FromArgb(0xee, 0xee, 0xee) : Color.FromArgb(0x1f, 0x1f, 0x1f);
+        webView.DefaultBackgroundColor = background;
+        BackColor = background;
+    }
 
     /// <summary>Follows the Windows accent colour when it's changed in Settings.</summary>
     protected override void WndProc(ref Message m)
@@ -334,15 +344,15 @@ internal sealed class MainForm : Form
         {
             case "ready":
                 webReady = true;
+                PostAccent();   // first: with Windows' app mode the page knows its theme before sessions start
                 Post(SessionList());
-                PostAccent();
                 foreach (var s in sessions.Values) _ = s.RefreshStatusAsync();
                 return null;
 
             case "start":
             {
                 var s = Get(msg);
-                s.Start(Int(msg, "cols"), Int(msg, "rows"));
+                s.Start(Int(msg, "cols"), Int(msg, "rows"), OptStr(msg, "theme"));
                 return null;
             }
             case "input":
@@ -356,10 +366,16 @@ internal sealed class MainForm : Form
             case "restart":
             {
                 var s = Get(msg);
+                // Restarting to pick up a new theme: carry on in the exact conversation the session is in.
+                if (Bool(msg, "resume") && s.IsRunning && ConversationReader.ResumableConversation(s.ProcessIds()) is { } live)
+                    s.ResumeOnce = live;
                 s.Stop();
-                s.Start(Int(msg, "cols"), Int(msg, "rows"));
+                s.Start(Int(msg, "cols"), Int(msg, "rows"), OptStr(msg, "theme"));
                 return null;
             }
+            case "theme":
+                ApplyWindowTheme(Bool(msg, "light"));
+                return null;
             case "stop":
             {
                 // Stopping disposes the process without raising Exited, so tell the page itself (code null = stopped).
@@ -676,7 +692,7 @@ internal sealed class MainForm : Form
     {
         var map = new Dictionary<string, string>();
         foreach (var s in sessions.Values.Where(s => s.IsRunning))
-            if (ConversationReader.FindLiveSession(s.ProcessIds()) is { } live) map[s.Id] = live.SessionId;
+            if (ConversationReader.ResumableConversation(s.ProcessIds()) is { } live) map[s.Id] = live;
         try { File.WriteAllText(ResumeFile, JsonSerializer.Serialize(map)); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* sessions start fresh instead */ }
     }

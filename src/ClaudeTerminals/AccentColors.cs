@@ -35,5 +35,19 @@ internal static class AccentColors
         return null;
     }
 
+    /// <summary>Windows' "Choose your app mode": true for Light, false for Dark, null when it isn't set.</summary>
+    public static bool? AppsUseLightTheme()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+            return key?.GetValue("AppsUseLightTheme") is int v ? v != 0 : null;
+        }
+        catch (Exception ex) when (ex is System.Security.SecurityException or UnauthorizedAccessException or IOException)
+        {
+            return null;
+        }
+    }
+
     private static string Hex(byte r, byte g, byte b) => $"#{r:x2}{g:x2}{b:x2}";
 }

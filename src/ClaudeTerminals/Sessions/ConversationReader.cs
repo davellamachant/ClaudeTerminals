@@ -48,6 +48,13 @@ internal static partial class ConversationReader
     private static readonly ConcurrentDictionary<string, Cached> Cache = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The conversation of the Claude process among <paramref name="processIds"/>, or null when there is none.</summary>
+    /// <summary>
+    /// The conversation to reopen with --resume after a restart, or null. Only one Claude has saved: before the first
+    /// prompt there's a session id but no conversation, and resuming it fails ("No conversation found").
+    /// </summary>
+    public static string? ResumableConversation(IEnumerable<int> processIds) =>
+        FindLiveSession(processIds) is { } live && FindTranscript(live.SessionId, live.Cwd) != null ? live.SessionId : null;
+
     public static Conversation? ForProcesses(IEnumerable<int> processIds)
     {
         var live = FindLiveSession(processIds);
