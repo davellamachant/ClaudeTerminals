@@ -728,7 +728,7 @@ function renderSessionTabs() {
     h('span', { class: 'dot ' + statusClass(s) }), s.name, i < 9 ? h('span', { class: 'key' }, `Ctrl+${i + 1}`) : null),
   // Closing a session tab removes the session, after the same confirmation as "Remove session…".
   h('button', { class: 'icon-btn small tab-close', title: 'Close session…', onclick: () => confirmRemove(s) }, iconEl('close'))));
-  // A + per project (or one at the end without projects): another session like one of that group's.
+  // A + at the end of each project's group (or of the row without projects): another session like one of that group's.
   const plus = (sessions, where) => {
     const like = sessions.find((s) => s.id === state.currentId) || sessions[0];
     return h('button', {
@@ -759,8 +759,8 @@ function renderSessionTabs() {
       title: g.color ? `${g.name}: show only this project` : `${UNKNOWN_NAME}: sessions with no project. Click to show only these`,
       onclick: () => showOnlyProject(g.id),
     }, g.name),
-    plus(g.sessions, g.color ? `in ${g.name}` : 'with no project'),
-    g.tabs)));
+    g.tabs,
+    plus(g.sessions, g.color ? `in ${g.name}` : 'with no project'))));
   }
   $('#btnGrid').classList.toggle('active', !state.expandedId);
   revealActive(host, '.session-tab.active');   // e.g. after Ctrl+N opens a tab scrolled out of view

@@ -629,7 +629,7 @@ textarea.commit-msg { resize: vertical; min-height: 54px; height: 54px; user-sel
 .session-group-label:focus-visible { outline: 1px solid var(--focus); outline-offset: -2px; }
 .session-group.unknown .session-group-label { font-style: italic; }
 .session-group .session-tab { height: 26px; }
-/* The + after a project's name (or at the end of an ungrouped row): another session in that project */
+/* The + at the end of a project's group (or of an ungrouped row): another session in that project */
 .session-add {
   flex: none; width: 22px; height: 22px; margin: 0 3px; color: var(--text-dim);
   border: 1px solid var(--border); border-radius: 4px;   /* an outline sets it apart from the tabs beside it */
