@@ -160,6 +160,7 @@ svg.ic { width: 16px; height: 16px; flex: none; display: block; }
 .tb-btn:hover { background: var(--hover-strong); }
 .tb-btn.active { background: var(--hover-strong); border-color: var(--border); }
 .tb-btn.text { padding: 0 10px; }
+.tb-btn .ic.small { width: 12px; height: 12px; margin-left: -2px; opacity: .8; }   /* the ▾ on "In <project>" */
 
 .session-tabs { display: flex; gap: 2px; overflow-x: auto; min-width: 0; scrollbar-width: none; }
 .session-tab {

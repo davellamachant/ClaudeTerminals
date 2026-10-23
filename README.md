@@ -61,6 +61,7 @@ Releases are signed by **Llamachant Technology Ltd**. If SmartScreen still warns
 | Next / previous session | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
 | Toggle Git panel | `Ctrl+Shift+G` |
 | New session | `Ctrl+Shift+N`: start a new conversation (optionally one session per worktree) or **resume an existing conversation** |
+| Another session like this one | **In *project* ▾**, next to New Session: *New session in* the current session's folder and project (one click, with a conversation of its own), or *New session in a new worktree…*, which creates a worktree of its repository on a new branch (next to the repository by default) and opens a session there |
 | Switch a session to another conversation | Session menu (⋯) › *Resume a different conversation…* |
 | Close a session | The × on its tab in the title bar, or middle-click the tab. After you confirm, the session is removed and its process stopped; the folder isn't touched |
 | Show one project | Ctrl+click its name in the Projects row, or right-click it › *Show only this project* |

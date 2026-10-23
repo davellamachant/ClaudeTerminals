@@ -670,6 +670,15 @@ internal sealed class MainForm : Form
                 if (Directory.Exists(initial)) dlg.InitialDirectory = initial;
                 return dlg.ShowDialog(this) == DialogResult.OK ? dlg.SelectedPath : null;
             }
+            case "worktree.add":
+            {
+                // A new worktree of the session's repository, on a new branch; the page then adds a session there.
+                var root = GitDir(msg);
+                var path = Str(msg, "path").Trim();
+                var result = await GitService.AddWorktreeAsync(root, path, Str(msg, "branch").Trim(), OptStr(msg, "base")?.Trim());
+                if (!result.Ok) throw new InvalidOperationException(string.IsNullOrWhiteSpace(result.Error) ? "git couldn't create the worktree." : result.Error.Trim());
+                return Path.GetFullPath(path);
+            }
             case "worktrees":
             {
                 var dir = Str(msg, "directory");
