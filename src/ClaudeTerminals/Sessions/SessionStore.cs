@@ -10,6 +10,12 @@ internal sealed class SessionInfo
     public string Command { get; set; } = "claude";
     /// <summary>Id of the project this session belongs to, or null for none (shown whichever projects are selected).</summary>
     public string? Project { get; set; }
+    /// <summary>
+    /// The Claude conversation this session reopens (a session id), chosen by the app when the session is made and
+    /// followed when Claude moves to another one (/clear, /resume). The app starts Claude with --resume for it, or with
+    /// --session-id before anything has been saved. Null until known, e.g. for a session made with --continue.
+    /// </summary>
+    public string? Conversation { get; set; }
 }
 
 internal sealed partial class ProjectInfo

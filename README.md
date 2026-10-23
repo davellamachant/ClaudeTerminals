@@ -30,7 +30,7 @@ One window for many local Claude Code sessions, with a Visual Studio–style Git
 - **Git, Visual Studio style.** Each session's worktree gets Git Changes (stage, commit, Undo Changes, fetch, pull, push) and Git Repository (history, outgoing commits), with side-by-side diffs that update as Claude edits. **Suggest** writes the commit message for you, and a chip links the branch's pull request on GitHub or Azure DevOps.
 - **Look back through a conversation.** A rail of ticks beside the terminal, one per prompt; hover for a preview, click to read the whole conversation in its own tab. Works even in Claude's full-screen mode.
 - **Panels from Claude.** Claude can show your task list, an error summary or notes as a tab beside the Git panel, through a small MCP server built into the app; buttons on them only ever fill in a prompt for you.
-- **Picks up where you left off.** Sessions continue their conversation when the app restarts, and you can resume any saved conversation.
+- **Picks up where you left off.** Each session has a conversation of its own and reopens it when the app restarts, following you through `/clear`; you can also resume any saved conversation.
 - **Light or dark, in your colours.** Follows Windows' light/dark mode and accent colour, or choose your own; Claude itself is started in matching colours.
 - **Keeps itself up to date.** Tells you when a new version is out and installs it in a click; your sessions carry on afterwards.
 
@@ -81,9 +81,14 @@ Plain `Esc` always goes to the terminal, because Claude Code uses it to interrup
 
 **Status dots:** green = idle, pulsing blue = working, orange = finished working while you weren't watching (or rang the bell).
 
-**New sessions continue by default:** their command is `claude --continue`, so restarting the app (or a session) carries on the folder's last conversation. When the folder has no saved conversation yet, the app starts plain `claude` instead of letting Claude stop with "No conversation found to continue"; the command keeps `--continue` for next time.
+**Each session has its own conversation:** a new session's command is just `claude` (plus any options you add), and the app gives it a conversation id of its own.
+- **Starting:** it starts Claude with `--session-id <id>` until there's something saved, then with `--resume <id>`. Restarting the app or the session always reopens that conversation, even with several sessions in the same folder.
+- **Following Claude:** when you `/clear` or `/resume` inside Claude, the app follows it to the new conversation once Claude has saved it.
+- **Where to see it:** Edit session shows the id.
+- **Existing sessions:** a session made with `claude --continue` (the previous default) starts on the folder's latest conversation once, then keeps that one.
+- **Commands that choose for themselves:** commands with their own `--resume`, `--session-id` or `--fork-session` are left alone.
 
-**Resuming:** the picker reads Claude Code's saved conversations from `~/.claude/projects`. A resumed session keeps `claude --resume <id>` as its command, so it reopens the same conversation every time the app starts. Close the conversation in any other terminal first. Conversations updated in the last few minutes are tagged *active now* as a reminder.
+**Resuming:** the picker reads Claude Code's saved conversations from `~/.claude/projects`. Picking one (in New session, or *Resume a different conversation…*) makes it the session's conversation; *New conversation* gives the session a fresh one. Close the conversation in any other terminal first. Conversations updated in the last few minutes are tagged *active now* as a reminder.
 
 **Closing the app** stops the sessions but loses nothing: Claude keeps every conversation, and the sessions start again with the app. The closing prompt says which pick up where they left off (those that continue or resume) and which start a new conversation.
 
