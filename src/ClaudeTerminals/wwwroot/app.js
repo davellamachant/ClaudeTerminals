@@ -1521,7 +1521,10 @@ function makeGroupEl(g) {
   const title = h('div', { class: 'tw-title' }, fold, g.tabsEl);
   // Double-clicking the tab row folds the group too (not its ◀ ▶ buttons, which are often clicked in quick succession).
   title.addEventListener('dblclick', (e) => { if (!e.target.closest('.scroll-btn, .dock-fold')) toggleFold(g); });
-  g.el = h('div', { class: 'dock-group' }, title, g.body);
+  // A folded group is only its tab row, which has no top or bottom half to split on: while a tab is dragged, these
+  // strips appear above and below it to drop on instead.
+  g.el = h('div', { class: 'dock-group' }, h('div', { class: 'dock-pad above' }, 'New group above'), title, g.body,
+    h('div', { class: 'dock-pad below' }, 'New group below'));
   g.el.dock = g;
   g.foldBtn = fold;
   makeScrollable(g.tabsEl, 'tw');
@@ -1684,8 +1687,14 @@ function makeDivider(g) {
   function dropTarget(x, y) {
     const el = document.elementFromPoint(x, y);
     const groupEl = el?.closest('#dockGroups .dock-group');
-    if (!groupEl || groupEl.hidden) return null;
+    if (!groupEl) return el?.closest('#dockGroups') ? belowEverything(y) : null;
+    if (groupEl.hidden) return null;
     const g = groupEl.dock;
+    const pad = el.closest('.dock-pad');
+    if (pad) {
+      if (groupOfTab(press.tab) === g && g.tabs.length === 1) return null;
+      return { kind: pad.classList.contains('above') ? 'above' : 'below', group: g, rect: pad.getBoundingClientRect() };
+    }
     const strip = el.closest('.tw-title');
     if (strip) {
       const tabs = [...g.tabsEl.querySelectorAll('.tw-tab')];
@@ -1696,6 +1705,17 @@ function makeDivider(g) {
     const r = groupEl.getBoundingClientRect();
     const above = y < r.top + r.height / 2;
     return { kind: above ? 'above' : 'below', group: g, rect: { left: r.left, width: r.width, top: above ? r.top : r.top + r.height / 2, height: r.height / 2 } };
+  }
+
+  /** Empty space under the groups (left when the last ones are folded): a new group at the bottom. */
+  function belowEverything(y) {
+    const last = [...dock.groups].reverse().find((g) => !g.el.hidden);
+    if (!last) return null;
+    const r = last.el.getBoundingClientRect();
+    if (y < r.bottom) return null;
+    if (groupOfTab(press.tab) === last && last.tabs.length === 1) return null;   // it's already the bottom group
+    const host = $('#dockGroups').getBoundingClientRect();
+    return { kind: 'below', group: last, rect: { left: host.left, width: host.width, top: r.bottom, height: Math.max(24, host.bottom - r.bottom) } };
   }
 
   function showTarget(t) {
