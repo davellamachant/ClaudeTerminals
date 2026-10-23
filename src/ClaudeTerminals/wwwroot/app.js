@@ -404,7 +404,7 @@ function confirmDeleteProject(p) {
 
 const PAD = 8, GAP = 8, HEADER_H = 30;
 const RAIL_W = 16;   // the conversation rail's gutter at the right of each terminal
-const DEFAULT_COMMAND = 'claude --continue';
+const DEFAULT_COMMAND = 'claude';   // each new session gets a conversation of its own (the host gives it one)
 const MAX_WEBGL = 12;
 
 // ------------------------------------------------------------------ theme
@@ -452,7 +452,7 @@ function syncSessions(list, projects) {
       s = createSession(info);
       state.byId.set(s.id, s);
     } else {
-      Object.assign(s, { name: info.name, directory: info.directory, command: info.command });
+      Object.assign(s, { name: info.name, directory: info.directory, command: info.command, conversation: info.conversation });
     }
     s.project = info.project || null;
     s.running = info.running || s.running;
@@ -1134,16 +1134,18 @@ function showEditDialog(s, focus) {
   for (const i of [name, command, project.newName]) i.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); });
   openModal('Edit session', [
     field('Name', name),
-    field('Command', command, 'For example: claude, claude --continue, claude --model opus'),
+    field('Command', command, 'For example: claude, claude --model opus'),
     project.el,
     field('Folder', h('input', { value: s.directory, readonly: true })),
+    /^claude(\.exe)?(\s|$)/i.test(s.command) && field('Conversation',
+      h('input', { value: s.conversation ?? '', placeholder: 'Learned from Claude once it has picked one (--continue)', readonly: true, spellcheck: 'false' }),
+      'The conversation this session reopens each time it starts, followed through /clear and /resume. Change it with Resume a different conversation…'),
     error,
   ], [h('button', { class: 'btn', onclick: closeModal }, 'Cancel'), h('button', { class: 'btn primary', onclick: save }, 'Save')]);
   if (focus === 'project') setTimeout(() => project.select.focus(), 30);
 }
 
 const leafName = (path) => (path || '').split(/[\\/]/).filter(Boolean).pop() || path;
-const resumeCommand = (id) => `claude --resume ${id}`;
 
 /**
  * Searchable list of Claude Code's saved conversations (optionally limited to one folder).
@@ -1155,7 +1157,7 @@ function conversationPicker({ directory = null, onPick }) {
   let all = [];
   let selected = null;
 
-  const openIn = (conv) => state.sessions.find((x) => x.command.includes(conv.sessionId));
+  const openIn = (conv) => state.sessions.find((x) => x.conversation === conv.sessionId || x.command.includes(conv.sessionId));
 
   const render = () => {
     const q = search.value.trim().toLowerCase();
@@ -1194,10 +1196,10 @@ function conversationPicker({ directory = null, onPick }) {
  */
 function showAddDialog(mode = 'new', from = null) {
   const lastDir = store.get('lastDir', '');
-  // New sessions carry on the folder's last conversation (plain claude when there is none yet). A remembered "claude"
-  // is the old default rather than a choice, so it gives way to the new one.
+  // New sessions get a conversation of their own, which they reopen every time. A remembered "claude --continue" is the
+  // previous default rather than a choice, so it gives way to the new one.
   const remembered = store.get('lastCommand', null);
-  const lastCommand = !remembered || remembered === 'claude' ? DEFAULT_COMMAND : remembered;
+  const lastCommand = !remembered || remembered === 'claude --continue' ? DEFAULT_COMMAND : remembered;
   const dir = h('input', { value: from?.directory ?? '', placeholder: 'D:\\Source\\MyRepo', spellcheck: 'false' });
   const name = h('input', { value: from?.name ?? '', placeholder: '(folder name)', spellcheck: 'false' });
   const command = h('input', { value: lastCommand, spellcheck: 'false' });
@@ -1206,6 +1208,8 @@ function showAddDialog(mode = 'new', from = null) {
   const pickerHost = h('div', { class: 'field' });
   const project = projectField(from ? from.project : defaultProjectId());
   const firstPrompt = from?.prompt != null && h('textarea', { class: 'first-prompt', spellcheck: 'false' }, from.prompt);
+  const commandNote = h('span');
+  let picked = null;   // the saved conversation chosen in "Resume existing conversation"
 
   const loadWorktrees = debounce(async () => {
     const d = dir.value.trim();
@@ -1241,9 +1245,12 @@ function showAddDialog(mode = 'new', from = null) {
 
   const add = async () => {
     const d = dir.value.trim();
-    if (!d) { error.hidden = false; error.textContent = mode === 'resume' ? 'Choose a conversation.' : 'Choose a folder.'; return; }
+    if (mode === 'resume' ? !picked : !d) { error.hidden = false; error.textContent = mode === 'resume' ? 'Choose a conversation.' : 'Choose a folder.'; return; }
     const cmd = command.value.trim() || DEFAULT_COMMAND;
-    const list = [{ directory: d, name: name.value.trim(), command: cmd, prompt: firstPrompt ? firstPrompt.value.trim() : undefined }];
+    const list = [{
+      directory: d, name: name.value.trim(), command: cmd, prompt: firstPrompt ? firstPrompt.value.trim() : undefined,
+      conversation: mode === 'resume' ? picked?.sessionId : undefined,
+    }];
     if (mode === 'new' && !wtHost.hidden && wtHost.dataset.for === d) {   // only ticks made for this folder
       for (const cb of wtHost.querySelectorAll('input[type=checkbox]:checked')) {
         list.push({ directory: cb.dataset.path, name: leafName(cb.dataset.path), command: cmd });
@@ -1272,6 +1279,7 @@ function showAddDialog(mode = 'new', from = null) {
   const segResume = h('button', { class: 'seg-btn' }, 'Resume existing conversation');
   const setMode = (m) => {
     mode = m;
+    picked = null;
     segNew.classList.toggle('active', m === 'new');
     segResume.classList.toggle('active', m === 'resume');
     error.hidden = true;
@@ -1280,13 +1288,13 @@ function showAddDialog(mode = 'new', from = null) {
       pickerHost.hidden = false;
       dir.value = '';
       name.value = '';
-      command.value = '';
       pickerHost.replaceChildren(h('label', {}, 'Conversation (double-click to add)'), conversationPicker({
         onPick: (c, confirm) => {
+          picked = c;
           dir.value = c.cwd || '';
           name.value = leafName(c.cwd);
-          command.value = resumeCommand(c.sessionId);
           error.hidden = true;
+          updateNote();
           if (confirm) add();
         },
       }));
@@ -1294,10 +1302,29 @@ function showAddDialog(mode = 'new', from = null) {
     } else {
       pickerHost.hidden = true;
       pickerHost.replaceChildren();
-      if (!command.value || command.value.startsWith('claude --resume')) command.value = lastCommand;
+      if (!command.value) command.value = lastCommand;
       loadWorktrees();
     }
+    updateNote();
   };
+
+  // What happens to the conversation, in words, under the Command box: it follows the mode, the pick and the command.
+  function updateNote() {
+    const cmd = command.value.trim() || DEFAULT_COMMAND;
+    const claude = /^claude(\.exe)?(\s|$)/i.test(cmd);
+    const flag = (re) => re.test(` ${cmd} `);
+    let text;
+    if (firstPrompt) text = 'Starts a new conversation with the first prompt above, and reopens it each time the session starts.';
+    else if (!claude) text = 'Runs in the folder above.';
+    else if (flag(/\s(-r|--resume|--session-id|--fork-session)[\s=]/)) text = 'Your command picks its own conversation, so the app leaves that to it.';
+    else if (mode === 'resume') text = picked
+      ? `Reopens "${picked.title}" each time the session starts, following it through /clear and /resume.`
+      : 'Pick the conversation to carry on above.';
+    else if (flag(/\s(-c|--continue)\s/)) text = 'Carries on the folder\'s latest conversation, then keeps that one: it reopens each time the session starts.';
+    else text = 'Gets a conversation of its own and reopens it each time the session or the app restarts, following it through /clear and /resume.';
+    commandNote.textContent = text;
+  }
+  command.addEventListener('input', updateNote);
   segNew.addEventListener('click', () => setMode('new'));
   segResume.addEventListener('click', () => setMode('resume'));
 
@@ -1307,7 +1334,7 @@ function showAddDialog(mode = 'new', from = null) {
     field('Folder (repository or worktree)', h('div', { class: 'inline' }, dir, browse)),
     field('Name', name),
     firstPrompt && field('First prompt', firstPrompt, 'From the panel. Starts a new conversation in this session; edit it first if you like.'),
-    field('Command', command, 'Runs in the folder above. For example: claude, claude --continue, claude --resume <id>'),
+    field('Command', command, commandNote),
     project.el,
     wtHost,
     error,
@@ -1320,23 +1347,24 @@ function showAddDialog(mode = 'new', from = null) {
 function showResumeDialog(s) {
   let picked = null;
   const resumeBtn = h('button', { class: 'btn primary', disabled: true }, s.running ? 'Resume (restarts session)' : 'Resume');
-  const apply = (command) => {
+  // The session keeps the conversation itself (its command keeps only your own options): a picked one, or 'new'.
+  const apply = (conversation) => {
     closeModal();
-    request('updateSession', { id: s.id, command })
-      .then(() => { s.command = command; restartSession(s); expand(s.id); })
+    request('updateSession', { id: s.id, conversation })
+      .then(() => { restartSession(s); expand(s.id); })
       .catch((e) => toast(e.message, true));
   };
-  resumeBtn.addEventListener('click', () => picked && apply(resumeCommand(picked.sessionId)));
+  resumeBtn.addEventListener('click', () => picked && apply(picked.sessionId));
   openModal(`Resume a conversation in "${s.name}"`, [
     h('div', { class: 'dim' }, s.directory),
     conversationPicker({
       directory: s.directory,
-      onPick: (c, confirm) => { picked = c; resumeBtn.disabled = false; if (confirm) apply(resumeCommand(c.sessionId)); },
+      onPick: (c, confirm) => { picked = c; resumeBtn.disabled = false; if (confirm) apply(c.sessionId); },
     }),
     h('div', { class: 'dim' }, 'Close the conversation in any other terminal first, so two Claude processes don’t write to it at once.'),
   ], [
     h('button', { class: 'btn', onclick: closeModal }, 'Cancel'),
-    h('button', { class: 'btn', title: 'Start a fresh conversation in this folder', onclick: () => apply('claude') }, 'New conversation'),
+    h('button', { class: 'btn', title: 'Start a fresh conversation in this folder', onclick: () => apply('new') }, 'New conversation'),
     resumeBtn,
   ]);
   $('#modalHost .modal').classList.add('wide');

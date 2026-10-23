@@ -652,4 +652,62 @@ fs.writeFileSync(path.join(profile, 'sessions.json'), JSON.stringify([
   session('tooling', 'tooling', main, 'docs'),
 ], null, 2));
 
+// Panels, as Claude would have shown them with show_panel (the fake sessions aren't Claude, so they're written here).
+const ago = (minutes) => new Date(Date.now() - minutes * 60_000).toISOString();
+const task = (key, title, subtitle, badges, minutes, checked, extra = {}) => ({
+  key, title, subtitle, link: `https://tracker.example/${key}`, time: ago(minutes), checked,
+  badges: badges.map(([text, tone]) => ({ text, tone: tone ?? 'neutral' })),
+  buttons: [
+    { label: 'Start session', target: 'new', name: key, prompt: `Work on issue ${key}, "${title}". Read it and its comments, create a branch named ${key.toLowerCase()}, and propose a fix before changing code.` },
+    { label: 'Ask here', target: 'here', prompt: `Summarise ${key} and its latest comments.` },
+    { label: 'Copy branch', target: 'copy', prompt: key.toLowerCase() },
+  ],
+  ...extra,
+});
+fs.writeFileSync(path.join(profile, 'panels.json'), JSON.stringify([
+  {
+    owner: 'checkout', id: 'my-tasks', title: 'My tasks', subtitle: 'Issues · ACME', scope: 'project', refresh: '/my-tasks',
+    badge: { text: '6', tone: 'info' }, updated: ago(2), version: 1,
+    groups: [
+      { title: 'In progress', items: [
+        task('ACME-482', 'Tax is off by a cent on large carts', 'Checkout · 3 comments', [['High', 'warning']], 25, true, { progress: { value: 3, max: 5 } }),
+        task('ACME-475', 'Webhook retries create duplicate orders', 'Payments · due Friday', [['Urgent', 'danger']], 70, false),
+      ] },
+      { title: 'To do', items: [
+        task('ACME-490', 'Gift cards can\'t be combined with promo codes', 'Cart · 1 comment', [['Medium', 'info']], 180, false),
+        task('ACME-493', 'Show the delivery estimate on the basket page', 'Web · design ready', [['Low']], 300, false),
+      ] },
+      { title: 'Backlog', collapsed: true, items: [
+        task('ACME-466', 'Add Apple Pay to checkout', 'Checkout', [['Low']], 2900, false),
+        task('ACME-451', 'Export orders as CSV', 'Admin', [['Low']], 5800, false),
+      ] },
+    ],
+  },
+  {
+    owner: 'checkout', id: 'errors', title: 'Acme Shop errors', subtitle: 'Error log · Production', scope: 'project', refresh: '/errors',
+    badge: { text: '2', tone: 'danger' }, updated: ago(9), version: 1,
+    stats: [
+      { label: 'Errors today', value: '214', tone: 'danger', change: 'up', note: '+180 since the deploy', series: [4, 3, 5, 4, 6, 5, 18, 44, 61, 70] },
+      { label: 'Users affected', value: '31', tone: 'warning', change: 'up' },
+      { label: 'Resolved this week', value: '12 of 15', tone: 'success' },
+    ],
+    groups: [
+      { title: 'New since v4.12.0', items: [
+        { key: 'ERR-1042', title: 'TypeError: Cannot read properties of undefined (reading \'lines\')', subtitle: 'orderTotal · src/lib/tax.ts:31 · 214 events',
+          time: ago(4), badges: [{ text: 'Rising', tone: 'danger' }], series: [0, 0, 2, 9, 30, 44, 61, 70],
+          details: 'Thrown when a **draft** order has no line items yet.\n\n```ts\nexport function orderTotal(order: Order) {\n  // order.lines is undefined for drafts\n  return order.lines.reduce((sum, l) => sum + l.unitPrice * l.quantity, 0);\n}\n```',
+          buttons: [
+            { label: 'Investigate', target: 'new', name: 'ERR-1042', prompt: 'Investigate error ERR-1042 (TypeError in orderTotal, src/lib/tax.ts:31) that started after v4.12.0. Find the cause and propose a fix with a test.' },
+            { label: 'Ask here', target: 'here', prompt: 'Look at ERR-1042 in the errors panel: is it caused by the change we just made?' },
+          ] },
+        { key: 'ERR-1043', title: 'Stripe request timed out (10 s)', subtitle: 'payments.charge · 38 events', time: ago(65),
+          badges: [{ text: 'Flat', tone: 'neutral' }], series: [6, 5, 7, 4, 6, 5, 6, 5] },
+      ] },
+      { title: 'Known', collapsed: true, items: [
+        { key: 'ERR-0988', title: 'Basket session expired during checkout', subtitle: 'web · 12 events', time: ago(400) },
+      ] },
+    ],
+  },
+], null, 2));
+
 console.log(JSON.stringify({ root, profile, claudeConfig }));
