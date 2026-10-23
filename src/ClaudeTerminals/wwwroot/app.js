@@ -728,17 +728,27 @@ function renderSessionTabs() {
     h('span', { class: 'dot ' + statusClass(s) }), s.name, i < 9 ? h('span', { class: 'key' }, `Ctrl+${i + 1}`) : null),
   // Closing a session tab removes the session, after the same confirmation as "Remove session…".
   h('button', { class: 'icon-btn small tab-close', title: 'Close session…', onclick: () => confirmRemove(s) }, iconEl('close'))));
+  // A + at the end of each project's group (or of the row without projects): another session like one of that group's.
+  const plus = (sessions, where) => {
+    const like = sessions.find((s) => s.id === state.currentId) || sessions[0];
+    return h('button', {
+      class: 'icon-btn small session-add', 'aria-label': `New session ${where}`,
+      title: `New session ${where}: in the same folder as ${like.name}${like.git?.isRepo ? ", in a new worktree" : ""}, or in a different folder`,
+      onclick: (e) => quickAddMenu(like, e.currentTarget),
+    }, iconEl('plus'));
+  };
   if (!state.projects.length) {
-    host.replaceChildren(...tabs);   // nothing to group by
+    host.replaceChildren(...tabs, shown.length ? plus(shown, 'like these') : null);   // nothing to group by
   } else {
     const groups = [];
     shown.forEach((s, i) => {
       const id = groupOf(s);
       if (!groups.length || groups[groups.length - 1].id !== id) {
         const p = projectOf(s);
-        groups.push({ id, name: p ? p.name : UNKNOWN_NAME, color: p ? projectColor(p) : null, tabs: [] });
+        groups.push({ id, name: p ? p.name : UNKNOWN_NAME, color: p ? projectColor(p) : null, tabs: [], sessions: [] });
       }
       groups[groups.length - 1].tabs.push(tabs[i]);
+      groups[groups.length - 1].sessions.push(s);
     });
     host.replaceChildren(...groups.map((g) => h('div', {
       class: 'session-group' + (g.color ? '' : ' unknown'),
@@ -749,7 +759,8 @@ function renderSessionTabs() {
       title: g.color ? `${g.name}: show only this project` : `${UNKNOWN_NAME}: sessions with no project. Click to show only these`,
       onclick: () => showOnlyProject(g.id),
     }, g.name),
-    g.tabs)));
+    g.tabs,
+    plus(g.sessions, g.color ? `in ${g.name}` : 'with no project'))));
   }
   $('#btnGrid').classList.toggle('active', !state.expandedId);
   revealActive(host, '.session-tab.active');   // e.g. after Ctrl+N opens a tab scrolled out of view
@@ -1201,7 +1212,7 @@ function showAddDialog(mode = 'new', from = null) {
   const remembered = store.get('lastCommand', null);
   const lastCommand = !remembered || remembered === 'claude --continue' ? DEFAULT_COMMAND : remembered;
   const dir = h('input', { value: from?.directory ?? '', placeholder: 'D:\\Source\\MyRepo', spellcheck: 'false' });
-  const name = h('input', { value: from?.name ?? '', placeholder: '(folder name)', spellcheck: 'false' });
+  const name = h('input', { value: from?.name ?? '', placeholder: '(Session Name)', spellcheck: 'false' });
   const command = h('input', { value: lastCommand, spellcheck: 'false' });
   const wtHost = h('div', { class: 'field', hidden: true });
   const error = h('div', { class: 'form-error', hidden: true });
@@ -1332,7 +1343,7 @@ function showAddDialog(mode = 'new', from = null) {
     !firstPrompt && h('div', { class: 'seg' }, segNew, segResume),
     pickerHost,
     field('Folder (repository or worktree)', h('div', { class: 'inline' }, dir, browse)),
-    field('Name', name),
+    field('Name', name, 'Leave it empty to use the folder\'s name.'),
     firstPrompt && field('First prompt', firstPrompt, 'From the panel. Starts a new conversation in this session; edit it first if you like.'),
     field('Command', command, commandNote),
     project.el,
@@ -1341,6 +1352,97 @@ function showAddDialog(mode = 'new', from = null) {
   ], [h('button', { class: 'btn', onclick: closeModal }, 'Cancel'), h('button', { class: 'btn primary', onclick: add }, firstPrompt ? 'Start session' : 'Add')]);
   $('#modalHost .modal').classList.add('wide');
   setMode(mode);
+}
+
+// ------------------------------------------------------------------ quick new sessions, from the one you're on
+
+/**
+ * The + beside a project's name on the session tab row: another session in that project, like `s` (the group's
+ * current session, else its first): in the same folder, in a new worktree of its repository, or anywhere.
+ */
+function quickAddMenu(s, anchor) {
+  const r = anchor.getBoundingClientRect();
+  const p = projectOf(s);
+  showMenu(r.left, r.bottom + 2, [
+    { header: p ? `New session in ${p.name}` : 'New session with no project' },
+    { label: 'In the same folder', action: () => quickSession(s) },
+    s.git?.isRepo && { label: 'In a new worktree…', action: () => showWorktreeDialog(s) },   // worktrees need a Git repository
+    '-',
+    { label: 'A different folder…', action: () => showAddDialog('new', { directory: s.directory, project: s.project ?? null }) },
+  ]);
+}
+
+/** The session's command without anything that picks a conversation: a new session gets one of its own. */
+const ownOptionsOnly = (command) => (/^claude(\.exe)?(\s|$)/i.test(command)
+  ? command.replace(/\s+(-c|--continue)(?=\s|$)/gi, '').replace(/\s+(-r|--resume|--session-id|--fork-session)(=\S+|\s+[^-\s]\S*)?(?=\s|$)/gi, '').trim()
+  : command);
+
+/** "checkout-api", or "checkout-api 2" (3, …) when that's taken. */
+function freeName(base) {
+  const taken = new Set(state.sessions.map((x) => x.name.toLowerCase()));
+  if (!taken.has(base.toLowerCase())) return base;
+  for (let n = 2; ; n++) if (!taken.has(`${base} ${n}`.toLowerCase())) return `${base} ${n}`;
+}
+
+async function addAndOpen(item) {
+  const before = new Set(state.sessions.map((x) => x.id));
+  await request('addSessions', { sessions: [item] });
+  if (item.project && state.hiddenProjects.has(item.project)) toggleProject(item.project);
+  const added = state.sessions.find((x) => !before.has(x.id));
+  if (added) expand(added.id);
+}
+
+/** One click: another session in the same folder and project, with a conversation of its own. */
+function quickSession(s) {
+  addAndOpen({ directory: s.directory, name: freeName(s.name), command: ownOptionsOnly(s.command), project: s.project ?? '' })
+    .catch((e) => toast(e.message, true));
+}
+
+/** A new worktree of the session's repository on a new branch, with a session in it (same project and options). */
+function showWorktreeDialog(s) {
+  const root = (s.git?.root || s.directory).replace(/[\\/]+$/, '');
+  const parent = root.replace(/[\\/][^\\/]*$/, '');
+  const slug = (b) => b.trim().replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '');
+  const branch = h('input', { placeholder: 'feature/my-change', spellcheck: 'false' });
+  const base = h('input', { value: s.git?.branch && !s.git.branch.startsWith('(') ? s.git.branch : 'HEAD', spellcheck: 'false' });
+  const folder = h('input', { spellcheck: 'false' });
+  const name = h('input', { placeholder: '(the branch name)', spellcheck: 'false' });
+  const error = h('div', { class: 'form-error', hidden: true });
+  let folderEdited = false;
+  // The folder follows the branch (next to the repository) until you change it yourself.
+  const suggest = () => { if (!folderEdited) folder.value = slug(branch.value) ? `${parent}\\${leafName(root)}-${slug(branch.value)}` : ''; };
+  branch.addEventListener('input', suggest);
+  folder.addEventListener('input', () => { folderEdited = true; });
+  const create = h('button', { class: 'btn primary' }, 'Create worktree and session');
+  const go = async () => {
+    const b = branch.value.trim();
+    if (!b) { error.hidden = false; error.textContent = 'Name the new branch.'; return; }
+    if (!folder.value.trim()) { error.hidden = false; error.textContent = 'Choose a folder for the worktree.'; return; }
+    create.disabled = true;
+    create.textContent = 'Creating…';
+    error.hidden = true;
+    try {
+      const path = await request('worktree.add', { id: s.id, branch: b, path: folder.value.trim(), base: base.value.trim() || null });
+      closeModal();
+      await addAndOpen({ directory: path, name: freeName(name.value.trim() || b), command: ownOptionsOnly(s.command), project: s.project ?? '' });
+    } catch (e) {
+      error.hidden = false;
+      error.textContent = e.message;
+      create.disabled = false;
+      create.textContent = 'Create worktree and session';
+    }
+  };
+  create.addEventListener('click', go);
+  for (const i of [branch, base, folder, name]) i.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+  openModal('New session in a new worktree', [
+    h('div', { class: 'dim' }, `A new worktree of ${root}, with a session in it${projectOf(s) ? ` in ${projectOf(s).name}` : ''}.`),
+    field('New branch', branch),
+    field('Based on', base, 'A branch or commit; the new branch starts here.'),
+    field('Folder', folder, 'Created for the worktree, next to the repository unless you change it.'),
+    field('Session name', name),
+    error,
+  ], [h('button', { class: 'btn', onclick: closeModal }, 'Cancel'), create]);
+  $('#modalHost .modal').classList.add('wide');
 }
 
 /** Points an existing session at a different saved conversation of its folder (or a fresh one) and restarts it. */
