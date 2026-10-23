@@ -831,7 +831,8 @@ function expand(id) {
   state.expandedId = id;
   setAttention(s, false);
   const switched = state.currentId !== id;
-  if (switched) { state.currentId = id; store.set('currentId', id); renderSessionPicker(); }
+  if (switched) { state.currentId = id; store.set('currentId', id); }
+  renderSessionPicker();   // locked to the open session
   layout();
   for (const x of state.sessions) renderTileHeader(x);
   renderSessionTabs();
@@ -852,6 +853,7 @@ function collapse() {
   layout();
   for (const x of state.sessions) renderTileHeader(x);
   renderSessionTabs();
+  renderSessionPicker();   // any visible session can be picked again
 }
 
 function cycle(delta) {
@@ -1347,6 +1349,8 @@ function toggleGit() {
 }
 
 function showGit(id) {
+  // The Git panel follows the open session: showing another one's Git means opening that session.
+  if (state.expandedId && state.expandedId !== id) { expand(id); if (!state.gitVisible) showGit(id); return; }
   if (state.currentId !== id) {
     state.currentId = id;
     store.set('currentId', id);
@@ -1362,10 +1366,15 @@ function showGit(id) {
   renderGit();
 }
 
+/** While a session is open the Git panel shows that session, so the picker offers only it; on the tiles, any visible one. */
 function renderSessionPicker() {
   const sel = $('#gitSession');
-  sel.replaceChildren(...visibleSessions().map((s) => h('option', { value: s.id, selected: s.id === state.currentId },
+  const open = state.byId.get(state.expandedId);
+  const choices = open ? [open] : visibleSessions();
+  sel.replaceChildren(...choices.map((s) => h('option', { value: s.id, selected: s.id === state.currentId },
     `${s.name}${projectOf(s) ? ` [${projectOf(s).name}]` : ''}  —  ${s.directory}`)));
+  sel.disabled = !!open;
+  sel.title = open ? `Showing the open session. Go back to all sessions (Shift+Esc) to pick another.` : '';
 }
 
 $('#gitSession').addEventListener('change', (e) => showGit(e.target.value));
@@ -1557,24 +1566,43 @@ function commitArea(s) {
   const btn = h('button', { class: 'btn primary' });
   const count = h('span', { class: 'dim' });
   const suggest = h('button', { class: 'btn commit-suggest', onclick: () => suggestCommitMessage(s) }, iconEl('sparkle'), 'Suggest');
+  const level = h('button', {
+    class: 'btn commit-suggest-level', title: 'How much to write: Short, Standard or Detailed',
+    onclick: (e) => { const r = e.currentTarget.getBoundingClientRect(); suggestLevelMenu(s, r.right - 220, r.bottom + 2); },
+  }, iconEl('chevD'));
   const wrap = h('div', { class: 'git-commit' }, msg,
-    h('div', { class: 'git-commit-actions' }, btn, count, h('div', { class: 'spacer' }), suggest));
+    h('div', { class: 'git-commit-actions' }, btn, count, h('div', { class: 'spacer' }), h('div', { class: 'split-btn' }, suggest, level)));
   const update = () => {
     const g = s.git;
     const total = g ? g.staged.length + g.unstaged.length : 0;
     btn.textContent = g?.staged.length ? 'Commit Staged' : 'Commit All';
     btn.disabled = !msg.value.trim() || total === 0;
     count.textContent = total ? `${total} change${total === 1 ? '' : 's'}` : '';
-    suggest.disabled = total === 0 || !!s.suggesting;
+    suggest.disabled = level.disabled = total === 0 || !!s.suggesting;
     suggest.classList.toggle('busy', !!s.suggesting);
     suggest.title = s.suggesting ? 'Writing a commit message…'
-      : `Suggest a commit message for the ${g?.staged.length ? 'staged changes' : 'changes'} (Claude)`;
+      : `Suggest a ${SUGGEST_LEVELS[suggestLevel()].toLowerCase()} commit message for the ${g?.staged.length ? 'staged changes' : 'changes'} (Claude)`;
   };
   msg.addEventListener('input', () => { s.commitDraft = msg.value; s.commitEdits = (s.commitEdits || 0) + 1; update(); });
   msg.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.ctrlKey && !btn.disabled) btn.click(); });
   btn.addEventListener('click', () => doCommit(s, !s.git?.staged.length));
   s.commitUi = { wrap, msg, update };
   return s.commitUi;
+}
+
+/** How much Suggest writes; the choice is remembered. */
+const SUGGEST_LEVELS = { short: 'Short', standard: 'Standard', detailed: 'Detailed' };
+const suggestLevel = () => (store.get('suggestDetail', 'standard') in SUGGEST_LEVELS ? store.get('suggestDetail', 'standard') : 'standard');
+
+function suggestLevelMenu(s, x, y) {
+  const level = suggestLevel();
+  const pick = (l) => () => { store.set('suggestDetail', l); suggestCommitMessage(s); };
+  showMenu(x, y, [
+    { header: 'Commit message' },
+    { label: 'Short (one line)', checked: level === 'short', action: pick('short') },
+    { label: 'Standard', checked: level === 'standard', action: pick('standard') },
+    { label: 'Detailed', checked: level === 'detailed', action: pick('detailed') },
+  ]);
 }
 
 /**
@@ -1586,7 +1614,7 @@ async function suggestCommitMessage(s) {
   s.suggesting = true;
   s.commitUi?.update();
   try {
-    const text = await request('git.suggestMessage', { id: s.id });
+    const text = await request('git.suggestMessage', { id: s.id, detail: suggestLevel() });
     const msg = s.commitUi?.msg;
     if (msg?.isConnected) {
       msg.focus();

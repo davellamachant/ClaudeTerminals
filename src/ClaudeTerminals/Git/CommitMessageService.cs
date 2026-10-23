@@ -18,15 +18,26 @@ internal static partial class CommitMessageService
     /// <summary>Headless, tool-less and not saved (so it doesn't appear among the conversations to resume).</summary>
     private const string Command = "claude -p --model haiku --tools \"\" --strict-mcp-config --no-session-persistence --output-format text";
 
-    public static async Task<string> SuggestAsync(string dir, CancellationToken ct = default)
+    /// <param name="detail">"short" (one line), "standard" (a line, and brief points only when needed) or "detailed".</param>
+    public static async Task<string> SuggestAsync(string dir, string? detail = null, CancellationToken ct = default)
     {
-        var prompt = await BuildPromptAsync(dir) ?? throw new InvalidOperationException("There are no changes to describe.");
-        var message = Clean(await RunClaudeAsync(dir, prompt, ct));
+        detail = NormalizeDetail(detail);
+        var prompt = await BuildPromptAsync(dir, detail) ?? throw new InvalidOperationException("There are no changes to describe.");
+        var message = Finish(await RunClaudeAsync(dir, prompt, ct), detail);
         return message.Length > 0 ? message : throw new InvalidOperationException("Claude didn't suggest a message. Try again.");
     }
 
+    internal static string NormalizeDetail(string? detail) => detail is "short" or "detailed" ? detail : "standard";
+
+    /// <summary>The answer tidied; a short message is its summary line, whatever else came back.</summary>
+    internal static string Finish(string answer, string detail)
+    {
+        var message = Clean(answer);
+        return detail == "short" ? message.Split('\n')[0].Trim() : message;
+    }
+
     /// <summary>The request for Claude, or null when there is nothing to commit.</summary>
-    internal static async Task<string?> BuildPromptAsync(string dir)
+    internal static async Task<string?> BuildPromptAsync(string dir, string detail = "standard")
     {
         var status = await GitService.GetStatusAsync(dir);
         if (!status.IsRepo) throw new InvalidOperationException(status.Error ?? "Not a Git repository.");
@@ -62,7 +73,12 @@ internal static partial class CommitMessageService
         p.AppendLine("Rules:");
         p.AppendLine("- Reply with the commit message only: no preamble, no quotes, no code fences.");
         p.AppendLine("- First line: a summary of at most 72 characters, in the imperative mood.");
-        p.AppendLine("- If there is more worth saying, add a blank line and a short body wrapped at 72 characters: what changed and why, as far as the diff shows. Don't invent reasons.");
+        p.AppendLine(NormalizeDetail(detail) switch
+        {
+            "short" => "- Reply with that one line only: no body.",
+            "detailed" => "- Then a blank line and a body wrapped at 72 characters: what changed and why, as far as the diff shows. Don't invent reasons.",
+            _ => "- Usually that line is enough. Only if the change covers several separate things, add a blank line and at most three short \"- \" points, one line each. No paragraphs.",
+        });
         p.AppendLine("- Follow the style of the recent commits (for example a \"feat:\" or \"fix:\" prefix) if they have one.");
         if (recent.Length > 0)
         {

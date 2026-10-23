@@ -633,7 +633,7 @@ internal sealed class MainForm : Form
             }
             case "git.suggestMessage":
                 // Visual Studio-style "Generate commit message": Claude describes what Commit would take.
-                return await CommitMessageService.SuggestAsync(GitDir(msg));
+                return await CommitMessageService.SuggestAsync(GitDir(msg), OptStr(msg, "detail"));
             case "git.pr":
             {
                 // The open pull request for the session's branch (GitHub or Azure DevOps), plus links for its menu.

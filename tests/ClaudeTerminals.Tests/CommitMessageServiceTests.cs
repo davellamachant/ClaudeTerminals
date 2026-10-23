@@ -44,6 +44,28 @@ public sealed class CommitMessageServiceTests : IDisposable
         Assert.DoesNotContain("b.txt", prompt);
     }
 
+    [Theory]
+    [InlineData("short", "that one line only")]
+    [InlineData("standard", "Usually that line is enough")]
+    [InlineData("detailed", "Then a blank line and a body")]
+    [InlineData(null, "Usually that line is enough")]       // the default
+    [InlineData("chatty", "Usually that line is enough")]   // unknown levels fall back to the default
+    public async Task Each_level_asks_for_its_own_length(string? level, string rule)
+    {
+        repo.Commit(("a.txt", "one\n"));
+        repo.Write("a.txt", "two\n");
+        var prompt = await CommitMessageService.BuildPromptAsync(repo.Root, CommitMessageService.NormalizeDetail(level));
+        Assert.Contains(rule, prompt);
+    }
+
+    [Fact]
+    public void A_short_message_is_only_its_summary_line_whatever_comes_back()
+    {
+        const string answer = "Add tax rounding per line item\n\nTax was rounded once per cart.\n- more";
+        Assert.Equal("Add tax rounding per line item", CommitMessageService.Finish(answer, "short"));
+        Assert.Equal("Add tax rounding per line item\n\nTax was rounded once per cart.\n- more", CommitMessageService.Finish(answer, "standard"));
+    }
+
     [Fact]
     public async Task A_clean_repository_has_nothing_to_describe()
     {
