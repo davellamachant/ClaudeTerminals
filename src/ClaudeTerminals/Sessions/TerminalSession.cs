@@ -36,8 +36,18 @@ internal sealed partial class TerminalSession : IDisposable
     public event Action<TerminalSession, int, int>? Exited;
     public event Action<TerminalSession, GitStatus>? StatusChanged;
 
+    /// <summary>
+    /// The prompt a new conversation starts with, once: set when a panel's button started this session. Claude gets
+    /// it on its command line when that can be done exactly (an .exe); otherwise it is kept in <see cref="PromptToType"/>.
+    /// </summary>
+    public string? FirstPromptOnce { get; set; }
+
+    /// <summary>A first prompt that couldn't go on the command line: typed into the terminal once Claude has connected to the app.</summary>
+    public string? PromptToType { get; set; }
+
     /// <param name="claudeTheme">"light" or "dark": Claude is started in the theme that matches the terminal.</param>
-    public void Start(int cols, int rows, string? claudeTheme = null)
+    /// <param name="mcpConfig">The file that connects Claude to the app's panel server (see <see cref="PrepareCommand"/>).</param>
+    public void Start(int cols, int rows, string? claudeTheme = null, string? mcpConfig = null)
     {
         if (process != null) return;
         var generation = ++Generation;
@@ -54,8 +64,13 @@ internal sealed partial class TerminalSession : IDisposable
         try
         {
             var env = SessionEnvironment.Build();
-            var command = PrepareCommand(Info.Command, ResumeOnce, () => ConversationIndex.HasConversation(Info.Directory), ThemeSettingsFile(claudeTheme));
+            var firstPrompt = FirstPromptOnce;
+            var onCommandLine = firstPrompt != null && CommandLineResolver.RunsDirectly(Info.Command, env);
+            var command = PrepareCommand(Info.Command, ResumeOnce, () => ConversationIndex.HasConversation(Info.Directory), ThemeSettingsFile(claudeTheme),
+                mcpConfig, newConversation: firstPrompt != null, firstPrompt: onCommandLine ? firstPrompt : null);
             ResumeOnce = null;
+            FirstPromptOnce = null;
+            PromptToType = onCommandLine ? null : firstPrompt;
             p.Start(CommandLineResolver.Resolve(command, env), Info.Directory, SessionEnvironment.ToBlock(env), cols, rows);
         }
         catch
@@ -80,7 +95,17 @@ internal sealed partial class TerminalSession : IDisposable
     /// A settings file naming Claude's theme to match the app's terminals (Claude can't ask the terminal itself: the
     /// console layer swallows the question). Added unless the command already passes its own --settings.
     /// </param>
-    internal static string PrepareCommand(string command, string? resumeId, Func<bool> hasConversation, string? themeSettings = null)
+    /// <param name="mcpConfig">
+    /// The file connecting Claude to the app's panel server, whose tools are then allowed without asking. Added unless the
+    /// command passes its own --mcp-config.
+    /// </param>
+    /// <param name="newConversation">Start a new conversation (a session started from a panel): --continue is dropped.</param>
+    /// <param name="firstPrompt">
+    /// The prompt that conversation starts with, put straight after the program: the option lists added after it
+    /// (--mcp-config, --allowedTools) would otherwise take it as one of theirs.
+    /// </param>
+    internal static string PrepareCommand(string command, string? resumeId, Func<bool> hasConversation, string? themeSettings = null,
+        string? mcpConfig = null, bool newConversation = false, string? firstPrompt = null)
     {
         var tokens = command.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
         if (tokens.Length == 0 || !(tokens[0].Equals("claude", StringComparison.OrdinalIgnoreCase) || tokens[0].Equals("claude.exe", StringComparison.OrdinalIgnoreCase)))
@@ -89,16 +114,22 @@ internal sealed partial class TerminalSession : IDisposable
         bool Has(params string[] names) => flags.Any(f => names.Contains(f, StringComparer.OrdinalIgnoreCase));
         if (Has("-p", "--print")) return command;   // no interface, so nothing to theme or continue
 
-        var result = command;
+        var result = command.Trim();
         if (!Has("-r", "--resume", "--session-id", "--fork-session"))
         {
-            if (resumeId != null && ConversationId().IsMatch(resumeId))
+            if (newConversation)
+                result = WithoutContinue(command);
+            else if (resumeId != null && ConversationId().IsMatch(resumeId))
                 result = WithoutContinue(command) + " --resume " + resumeId;
             else if (Has("-c", "--continue") && !hasConversation())
                 result = WithoutContinue(command);
         }
+        if (firstPrompt != null)
+            result = tokens[0] + " " + CommandLineResolver.QuoteArgument(firstPrompt) + result[tokens[0].Length..];
         if (themeSettings != null && !Has("--settings"))
             result = result.TrimEnd() + " --settings \"" + themeSettings + "\"";
+        if (mcpConfig != null && !Has("--mcp-config"))
+            result = result.TrimEnd() + " --mcp-config \"" + mcpConfig + "\" --allowedTools " + "mcp__" + Panels.PanelMcp.ServerName;
         return result;
     }
 

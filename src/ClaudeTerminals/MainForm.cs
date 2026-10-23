@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using ClaudeTerminals.Git;
+using ClaudeTerminals.Panels;
 using ClaudeTerminals.Sessions;
 using ClaudeTerminals.Terminal;
 using ClaudeTerminals.Updates;
@@ -54,6 +55,63 @@ internal sealed class MainForm : Form
             AddSessionRuntime(info);
         }
         ApplyResumeAfterUpdate();
+        StartPanels();
+    }
+
+    // ---------------------------------------------------------------- panels
+
+    private readonly PanelStore panelStore = new(Path.Combine(SessionStore.AppDataFolder, "panels.json"));
+    private PanelServer? panelServer;
+
+    private static string PanelConfigFolder => Path.Combine(SessionStore.AppDataFolder, "panels");
+
+    private void StartPanels()
+    {
+        panelStore.KeepOwners(sessions.Keys);
+        panelStore.Changed += change => RunOnUi(() => Post(PanelsMessage(change)));
+        var mcp = new PanelMcp(panelStore);
+        // A first prompt that couldn't go on the command line is typed once Claude is up (it connects as it starts).
+        mcp.Initialized += id => RunOnUi(async () =>
+        {
+            if (!sessions.TryGetValue(id, out var s) || s.PromptToType is not { } prompt) return;
+            s.PromptToType = null;
+            await Task.Delay(1500);
+            Post(new { type = "typePrompt", id, text = prompt });
+        });
+        try { panelServer = PanelServer.TryStart(mcp); }
+        catch (Exception) { /* sessions start without panels */ }
+    }
+
+    private object PanelsMessage(PanelChange? change = null) => new
+    {
+        type = "panels",
+        panels = panelStore.Snapshot(),
+        changed = change?.Id == null ? null : new { owner = change.Owner, id = change.Id, created = change.Created },
+    };
+
+    /// <summary>Writes the session's --mcp-config file (this run's port and the session's token); null if panels are unavailable.</summary>
+    private string? PanelConfigFile(TerminalSession s)
+    {
+        if (panelServer == null) return null;
+        try
+        {
+            Directory.CreateDirectory(PanelConfigFolder);
+            var path = Path.Combine(PanelConfigFolder, $"mcp-{s.Id}.json");
+            File.WriteAllText(path, panelServer.ConfigJson(s.Id));
+            return path;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    private void ForgetPanels(string sessionId)
+    {
+        panelServer?.Forget(sessionId);
+        panelStore.KeepOwners(sessions.Keys);
+        try { File.Delete(Path.Combine(PanelConfigFolder, $"mcp-{sessionId}.json")); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
 
     /// <summary>After an update, sessions carry on in the conversations they were in (read once, then deleted).</summary>
@@ -183,6 +241,7 @@ internal sealed class MainForm : Form
         }
         flushTimer.Stop();
         foreach (var s in sessions.Values) s.Dispose();
+        panelServer?.Dispose();
         base.OnFormClosing(e);
     }
 
@@ -346,13 +405,14 @@ internal sealed class MainForm : Form
                 webReady = true;
                 PostAccent();   // first: with Windows' app mode the page knows its theme before sessions start
                 Post(SessionList());
+                Post(PanelsMessage());
                 foreach (var s in sessions.Values) _ = s.RefreshStatusAsync();
                 return null;
 
             case "start":
             {
                 var s = Get(msg);
-                s.Start(Int(msg, "cols"), Int(msg, "rows"), OptStr(msg, "theme"));
+                s.Start(Int(msg, "cols"), Int(msg, "rows"), OptStr(msg, "theme"), PanelConfigFile(s));
                 return null;
             }
             case "input":
@@ -370,7 +430,7 @@ internal sealed class MainForm : Form
                 if (Bool(msg, "resume") && s.IsRunning && ConversationReader.ResumableConversation(s.ProcessIds()) is { } live)
                     s.ResumeOnce = live;
                 s.Stop();
-                s.Start(Int(msg, "cols"), Int(msg, "rows"), OptStr(msg, "theme"));
+                s.Start(Int(msg, "cols"), Int(msg, "rows"), OptStr(msg, "theme"), PanelConfigFile(s));
                 return null;
             }
             case "theme":
@@ -391,7 +451,8 @@ internal sealed class MainForm : Form
             case "addSessions":
             {
                 var items = msg.GetProperty("sessions").EnumerateArray()
-                    .Select(item => (Dir: Str(item, "directory"), Name: Str(item, "name"), Command: Str(item, "command"), Project: ProjectId(item)))
+                    .Select(item => (Dir: Str(item, "directory"), Name: Str(item, "name"), Command: Str(item, "command"), Project: ProjectId(item),
+                        Prompt: OptStr(item, "prompt")?.Trim() is { Length: > 0 and <= PanelSpec.MaxPrompt } p ? p : null))
                     .ToList();
                 // All or nothing: check every folder before adding any. Adding as we went left the earlier sessions
                 // added but unsaved and unshown after a failure, and a retry then added them a second time.
@@ -399,13 +460,14 @@ internal sealed class MainForm : Form
                     if (!Directory.Exists(item.Dir)) throw new DirectoryNotFoundException(item.Dir);
                 foreach (var item in items)
                 {
-                    AddSessionRuntime(new SessionInfo
+                    var added = AddSessionRuntime(new SessionInfo
                     {
                         Name = string.IsNullOrWhiteSpace(item.Name) ? Path.GetFileName(item.Dir.TrimEnd('\\')) : item.Name.Trim(),
                         Directory = item.Dir,
                         Command = string.IsNullOrWhiteSpace(item.Command) ? "claude --continue" : item.Command.Trim(),
                         Project = item.Project,
                     });
+                    added.FirstPromptOnce = item.Prompt;   // from a panel's button: its first start is a new conversation with this prompt
                 }
                 SaveSessions();
                 Post(SessionList());
@@ -473,9 +535,23 @@ internal sealed class MainForm : Form
                 sessions.Remove(s.Id);
                 order.Remove(s.Id);
                 SaveSessions();
+                ForgetPanels(s.Id);   // its panels go with it
                 Post(SessionList());
                 return null;
             }
+            case "panels.scope":
+                panelStore.SetScope(Str(msg, "owner"), Str(msg, "id"), Str(msg, "scope"));
+                return null;
+            case "panels.check":
+            {
+                // Refused when the panel changed under the tick: the page then gets the panel as it now is.
+                var done = panelStore.SetChecked(Str(msg, "owner"), Str(msg, "id"), Str(msg, "path"), Bool(msg, "checked"), Int(msg, "version"));
+                if (!done) Post(PanelsMessage());
+                return done;
+            }
+            case "panels.close":
+                panelStore.Close(Str(msg, "owner"), Str(msg, "id"));
+                return null;
             case "reorder":
             {
                 var ids = msg.GetProperty("ids").EnumerateArray().Select(x => x.GetString()!).Where(sessions.ContainsKey).ToList();

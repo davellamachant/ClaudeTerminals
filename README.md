@@ -29,6 +29,7 @@ One window for many local Claude Code sessions, with a Visual Studio–style Git
 - **Projects.** Group sessions (for example one product's worktrees) and show or hide each group; hidden sessions keep running and still tell you when they need you.
 - **Git, Visual Studio style.** Each session's worktree gets Git Changes (stage, commit, Undo Changes, fetch, pull, push) and Git Repository (history, outgoing commits), with side-by-side diffs that update as Claude edits. **Suggest** writes the commit message for you, and a chip links the branch's pull request on GitHub or Azure DevOps.
 - **Look back through a conversation.** A rail of ticks beside the terminal, one per prompt; hover for a preview, click to read the whole conversation in its own tab. Works even in Claude's full-screen mode.
+- **Panels from Claude.** Claude can show your task list, an error summary or notes as a tab beside the Git panel, through a small MCP server built into the app; buttons on them only ever fill in a prompt for you.
 - **Picks up where you left off.** Sessions continue their conversation when the app restarts, and you can resume any saved conversation.
 - **Light or dark, in your colours.** Follows Windows' light/dark mode and accent colour, or choose your own; Claude itself is started in matching colours.
 - **Keeps itself up to date.** Tells you when a new version is out and installs it in a click; your sessions carry on afterwards.
@@ -104,6 +105,23 @@ Projects group sessions, for example everything for one product across its workt
 ### Conversation rail and tab
 
 The ticks down the right edge of the open terminal are the prompts you've sent in that session, newest at the bottom. Hovering one shows the prompt and the start of Claude's reply; clicking opens the session's **Conversation** tab next to the diff tabs, scrolled to that prompt. It shows the whole conversation as text: your prompts, Claude's answers with their formatting, and its tool calls (long runs folded). It follows along while Claude works, and its own rail jumps between prompts. Both come from Claude Code's saved transcript (the session's Claude process names it in `~/.claude/sessions`), so they work in Claude's full-screen mode, which keeps no terminal scrollback. Nothing is sent anywhere.
+
+### Panels
+
+Claude can put things beside the terminal for you to keep in view: your task list, an error summary, a checklist. Each panel is a tab next to Git Changes and Git Repository, holding Markdown or a list of items (a key, title, badges, a link and buttons), optionally in groups up to three levels deep. Groups and Markdown headings fold with a click, and the app remembers what you folded in each panel. When there are more tabs than fit, ◀ ▶ arrows scroll them, as in the other tab rows. Claude Terminals has no code for any tracker or service. Claude fills panels with whatever it can reach through your own MCP servers and skills, so a team can share a `/my-tasks` skill that reads their tracker and shows the result in a panel.
+
+- **How Claude reaches the app:** each Claude session is started with `--mcp-config` pointing at a small MCP server inside the app, on `127.0.0.1` at a port picked when the app starts. Its tools (`show_panel`, `update_panel`, `close_panel`, `list_panels`) are allowed without asking. Every session has its own token, which ties each panel to the session that made it and keeps other programs out. Your own MCP servers still load as usual; a command that passes its own `--mcp-config` is left alone.
+- **Where a panel shows:** with the session that made it, by default. Its ⋯ menu shows it with every session of that project, or with every session, instead. The tabs follow the selected session.
+- **Buttons never run anything.** *Here* buttons type their prompt into the session you're looking at, for you to send. *New* buttons open **New session** with the folder, project and first prompt filled in; that session starts a new conversation with the prompt you leave there. **Refresh** sends the panel's refresh prompt (for example `/my-tasks`) to the session that made it.
+- **What a panel can hold:**
+  - a count on its tab;
+  - figure tiles at the top, with trend arrows and small trend lines;
+  - items with times that stay current ("4 min ago"), progress bars and trend lines;
+  - **Details** that open under an item, in Markdown, with code coloured by language;
+  - tick boxes. Your ticks are saved, Claude can read them (`get_panel`), and they survive a refresh.
+  
+  Long lists get a filter box. Buttons can also copy a text (a branch name, a command) to the clipboard. All of it is drawn by the app from plain data; Claude never supplies HTML, SVG or scripts.
+- **Panels stay** until you close them (middle-click the tab, or ⋯ › *Close panel*; both ask first) or remove their session, including across restarts. They are kept in `panels.json` next to `sessions.json`. *Copy as Markdown* copies a panel's content.
 
 ### Theme and colours
 

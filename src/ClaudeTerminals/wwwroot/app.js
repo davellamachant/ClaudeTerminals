@@ -135,6 +135,8 @@ host.addEventListener('message', (e) => {
     case 'output': onOutput(m.id, m.data); break;
     case 'exited': onExited(m.id, m.code); break;
     case 'git.status': onGitStatus(m); break;
+    case 'panels': onPanels(m); break;
+    case 'typePrompt': typePrompt(m.id, m.text); break;
   }
 });
 
@@ -147,7 +149,8 @@ const state = {
   currentId: store.get('currentId', null),   // session shown in the Git panel
   gitVisible: store.get('gitVisible', true),
   gitWidth: store.get('gitWidth', 400),
-  gitTab: 'changes',
+  gitTab: 'changes',         // 'changes', 'repo' or a panel's tab ('panel:<owner>/<id>')
+  panels: [],                // shown by Claude through the app's MCP server
   fontSize: store.get('fontSize', 14),
   surface: { w: 0, h: 0 },
   projects: [],                                        // [{ id, name }] in display order
@@ -1185,19 +1188,24 @@ function conversationPicker({ directory = null, onPick }) {
   return h('div', { class: 'conv-picker' }, search, list);
 }
 
-function showAddDialog(mode = 'new') {
+/**
+ * from: a panel's button { directory, name, project, prompt }: the dialog opens filled in, and the session's first start
+ * is a new conversation beginning with the (editable) prompt.
+ */
+function showAddDialog(mode = 'new', from = null) {
   const lastDir = store.get('lastDir', '');
   // New sessions carry on the folder's last conversation (plain claude when there is none yet). A remembered "claude"
   // is the old default rather than a choice, so it gives way to the new one.
   const remembered = store.get('lastCommand', null);
   const lastCommand = !remembered || remembered === 'claude' ? DEFAULT_COMMAND : remembered;
-  const dir = h('input', { value: '', placeholder: 'D:\\Source\\MyRepo', spellcheck: 'false' });
-  const name = h('input', { placeholder: '(folder name)', spellcheck: 'false' });
+  const dir = h('input', { value: from?.directory ?? '', placeholder: 'D:\\Source\\MyRepo', spellcheck: 'false' });
+  const name = h('input', { value: from?.name ?? '', placeholder: '(folder name)', spellcheck: 'false' });
   const command = h('input', { value: lastCommand, spellcheck: 'false' });
   const wtHost = h('div', { class: 'field', hidden: true });
   const error = h('div', { class: 'form-error', hidden: true });
   const pickerHost = h('div', { class: 'field' });
-  const project = projectField(defaultProjectId());
+  const project = projectField(from ? from.project : defaultProjectId());
+  const firstPrompt = from?.prompt != null && h('textarea', { class: 'first-prompt', spellcheck: 'false' }, from.prompt);
 
   const loadWorktrees = debounce(async () => {
     const d = dir.value.trim();
@@ -1235,7 +1243,7 @@ function showAddDialog(mode = 'new') {
     const d = dir.value.trim();
     if (!d) { error.hidden = false; error.textContent = mode === 'resume' ? 'Choose a conversation.' : 'Choose a folder.'; return; }
     const cmd = command.value.trim() || DEFAULT_COMMAND;
-    const list = [{ directory: d, name: name.value.trim(), command: cmd }];
+    const list = [{ directory: d, name: name.value.trim(), command: cmd, prompt: firstPrompt ? firstPrompt.value.trim() : undefined }];
     if (mode === 'new' && !wtHost.hidden && wtHost.dataset.for === d) {   // only ticks made for this folder
       for (const cb of wtHost.querySelectorAll('input[type=checkbox]:checked')) {
         list.push({ directory: cb.dataset.path, name: leafName(cb.dataset.path), command: cmd });
@@ -1294,15 +1302,16 @@ function showAddDialog(mode = 'new') {
   segResume.addEventListener('click', () => setMode('resume'));
 
   openModal('New session', [
-    h('div', { class: 'seg' }, segNew, segResume),
+    !firstPrompt && h('div', { class: 'seg' }, segNew, segResume),
     pickerHost,
     field('Folder (repository or worktree)', h('div', { class: 'inline' }, dir, browse)),
     field('Name', name),
+    firstPrompt && field('First prompt', firstPrompt, 'From the panel. Starts a new conversation in this session; edit it first if you like.'),
     field('Command', command, 'Runs in the folder above. For example: claude, claude --continue, claude --resume <id>'),
     project.el,
     wtHost,
     error,
-  ], [h('button', { class: 'btn', onclick: closeModal }, 'Cancel'), h('button', { class: 'btn primary', onclick: add }, 'Add')]);
+  ], [h('button', { class: 'btn', onclick: closeModal }, 'Cancel'), h('button', { class: 'btn primary', onclick: add }, firstPrompt ? 'Start session' : 'Add')]);
   $('#modalHost .modal').classList.add('wide');
   setMode(mode);
 }
@@ -1404,11 +1413,15 @@ function invalidateLog(s) {
 
 function renderGit() {
   if (!state.gitVisible) return;
+  renderPanelTabs();
   document.querySelectorAll('.tw-tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === state.gitTab));
+  const panel = activePanel();
+  $('#gitRefresh').hidden = !!panel;   // a panel has its own Refresh
   const body = $('#gitBody');
   const s = currentSession();
   if (!s) { body.replaceChildren(h('div', { class: 'git-message' }, 'No session selected.')); return; }
-  if (state.gitTab === 'repo') renderRepo(s, body);
+  if (panel) renderPanel(panel, body);
+  else if (state.gitTab === 'repo') renderRepo(s, body);
   else renderChanges(s, body);
 }
 
@@ -1927,12 +1940,14 @@ function renderCommitDetails(s, el) {
   );
 }
 
-document.querySelectorAll('.tw-tab').forEach((b) => b.addEventListener('click', () => {
+$('.tw-tabs').addEventListener('click', (e) => {
+  const b = e.target.closest('.tw-tab');
+  if (!b) return;
   state.gitTab = b.dataset.tab;
   const s = currentSession();
   if (s && state.gitTab === 'repo') invalidateLog(s);   // refresh history whenever the tab is opened
   renderGit();
-}));
+});
 
 $('#gitRefresh').addEventListener('click', () => {
   const s = currentSession();
@@ -1964,6 +1979,365 @@ $('#gitHide').addEventListener('click', toggleGit);
     addEventListener('mouseup', up);
   });
 })();
+
+// ------------------------------------------------------------------ panels
+// Claude shows these through the app's own MCP server (show_panel). They sit as tabs beside the Git ones and follow the
+// selected session: a panel shows with the session that made it, every session of its project, or every session.
+
+const panelTab = (p) => `panel:${p.owner}/${p.id}`;
+
+function panelVisibleFor(p, s) {
+  if (!s) return false;
+  if (p.owner === s.id || p.scope === 'everywhere') return true;
+  const owner = state.byId.get(p.owner);
+  return p.scope === 'project' && !!owner?.project && owner.project === s.project;
+}
+
+const visiblePanels = () => state.panels.filter((p) => panelVisibleFor(p, currentSession()));
+const activePanel = () => (state.gitTab.startsWith('panel:') ? visiblePanels().find((p) => panelTab(p) === state.gitTab) : null);
+
+function onPanels(m) {
+  state.panels = m.panels || [];
+  // A closed panel's folds go with it.
+  const live = new Set(state.panels.map(foldsKey));
+  if (Object.keys(panelFolds).some((k) => !live.has(k))) {
+    for (const k of Object.keys(panelFolds)) if (!live.has(k)) delete panelFolds[k];
+    store.set('panelFolds', panelFolds);
+  }
+  const c = m.changed;
+  // A panel Claude has just shown in the session you're looking at opens, side panel and all.
+  if (c?.created && c.owner === state.currentId) {
+    state.gitTab = `panel:${c.owner}/${c.id}`;
+    if (!state.gitVisible) { state.gitVisible = true; store.set('gitVisible', true); applyGitVisibility(); }
+  }
+  if (state.gitTab.startsWith('panel:') || !c) renderGit();
+  else renderPanelTabs();
+}
+
+/** The panel tabs for the selected session; a tab whose panel isn't shown here any more falls back to Git Changes. */
+function renderPanelTabs() {
+  const shown = visiblePanels();
+  if (state.gitTab.startsWith('panel:') && !shown.some((p) => panelTab(p) === state.gitTab)) state.gitTab = 'changes';
+  fill($('#panelTabs'), shown.map((p) => {
+    const owner = state.byId.get(p.owner);
+    return h('button', {
+      class: 'tw-tab panel-tab' + (panelTab(p) === state.gitTab ? ' active' : ''), 'data-tab': panelTab(p),
+      title: `${p.title}${p.badge ? ` (${p.badge.text})` : ''}${p.owner !== state.currentId && owner ? `\nFrom ${owner.name}` : ''}`,
+    }, h('span', { class: 'panel-tab-title' }, p.title), p.badge && h('span', { class: `tw-badge tone-${tone(p.badge.tone)}` }, p.badge.text));
+  }));
+  // With many panels the tabs scroll sideways (with ◀ ▶ like the other tab rows): keep the open one in view.
+  requestAnimationFrame(() => document.querySelector('.tw-tabs .tw-tab.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
+}
+
+function scopeText(p) {
+  const owner = state.byId.get(p.owner);
+  const proj = owner && projectOf(owner);
+  if (p.scope === 'everywhere') return 'Shows with every session';
+  if (p.scope === 'project' && proj) return `Shows with every ${proj.name} session`;
+  return `Shows with ${owner ? owner.name : 'its session'} only`;
+}
+
+const TONES = ['neutral', 'info', 'success', 'warning', 'danger'];
+const tone = (t) => (TONES.includes(t) ? t : 'neutral');
+
+/** A list panel gets a filter box once it's long enough to need one. */
+const FILTER_FROM = 8;
+const panelFilters = new Map();   // what's typed in each panel's filter box, for as long as the app runs
+const panelItemCount = (p) => (p.items ? p.items.length : (p.groups || []).reduce((n, g) => n + groupCount(g), 0));
+
+/** A time shown as "4 min ago" and kept current (see the timer below). */
+const liveTime = (iso) => h('span', { class: 'live-time', 'data-time': iso, title: new Date(iso).toLocaleString() }, relTime(iso));
+setInterval(() => document.querySelectorAll('.live-time').forEach((el) => { el.textContent = relTime(el.dataset.time); }), 30_000);
+
+function renderPanel(p, body) {
+  const owner = state.byId.get(p.owner);
+  const key = foldsKey(p);
+  // Re-rendered on every change (a tick, Claude's update): keep the scroll position and the filter box's focus.
+  const keepScroll = body.dataset.panel === key ? body.querySelector('.panel-scroll')?.scrollTop ?? 0 : 0;
+  const filterFocused = document.activeElement?.classList.contains('panel-filter') && body.contains(document.activeElement);
+
+  const meta = [p.subtitle, owner && `from ${owner.name}`].filter(Boolean).join(' · ');
+  const scroll = h('div', { class: 'git-scroll panel-scroll' },
+    p.stats?.length > 0 && panelStats(p),
+    p.groups ? panelGroups(p)
+      : p.items ? panelItems(p, p.items)
+        : h('div', { class: 'md panel-md' }, foldHeadings(p, renderMarkdown(p.markdown || ''))));
+  let filter = null;
+  if ((p.items || p.groups) && panelItemCount(p) >= FILTER_FROM) {
+    filter = h('input', { class: 'panel-filter', type: 'search', placeholder: 'Filter…', 'aria-label': 'Filter items', spellcheck: 'false', value: panelFilters.get(key) ?? '' });
+    filter.addEventListener('input', () => { panelFilters.set(key, filter.value); applyPanelFilter(scroll, filter.value); });
+  }
+  fill(body,
+    h('div', { class: 'panel-head' },
+      h('div', { class: 'panel-heading' }, h('div', { class: 'panel-title' }, p.title),
+        h('div', { class: 'panel-meta' }, meta, p.updated && [meta ? ' · ' : '', liveTime(p.updated)])),
+      p.refresh && h('button', { class: 'btn', title: `Sends "${p.refresh}" to ${owner?.name ?? 'its session'}`, onclick: () => refreshPanel(p) }, 'Refresh'),
+      h('button', { class: 'icon-btn', title: 'Panel options', 'aria-label': 'Panel options', onclick: (e) => panelMenu(p, e.currentTarget) }, iconEl('more'))),
+    filter && h('div', { class: 'panel-filter-row' }, filter),
+    scroll,
+    h('div', { class: 'panel-foot' }, scopeText(p)));
+  body.dataset.panel = key;
+  if (filter?.value) applyPanelFilter(scroll, filter.value);
+  scroll.scrollTop = keepScroll;
+  if (filterFocused) filter?.focus();
+  colorizeCode(scroll);
+}
+
+/** Shows only the items matching every word typed (key, title, subtitle, badges), with their groups opened. */
+function applyPanelFilter(scroll, text) {
+  const words = text.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  scroll.classList.toggle('filtering', words.length > 0);
+  for (const el of scroll.querySelectorAll('.panel-item')) el.hidden = words.length > 0 && !words.every((w) => el.dataset.search.includes(w));
+  for (const g of [...scroll.querySelectorAll('.panel-group')].reverse()) g.hidden = words.length > 0 && !g.querySelector('.panel-item:not([hidden])');
+  scroll.querySelector('.panel-nomatch')?.remove();
+  if (words.length && !scroll.querySelector('.panel-item:not([hidden])')) scroll.append(h('div', { class: 'git-message panel-nomatch' }, 'No items match.'));
+}
+
+function panelStats(p) {
+  const arrows = { up: '▲', down: '▼', flat: '▬' };
+  return h('div', { class: 'panel-stats' }, p.stats.map((s) => h('div', { class: `panel-stat tone-${tone(s.tone)}` },
+    h('div', { class: 'panel-stat-label' }, s.label),
+    h('div', { class: 'panel-stat-value' }, s.value,
+      arrows[s.change] && h('span', { class: `panel-stat-change ${s.change}`, title: s.change === 'flat' ? 'No change' : s.change === 'up' ? 'Up' : 'Down' }, arrows[s.change])),
+    s.note && h('div', { class: 'panel-stat-note' }, s.note),
+    s.series?.length > 1 && sparkline(s.series, 96))));
+}
+
+/** A small trend line drawn here from Claude's numbers (never SVG from Claude), with a dot on the latest value. */
+function sparkline(values, width = 120, height = 22) {
+  const NS = 'http://www.w3.org/2000/svg';
+  const el = (tag, attrs) => { const e = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); return e; };
+  const min = Math.min(...values), max = Math.max(...values), span = max - min || 1;
+  const pts = values.map((v, i) => [2 + (i / (values.length - 1)) * (width - 4), height - 2 - ((v - min) / span) * (height - 4)]);
+  const svg = el('svg', { class: 'sparkline', width, height, viewBox: `0 0 ${width} ${height}`, role: 'img', 'aria-label': `Trend from ${values[0]} to ${values[values.length - 1]}` });
+  svg.append(el('polyline', { points: pts.map((pt) => pt.map((n) => n.toFixed(1)).join(',')).join(' '), fill: 'none' }));
+  const [x, y] = pts[pts.length - 1];
+  svg.append(el('circle', { cx: x.toFixed(1), cy: y.toFixed(1), r: 2 }));
+  return svg;
+}
+
+function panelProgress(pr) {
+  const pct = Math.max(0, Math.min(100, (pr.value / pr.max) * 100));
+  const label = pr.max === 100 ? `${Math.round(pr.value)}%` : `${pr.value} / ${pr.max}`;
+  return h('div', { class: 'panel-progress', title: `${pr.value} of ${pr.max}` },
+    h('div', { class: 'panel-progress-bar' }, h('span', { style: `width:${pct.toFixed(1)}%` })),
+    h('span', { class: 'panel-progress-text' }, label));
+}
+
+/** Ticks are the person's: saved with the panel (as of the version they saw), and read by Claude with get_panel. */
+function tickItem(p, path, checked) {
+  request('panels.check', { owner: p.owner, id: p.id, path, checked, version: p.version })
+    .then((done) => { if (!done) toast('The panel changed just then; tick it again if you still want to.'); })
+    .catch((e) => toast(e.message, true));
+}
+
+/** Colours code blocks that name their language (```ts) with the editor the diffs use; text stays as written. */
+function colorizeCode(root) {
+  const blocks = [...root.querySelectorAll('pre.md-code code[data-lang]')];
+  if (!blocks.length) return;
+  loadMonaco().then(() => {
+    const langs = monaco.languages.getLanguages();
+    for (const code of blocks) {
+      const n = code.dataset.lang.toLowerCase();
+      const lang = langs.find((l) => l.id === n || l.aliases?.some((a) => a.toLowerCase() === n) || l.extensions?.includes('.' + n));
+      if (!lang) continue;
+      // colorize escapes the text itself and returns only its own token spans.
+      monaco.editor.colorize(code.textContent, lang.id, { tabSize: 4 })
+        .then((html) => { if (code.isConnected) { code.innerHTML = html; code.classList.add('colored'); } })
+        .catch(() => {});
+    }
+  }).catch(() => {});
+}
+
+// What's folded in each panel ({ 'owner/id': { key: true|false } }), kept so a refresh or restart doesn't reopen it all.
+// Groups are keyed by title, headings by level and text.
+const panelFolds = store.get('panelFolds', {});
+const foldsKey = (p) => `${p.owner}/${p.id}`;
+const isFolded = (p, key, byDefault) => panelFolds[foldsKey(p)]?.[key] ?? byDefault;
+
+function setFolded(p, key, folded) {
+  (panelFolds[foldsKey(p)] ||= {})[key] = folded;
+  store.set('panelFolds', panelFolds);
+}
+
+/** Makes `head` fold `body` (a click, or Enter/Space when it has focus); links inside the header still just open. */
+function foldSection(p, key, byDefault, cls, head, body) {
+  const folded = isFolded(p, key, byDefault);
+  const sec = h('div', { class: cls + (folded ? ' folded' : '') });
+  head.classList.add('fold-head');
+  head.setAttribute('role', 'button');
+  head.setAttribute('tabindex', '0');
+  head.setAttribute('aria-expanded', String(!folded));
+  head.prepend(h('span', { class: 'fold-chev', html: icon('chevD') }));
+  const toggle = () => {
+    const now = sec.classList.toggle('folded');
+    head.setAttribute('aria-expanded', String(!now));
+    setFolded(p, key, now);
+  };
+  head.addEventListener('click', (e) => { if (!e.target.closest('a')) toggle(); });
+  head.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+  sec.append(head, h('div', { class: 'fold-body' }, body));
+  return sec;
+}
+
+/** Each Markdown heading folds everything under it, up to the next heading of the same or a higher level. */
+function foldHeadings(p, nodes) {
+  const level = (n) => (n.classList?.contains('md-h') ? Number([...n.classList].find((c) => /^md-h\d$/.test(c)).slice(4)) : 0);
+  const build = (i, above) => {
+    const out = [];
+    while (i < nodes.length) {
+      const l = level(nodes[i]);
+      if (l && l <= above) break;
+      if (!l) { out.push(nodes[i++]); continue; }
+      const head = nodes[i++];
+      const [body, next] = build(i, l);
+      i = next;
+      out.push(body.length ? foldSection(p, `h${l}:${head.textContent}`, false, 'md-fold', head, body) : head);
+    }
+    return [out, i];
+  };
+  return build(0, 0)[0];
+}
+
+/** Items in a group and every group inside it. */
+const groupCount = (g) => g.items.length + (g.groups || []).reduce((n, x) => n + groupCount(x), 0);
+
+/** Groups fold one by one, nested groups too; each is keyed by its path so two "Low" sub-groups fold separately. */
+function panelGroups(p, groups = p.groups, path = 'g:', depth = 0, at = '') {
+  if (!groups.length) return h('div', { class: 'git-message' }, 'Nothing here.');
+  return groups.map((g, gi) => {
+    const key = path + g.title;
+    const where = `${at}${gi}/`;   // group indexes, for ticking an item inside
+    const inner = [g.items.length > 0 && panelItems(p, g.items, where), g.groups?.length > 0 && panelGroups(p, g.groups, key + '/', depth + 1, where)];
+    return foldSection(p, key, !!g.collapsed, 'panel-group',
+      h('div', { class: 'section-header panel-group-head', style: `--depth:${depth}` }, g.title, h('span', { class: 'count' }, `(${groupCount(g)})`)),
+      inner.some(Boolean) ? inner : h('div', { class: 'panel-empty', style: `--depth:${depth}` }, 'None.'));
+  });
+}
+
+const BUTTON_HINT = {
+  new: 'Opens New Session with this prompt:\n\n',
+  copy: 'Copies:\n\n',
+  here: 'Types this into the session you\'re looking at, for you to send:\n\n',
+};
+
+/** at: the indexes of the groups holding these items ("0/2/"), so a tick names the item it was made on. */
+function panelItems(p, items, at = '') {
+  if (!items.length) return h('div', { class: 'git-message' }, 'Nothing here.');
+  return items.map((it, i) => {
+    const search = [it.key, it.title, it.subtitle, ...(it.badges || []).map((b) => b.text)].filter(Boolean).join(' ').toLowerCase();
+    const tick = it.checked != null && h('input', {
+      type: 'checkbox', class: 'panel-check', checked: it.checked, 'aria-label': `Done: ${it.title}`,
+      onchange: (e) => tickItem(p, `${at}${i}`, e.target.checked),
+    });
+    const details = it.details && foldSection(p, 'd:' + (it.key || it.title), true, 'panel-details',
+      h('div', { class: 'panel-details-head' }, 'Details'),
+      h('div', { class: 'md panel-details-md' }, renderMarkdown(it.details)));
+    return h('div', { class: 'panel-item' + (tick ? ' has-check' : '') + (it.checked ? ' done' : ''), 'data-search': search },
+      tick,
+      h('div', { class: 'panel-item-body' },
+        (!!it.key || it.badges?.length > 0 || !!it.time) && h('div', { class: 'panel-item-top' },
+          it.key && (it.link ? mdLink(it.link, h('span', { class: 'panel-key' }, it.key)) : h('span', { class: 'panel-key' }, it.key)),
+          (it.badges || []).map((b) => h('span', { class: `panel-badge tone-${tone(b.tone)}` }, b.text)),
+          it.time && h('span', { class: 'panel-time' }, liveTime(it.time))),
+        h('div', { class: 'panel-item-title' }, !it.key && it.link ? mdLink(it.link, it.title) : it.title),
+        it.subtitle && h('div', { class: 'panel-item-sub' }, it.subtitle),
+        it.progress && panelProgress(it.progress),
+        it.series?.length > 1 && sparkline(it.series),
+        details,
+        it.buttons?.length > 0 && h('div', { class: 'panel-item-actions' }, it.buttons.map((b) => h('button', {
+          class: 'btn',
+          title: (BUTTON_HINT[b.target] ?? BUTTON_HINT.here) + b.prompt,
+          onclick: () => panelButton(p, b),
+        }, b.target === 'new' && !b.label.endsWith('…') ? b.label + '…' : b.label)))));
+  });
+}
+
+/**
+ * A panel's button only ever puts its text in front of you: typed in the session you're looking at, in New Session,
+ * or on the clipboard.
+ */
+function panelButton(p, b) {
+  if (b.target === 'copy') {
+    navigator.clipboard.writeText(b.prompt).then(() => toast('Copied.'), (e) => toast(e.message, true));
+    return;
+  }
+  if (b.target === 'new') {
+    const owner = state.byId.get(p.owner);
+    showAddDialog('new', { directory: owner?.directory, name: b.name, project: owner?.project ?? null, prompt: b.prompt });
+    return;
+  }
+  const s = currentSession();
+  if (!s) return;
+  if (!s.running) { toast(`"${s.name}" isn't running. Start it, then try again.`, true); return; }
+  if (state.expandedId !== s.id) expand(s.id);
+  s.term.paste(b.prompt);
+  setTimeout(() => s.term.focus(), 40);
+}
+
+/** Refresh asks the session that made the panel to rebuild it (the prompt it gave, e.g. the slash command). */
+function refreshPanel(p) {
+  const owner = state.byId.get(p.owner);
+  if (!owner?.running) { toast(`"${owner?.name ?? 'Its session'}" isn't running, so it can't refresh this panel.`, true); return; }
+  post({ type: 'input', id: owner.id, data: p.refresh });
+  setTimeout(() => post({ type: 'input', id: owner.id, data: '\r' }), 150);
+  toast(`Asked ${owner.name} to refresh "${p.title}".`);
+}
+
+/** A first prompt that couldn't go on Claude's command line: typed once Claude is up, for you to send. */
+function typePrompt(id, text) {
+  const s = state.byId.get(id);
+  if (s?.running && text) s.term.paste(text);
+}
+
+function panelMarkdown(p) {
+  if (!p.items && !p.groups) return p.markdown || '';
+  const list = (items) => items.map((it) => {
+    const key = it.key ? (it.link ? `[${it.key}](${it.link}) ` : `${it.key} `) : '';
+    const badges = it.badges?.length ? ` (${it.badges.map((b) => b.text).join(', ')})` : '';
+    const box = it.checked == null ? '' : it.checked ? '[x] ' : '[ ] ';
+    return `- ${box}${key}**${it.title}**${badges}${it.subtitle ? ` — ${it.subtitle}` : ''}${!it.key && it.link ? ` ${it.link}` : ''}`;
+  }).join('\n');
+  const groups = (gs, level) => gs.map((g) => [`${'#'.repeat(Math.min(level, 6))} ${g.title}`,
+    g.items.length && list(g.items), g.groups?.length && groups(g.groups, level + 1), !groupCount(g) && '_None._'].filter(Boolean).join('\n\n')).join('\n\n');
+  const stats = p.stats?.length ? p.stats.map((s) => `**${s.label}:** ${s.value}${s.note ? ` (${s.note})` : ''}`).join(' · ') + '\n\n' : '';
+  return `## ${p.title}\n\n` + stats + (p.groups ? groups(p.groups, 3) : list(p.items)) + '\n';
+}
+
+function confirmClosePanel(p) {
+  const owner = state.byId.get(p.owner);
+  confirmDialog('Close panel',
+    `Close "${p.title}"? It's removed for every session it shows with, ticks included. ${owner ? `Claude in "${owner.name}"` : 'Claude'} can show it again.`,
+    'Close', true, () => request('panels.close', { owner: p.owner, id: p.id }).catch((e) => toast(e.message, true)));
+}
+
+// Middle-click closes a panel's tab (after asking), as it closes session and diff tabs.
+$('#panelTabs').addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); });   // no autoscroll
+$('#panelTabs').addEventListener('auxclick', (e) => {
+  if (e.button !== 1) return;
+  const tab = e.target.closest('.panel-tab');
+  const p = tab && state.panels.find((x) => panelTab(x) === tab.dataset.tab);
+  if (p) { e.preventDefault(); confirmClosePanel(p); }
+});
+
+function panelMenu(p, anchor) {
+  const owner = state.byId.get(p.owner);
+  const proj = owner && projectOf(owner);
+  const scope = p.scope === 'project' && !proj ? 'session' : p.scope;
+  const setScope = (value) => request('panels.scope', { owner: p.owner, id: p.id, scope: value }).catch((e) => toast(e.message, true));
+  const r = anchor.getBoundingClientRect();
+  showMenu(r.left, r.bottom + 2, [
+    { header: 'Show this panel with' },
+    { label: `${owner ? owner.name : 'Its session'} only`, checked: scope === 'session', action: () => setScope('session') },
+    proj && { label: `Every ${proj.name} session`, checked: scope === 'project', action: () => setScope('project') },
+    { label: 'Every session', checked: scope === 'everywhere', action: () => setScope('everywhere') },
+    '-',
+    p.refresh && { label: 'Refresh', action: () => refreshPanel(p) },
+    { label: 'Copy as Markdown', action: () => navigator.clipboard.writeText(panelMarkdown(p)).then(() => toast('Copied.')) },
+    '-',
+    { label: 'Close panel…', danger: true, action: () => confirmClosePanel(p) },
+  ]);
+}
 
 // ------------------------------------------------------------------ diff document (Monaco)
 
@@ -2663,10 +3037,11 @@ function renderMarkdown(src) {
     if (!line.trim()) { i++; continue; }
     if ((m = fenceRe.exec(line))) {
       const fence = m[1];
+      const lang = line.trim().slice(fence.length).trim().split(/\s+/)[0];   // ```ts: panels colour it (colorizeCode)
       const code = [];
       for (i++; i < lines.length && !lines[i].trim().startsWith(fence); i++) code.push(lines[i]);
       i++;
-      out.push(h('pre', { class: 'md-code' }, h('code', {}, code.join('\n'))));
+      out.push(h('pre', { class: 'md-code' }, h('code', { 'data-lang': /^[\w#+.-]{1,30}$/.test(lang) ? lang : null }, code.join('\n'))));
     } else if ((m = headRe.exec(line))) {
       out.push(h('div', { class: `md-h md-h${m[1].length}` }, inline(m[2])));
       i++;
@@ -3162,6 +3537,7 @@ $('#btnAddEmpty').addEventListener('click', () => showAddDialog());
 makeScrollable($('#projectTabs'));
 makeScrollable($('#sessionTabs'));
 makeScrollable($('#docTabs'), 'doc');
+makeScrollable($('.tw-tabs'), 'tw');   // Git and panel tabs
 
 /** Moves `id` before or after `targetId` in a list of ids. */
 function moveId(ids, id, targetId, before) {

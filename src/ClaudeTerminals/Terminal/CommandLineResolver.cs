@@ -38,6 +38,40 @@ internal static class CommandLineResolver
         return $"{Quote(comSpec)} /d /v:off /s /c \"{line}\"";
     }
 
+    /// <summary>
+    /// Whether <see cref="Resolve"/> starts the command's program directly (an .exe), so its arguments reach it exactly
+    /// as written; otherwise they pass through cmd, which would expand % in them.
+    /// </summary>
+    public static bool RunsDirectly(string command, IReadOnlyDictionary<string, string> env)
+    {
+        command = command.Trim();
+        if (command.Length == 0) command = "claude";
+        var pathExt = env.GetValueOrDefault("PATHEXT") is { } ext && !string.IsNullOrWhiteSpace(ext) ? ext : DefaultPathExt;
+        return FindProgram(SplitFirstToken(command).Program, env.GetValueOrDefault("PATH") ?? "", pathExt) is { } found && IsExe(found);
+    }
+
+    /// <summary>
+    /// One argument quoted for a program that splits its command line the usual way (CommandLineToArgvW): wrapped in
+    /// quotes, with quotes escaped and the backslashes before them doubled. A leading '-' gets a space in front, so the
+    /// text is never read as an option.
+    /// </summary>
+    public static string QuoteArgument(string text)
+    {
+        if (text.StartsWith('-')) text = " " + text;
+        var sb = new System.Text.StringBuilder("\"");
+        var backslashes = 0;
+        foreach (var c in text)
+        {
+            if (c == '\\') { backslashes++; continue; }
+            if (c == '"') sb.Append('\\', backslashes * 2 + 1);
+            else sb.Append('\\', backslashes);
+            backslashes = 0;
+            sb.Append(c);
+        }
+        sb.Append('\\', backslashes * 2).Append('"');
+        return sb.ToString();
+    }
+
     private static readonly HashSet<string> CmdBuiltIns = new(StringComparer.OrdinalIgnoreCase)
     {
         "assoc", "break", "call", "cd", "chdir", "cls", "color", "copy", "date", "del", "dir", "echo", "endlocal", "erase",
