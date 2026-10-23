@@ -728,17 +728,27 @@ function renderSessionTabs() {
     h('span', { class: 'dot ' + statusClass(s) }), s.name, i < 9 ? h('span', { class: 'key' }, `Ctrl+${i + 1}`) : null),
   // Closing a session tab removes the session, after the same confirmation as "Remove session…".
   h('button', { class: 'icon-btn small tab-close', title: 'Close session…', onclick: () => confirmRemove(s) }, iconEl('close'))));
+  // A + per project (or one at the end without projects): another session like one of that group's.
+  const plus = (sessions, where) => {
+    const like = sessions.find((s) => s.id === state.currentId) || sessions[0];
+    return h('button', {
+      class: 'icon-btn small session-add', 'aria-label': `New session ${where}`,
+      title: `New session ${where}: in ${leafName(like.directory)}, a new worktree, or anywhere`,
+      onclick: (e) => quickAddMenu(like, e.currentTarget),
+    }, iconEl('plus'));
+  };
   if (!state.projects.length) {
-    host.replaceChildren(...tabs);   // nothing to group by
+    host.replaceChildren(...tabs, shown.length ? plus(shown, 'like these') : null);   // nothing to group by
   } else {
     const groups = [];
     shown.forEach((s, i) => {
       const id = groupOf(s);
       if (!groups.length || groups[groups.length - 1].id !== id) {
         const p = projectOf(s);
-        groups.push({ id, name: p ? p.name : UNKNOWN_NAME, color: p ? projectColor(p) : null, tabs: [] });
+        groups.push({ id, name: p ? p.name : UNKNOWN_NAME, color: p ? projectColor(p) : null, tabs: [], sessions: [] });
       }
       groups[groups.length - 1].tabs.push(tabs[i]);
+      groups[groups.length - 1].sessions.push(s);
     });
     host.replaceChildren(...groups.map((g) => h('div', {
       class: 'session-group' + (g.color ? '' : ' unknown'),
@@ -749,6 +759,7 @@ function renderSessionTabs() {
       title: g.color ? `${g.name}: show only this project` : `${UNKNOWN_NAME}: sessions with no project. Click to show only these`,
       onclick: () => showOnlyProject(g.id),
     }, g.name),
+    plus(g.sessions, g.color ? `in ${g.name}` : 'with no project'),
     g.tabs)));
   }
   $('#btnGrid').classList.toggle('active', !state.expandedId);
@@ -1345,32 +1356,23 @@ function showAddDialog(mode = 'new', from = null) {
 
 // ------------------------------------------------------------------ quick new sessions, from the one you're on
 
-/** The button beside New Session: another session in the current one's project, in its folder or a new worktree. */
-function renderQuickAdd() {
-  const b = $('#btnAddHere');
-  const s = currentSession();
-  b.hidden = !s;
-  if (!s) return;
+/**
+ * The + beside a project's name on the session tab row: another session in that project, like `s` (the group's
+ * current session, else its first): in the same folder, in a new worktree of its repository, or anywhere.
+ */
+function quickAddMenu(s, anchor) {
+  const r = anchor.getBoundingClientRect();
   const p = projectOf(s);
-  b.replaceChildren(iconEl('plus'), h('span', {}, p ? `In ${p.name}` : 'Like this one'), iconEl('chevD', 'small'));
-  b.title = `New session like "${s.name}": in its folder${p ? ` and the ${p.name} project` : ''}, or in a new worktree`;
-}
-
-$('#btnAddHere').addEventListener('click', (e) => {
-  const s = currentSession();
-  if (!s) return;
-  const r = e.currentTarget.getBoundingClientRect();
-  const isRepo = !!s.git?.isRepo;
   showMenu(r.left, r.bottom + 2, [
-    { header: `Like "${s.name}"` },
-    { label: `New session in ${leafName(s.directory)}`, action: () => quickSession(s) },
-    isRepo
-      ? { label: 'New session in a new worktree…', action: () => showWorktreeDialog(s) }
-      : { label: 'New worktree… (the folder isn\'t a Git repository)', action: () => toast(`${s.directory} isn't in a Git repository, so it has no worktrees.`, true) },
+    { header: p ? `New session in ${p.name}` : 'New session with no project' },
+    { label: `In ${leafName(s.directory)} (like ${s.name})`, action: () => quickSession(s) },
+    s.git?.isRepo
+      ? { label: `In a new worktree of ${leafName(s.git.root || s.directory)}…`, action: () => showWorktreeDialog(s) }
+      : { label: 'In a new worktree… (not a Git repository)', action: () => toast(`${s.directory} isn't in a Git repository, so it has no worktrees.`, true) },
     '-',
-    { label: 'New session…', action: () => showAddDialog('new', { directory: s.directory, project: s.project ?? null }) },
+    { label: 'Somewhere else…', action: () => showAddDialog('new', { directory: s.directory, project: s.project ?? null }) },
   ]);
-});
+}
 
 /** The session's command without anything that picks a conversation: a new session gets one of its own. */
 const ownOptionsOnly = (command) => (/^claude(\.exe)?(\s|$)/i.test(command)
@@ -1514,7 +1516,6 @@ function renderSessionPicker() {
     `${s.name}${projectOf(s) ? ` [${projectOf(s).name}]` : ''}  —  ${s.directory}`)));
   sel.disabled = !!open;
   sel.title = open ? `Showing the open session. Go back to all sessions (Shift+Esc) to pick another.` : '';
-  renderQuickAdd();   // "In <project> ▾" follows the current session
 }
 
 $('#gitSession').addEventListener('change', (e) => showGit(e.target.value));

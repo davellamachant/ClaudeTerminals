@@ -160,7 +160,6 @@ svg.ic { width: 16px; height: 16px; flex: none; display: block; }
 .tb-btn:hover { background: var(--hover-strong); }
 .tb-btn.active { background: var(--hover-strong); border-color: var(--border); }
 .tb-btn.text { padding: 0 10px; }
-.tb-btn .ic.small { width: 12px; height: 12px; margin-left: -2px; opacity: .8; }   /* the ▾ on "In <project>" */
 
 .session-tabs { display: flex; gap: 2px; overflow-x: auto; min-width: 0; scrollbar-width: none; }
 .session-tab {
@@ -630,6 +629,10 @@ textarea.commit-msg { resize: vertical; min-height: 54px; height: 54px; user-sel
 .session-group-label:focus-visible { outline: 1px solid var(--focus); outline-offset: -2px; }
 .session-group.unknown .session-group-label { font-style: italic; }
 .session-group .session-tab { height: 26px; }
+/* The + after a project's name (or at the end of an ungrouped row): another session in that project */
+.session-add { flex: none; width: 22px; height: 22px; margin: 0 2px; color: var(--text-dim); }
+.session-group .session-add { color: var(--proj); }
+.session-add:hover { color: var(--text); }
 
 /* Drag to reorder tabs: an accent bar on the side the dragged tab will land. */
 .session-tab.dragging, .project-tab.dragging, .doc-tab.dragging { opacity: .4; }
