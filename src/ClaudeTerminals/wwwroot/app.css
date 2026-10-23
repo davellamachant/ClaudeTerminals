@@ -284,8 +284,9 @@ button.chip:hover { border-color: var(--border); color: var(--text); }
 .tw-session select { flex: 1; min-width: 0; margin-right: 4px; }
 
 /* Docking: groups of tabs stacked in the side panel */
-#dockGroups { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+#dockGroups { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow-y: auto; }   /* scrolls only if the groups' minimum heights don't fit */
 .dock-group { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.dock-group:not(.folded) { min-height: 140px; }   /* an open group always has room for its header and some content */
 .dock-body { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 /* Each group reads as its own window: a darker title strip holding its tabs, and a gap (the divider) between groups,
    with a grip in the middle. The group you're working in gets an accent line along its title, as in Visual Studio. */

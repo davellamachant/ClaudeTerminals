@@ -1538,16 +1538,21 @@ function toggleFold(g) {
 }
 
 /**
- * Heights follow each group's share, and a folded group takes only its tab row. A divider shows only between two
- * unfolded groups that are both on screen (there's nothing to resize next to a folded one).
+ * Heights follow each group's share, and a folded group takes only its tab row. Dividers resize open groups, so one
+ * shows wherever there are open groups above and below it.
  */
 function layoutDock() {
+  // Shares are relative: the open groups split the whole height between them. (Used as raw flex-grow values they'd
+  // leave part of it empty whenever they add up to less than 1, which splitting and folding easily cause.)
+  const open = dock.groups.filter((g) => !g.el.hidden && !g.folded);
+  const total = open.reduce((n, g) => n + g.size, 0) || 1;
   let prev = null;
   for (const g of dock.groups) {
     const shown = !g.el.hidden;
-    if (g.divider) g.divider.hidden = !(shown && prev && !prev.folded && !g.folded);
+    // One divider per gap between open groups: right under the upper one, even with folded groups after it.
+    if (g.divider) g.divider.hidden = !(shown && prev && !prev.folded && dividedGroups(g));
     if (shown) prev = g;
-    g.el.style.flex = g.folded ? '0 0 auto' : `${g.size} 1 0`;
+    g.el.style.flex = g.folded ? '0 0 auto' : `${g.size / total} 1 0`;
     const label = g.folded ? 'Unfold this group' : 'Fold this group to its tabs';
     g.foldBtn.title = label + ' (or double-click the tab row)';
     g.foldBtn.setAttribute('aria-label', label);
@@ -1644,20 +1649,34 @@ function resetDock() {
 }
 
 /** Dragging a divider shares the height of the groups either side of it. */
+/**
+ * The open groups a divider above group g resizes: the nearest open one above it and the nearest open one at or below
+ * it. Folded groups in between are skipped (they keep their one-row height and just move along).
+ */
+function dividedGroups(g) {
+  const i = dock.groups.indexOf(g);
+  const isOpen = (x) => !x.el.hidden && !x.folded;
+  const above = dock.groups.slice(0, i).reverse().find(isOpen);
+  const below = dock.groups.slice(i).find(isOpen);
+  return above && below ? { above, below } : null;
+}
+
+const MIN_GROUP = 140;   // matches .dock-group's min-height
+
 function makeDivider(g) {
   const div = h('div', { class: 'dock-divider', role: 'separator', 'aria-orientation': 'horizontal', title: 'Drag to resize' });
   div.addEventListener('mousedown', (e) => {
     e.preventDefault();
-    const i = dock.groups.indexOf(g);
-    const prev = dock.groups.slice(0, i).reverse().find((x) => !x.el.hidden);
-    if (!prev) return;
-    const a = prev.el.getBoundingClientRect().height, b = g.el.getBoundingClientRect().height;
-    const share = prev.size + g.size, startY = e.clientY, MIN = 90;
+    const pair = dividedGroups(g);
+    if (!pair) return;
+    const { above: prev, below: next } = pair;
+    const a = prev.el.getBoundingClientRect().height, b = next.el.getBoundingClientRect().height;
+    const share = prev.size + next.size, startY = e.clientY;
     div.classList.add('dragging');
     const move = (ev) => {
-      const top = Math.max(MIN, Math.min(a + b - MIN, a + ev.clientY - startY));
+      const top = Math.max(MIN_GROUP, Math.min(a + b - MIN_GROUP, a + ev.clientY - startY));
       prev.size = (share * top) / (a + b);
-      g.size = share - prev.size;
+      next.size = share - prev.size;
       layoutDock();
     };
     const up = () => {
