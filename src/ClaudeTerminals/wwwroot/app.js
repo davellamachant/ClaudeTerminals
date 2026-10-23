@@ -149,8 +149,8 @@ const state = {
   currentId: store.get('currentId', null),   // session shown in the Git panel
   gitVisible: store.get('gitVisible', true),
   gitWidth: store.get('gitWidth', 400),
-  gitTab: 'changes',         // 'changes', 'repo' or a panel's tab ('panel:<owner>/<id>')
-  panels: [],                // shown by Claude through the app's MCP server
+  panels: [],                // shown by Claude through the app's MCP server (their tabs live in the dock)
+  panelsLoaded: false,       // until the host sends them, saved panel tabs keep their place
   fontSize: store.get('fontSize', 14),
   surface: { w: 0, h: 0 },
   projects: [],                                        // [{ id, name }] in display order
@@ -1397,7 +1397,7 @@ function onGitStatus(m) {
   renderTileHeader(s);
   refreshOpenDiff(s);   // the visible diff follows its own session, whichever one the Git panel shows
   const historyPending = !s.log && !logFailed(s);
-  if (s.id === state.currentId && (state.gitTab === 'changes' || historyPending)) renderGit();
+  if (s.id === state.currentId && (isTabShown('changes') || historyPending)) renderGit();
 }
 
 const currentSession = () => state.byId.get(state.currentId);
@@ -1411,19 +1411,379 @@ function invalidateLog(s) {
   s.logGen = (s.logGen || 0) + 1;
 }
 
+// ---- docking
+// The side panel holds groups of tabs stacked top to bottom (Git Changes, Git Repository and panels), each showing one
+// of its tabs, with dividers between them. Dragging a tab onto another group's tab row moves it there; onto the top or
+// bottom half of a group, it splits that group. A group with nothing to show for the selected session (only panels
+// that belong elsewhere) hides, keeping its place. The layout is remembered.
+
+const GIT_TABS = { changes: 'Git Changes', repo: 'Git Repository' };
+const isPanelTab = (t) => t.startsWith('panel:');
+const panelByTab = (t) => state.panels.find((p) => panelTab(p) === t);
+
+/** groups: [{ tabs, active, size }], top to bottom; size is a share of the height. Elements are added when built. */
+const dock = { groups: loadDock() };
+
+function loadDock() {
+  const saved = store.get('dock', null);
+  const seen = new Set();
+  const groups = (Array.isArray(saved?.groups) ? saved.groups : [])
+    .filter((g) => Array.isArray(g?.tabs))
+    .map((g) => ({
+      // Each tab once, and only tabs the app knows how to show.
+      tabs: g.tabs.filter((t) => typeof t === 'string' && (t in GIT_TABS || isPanelTab(t)) && !seen.has(t) && seen.add(t)),
+      active: typeof g.active === 'string' ? g.active : null,
+      size: Number(g.size) > 0 ? Number(g.size) : 1,
+      folded: g.folded === true,
+    }))
+    .filter((g) => g.tabs.length);
+  if (!groups.length) groups.push({ tabs: [], active: 'changes', size: 1 });
+  for (const t of Object.keys(GIT_TABS)) if (!seen.has(t)) groups[0].tabs.push(t);
+  return groups;
+}
+
+function saveDock() {
+  store.set('dock', { groups: dock.groups.map((g) => ({ tabs: g.tabs, active: g.active, size: g.size, folded: !!g.folded })) });
+}
+
+const groupOfTab = (t) => dock.groups.find((g) => g.tabs.includes(t));
+
+/** A new panel's tab goes to the bottom group; a closed panel's tab goes, and so does a group left with nothing. */
+function placePanels() {
+  if (!state.panelsLoaded) return;   // until the host has said which panels exist, keep the saved layout as it is
+  let changed = false;
+  const live = new Set(state.panels.map(panelTab));
+  for (const g of dock.groups) {
+    const kept = g.tabs.filter((t) => !isPanelTab(t) || live.has(t));
+    if (kept.length !== g.tabs.length) { g.tabs = kept; changed = true; }
+  }
+  for (const t of live) if (!groupOfTab(t)) { dock.groups[dock.groups.length - 1].tabs.push(t); changed = true; }
+  for (const g of [...dock.groups]) if (!g.tabs.length) { removeGroup(g); changed = true; }
+  if (changed) saveDock();
+}
+
+/** The tabs a group shows for the selected session: the Git ones always, panels when they show with it. */
+const groupTabs = (g) => g.tabs.filter((t) => !isPanelTab(t) || (panelByTab(t) && panelVisibleFor(panelByTab(t), currentSession())));
+
+/**
+ * The tab a group has open: its chosen one, or its first while the chosen one isn't shown for this session. The choice
+ * itself is kept, so a panel tab opens again when its session (or the panel list, at start) comes back.
+ */
+const shownActive = (g) => { const tabs = groupTabs(g); return tabs.includes(g.active) ? g.active : tabs[0] ?? null; };
+
+/** Whether a tab is on screen now: open in its group (not folded), with the side panel showing. */
+const isTabShown = (t) => state.gitVisible && dock.groups.some((g) => !g.folded && shownActive(g) === t);
+
+// The `updated` time each panel tab was last seen at: a tab Claude has changed since gets a dot until it's opened.
+// At start every panel counts as seen; one that appears later and isn't opened is new, so it gets the dot too.
+const panelSeen = new Map();
+const markSeen = (t) => { const p = panelByTab(t); if (p) panelSeen.set(t, p.updated); };
+const isUnseen = (p) => panelSeen.get(panelTab(p)) !== p.updated;
+
 function renderGit() {
   if (!state.gitVisible) return;
-  renderPanelTabs();
-  document.querySelectorAll('.tw-tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === state.gitTab));
-  const panel = activePanel();
-  $('#gitRefresh').hidden = !!panel;   // a panel has its own Refresh
-  const body = $('#gitBody');
+  placePanels();
+  buildDock();
   const s = currentSession();
-  if (!s) { body.replaceChildren(h('div', { class: 'git-message' }, 'No session selected.')); return; }
-  if (panel) renderPanel(panel, body);
-  else if (state.gitTab === 'repo') renderRepo(s, body);
-  else renderChanges(s, body);
+  for (const g of dock.groups) {
+    const tabs = groupTabs(g);
+    g.el.hidden = !tabs.length;
+    if (!tabs.length) continue;
+    const open = shownActive(g);
+    if (!g.folded && isPanelTab(open)) markSeen(open);
+    g.el.classList.toggle('folded', !!g.folded);
+    renderDockTabs(g, tabs, open);
+    if (g.folded) continue;   // drawn when it's unfolded
+    if (!s) g.body.replaceChildren(h('div', { class: 'git-message' }, 'No session selected.'));
+    else if (isPanelTab(open)) renderPanel(panelByTab(open), g.body);
+    else if (open === 'repo') renderRepo(s, g.body);
+    else renderChanges(s, g.body);
+  }
+  layoutDock();
 }
+
+/** Puts the groups' elements (and the dividers between them) in the page, in order, building any that are new. */
+function buildDock() {
+  const host = $('#dockGroups');
+  const want = [];
+  dock.groups.forEach((g, i) => {
+    if (!g.el) makeGroupEl(g);
+    if (i > 0) want.push(g.divider ||= makeDivider(g));
+    want.push(g.el);
+  });
+  if (want.length !== host.children.length || want.some((el, i) => host.children[i] !== el)) host.replaceChildren(...want);
+}
+
+function makeGroupEl(g) {
+  g.tabsEl = h('div', { class: 'tw-tabs', role: 'tablist' });
+  g.body = h('div', { class: 'dock-body' });
+  const fold = h('button', { class: 'icon-btn small dock-fold', onclick: () => toggleFold(g) }, iconEl('chevD'));
+  const title = h('div', { class: 'tw-title' }, fold, g.tabsEl);
+  // Double-clicking the tab row folds the group too (not its ◀ ▶ buttons, which are often clicked in quick succession).
+  title.addEventListener('dblclick', (e) => { if (!e.target.closest('.scroll-btn, .dock-fold')) toggleFold(g); });
+  g.el = h('div', { class: 'dock-group' }, title, g.body);
+  g.el.dock = g;
+  g.foldBtn = fold;
+  makeScrollable(g.tabsEl, 'tw');
+}
+
+/** A folded group shows only its tab row, so it stays one click away without taking room. */
+function toggleFold(g) {
+  g.folded = !g.folded;
+  saveDock();
+  renderGit();
+}
+
+/**
+ * Heights follow each group's share, and a folded group takes only its tab row. A divider shows only between two
+ * unfolded groups that are both on screen (there's nothing to resize next to a folded one).
+ */
+function layoutDock() {
+  let prev = null;
+  for (const g of dock.groups) {
+    const shown = !g.el.hidden;
+    if (g.divider) g.divider.hidden = !(shown && prev && !prev.folded && !g.folded);
+    if (shown) prev = g;
+    g.el.style.flex = g.folded ? '0 0 auto' : `${g.size} 1 0`;
+    const label = g.folded ? 'Unfold this group' : 'Fold this group to its tabs';
+    g.foldBtn.title = label + ' (or double-click the tab row)';
+    g.foldBtn.setAttribute('aria-label', label);
+    g.foldBtn.setAttribute('aria-expanded', String(!g.folded));
+  }
+}
+
+function renderDockTabs(g, tabs, open) {
+  fill(g.tabsEl, tabs.map((t) => {
+    const cls = 'tw-tab' + (t === open ? ' active' : '');
+    if (!isPanelTab(t)) return h('button', { class: cls, 'data-tab': t, role: 'tab', 'aria-selected': String(t === open) }, GIT_TABS[t]);
+    const p = panelByTab(t);
+    const owner = state.byId.get(p.owner);
+    return h('button', {
+      class: cls + ' panel-tab', 'data-tab': t, role: 'tab', 'aria-selected': String(t === open),
+      title: `${p.title}${p.badge ? ` (${p.badge.text})` : ''}${p.owner !== state.currentId && owner ? `\nFrom ${owner.name}` : ''}`,
+    }, h('span', { class: 'panel-tab-title' }, p.title), p.badge && h('span', { class: `tw-badge tone-${tone(p.badge.tone)}` }, p.badge.text),
+    (t !== open || g.folded) && isUnseen(p) && h('span', { class: 'tw-dot', title: 'Updated since you last looked', 'aria-label': 'updated' }));
+  }));
+  // With many tabs the row scrolls sideways (◀ ▶): keep the open one in view.
+  requestAnimationFrame(() => revealActive(g.tabsEl, '.tw-tab.active'));
+}
+
+function activateTab(g, t) {
+  g.active = t;
+  g.folded = false;   // opening a tab in a folded group unfolds it
+  saveDock();
+  const s = currentSession();
+  if (s && t === 'repo') invalidateLog(s);   // refresh history whenever the tab is opened
+  renderGit();
+}
+
+/** Takes a group out, giving its height to the group above it (or below, for the top one). */
+function removeGroup(g) {
+  const i = dock.groups.indexOf(g);
+  const heir = dock.groups[i - 1] || dock.groups[i + 1];
+  if (heir) heir.size += g.size;
+  dock.groups.splice(i, 1);
+  g.el?.remove();
+  g.divider?.remove();
+}
+
+/**
+ * Moves a tab. to: { kind: 'join', group, before } puts it in that group's row before the tab `before` (null: at the end);
+ * { kind: 'above' | 'below', group } makes it a group of its own there, taking half that group's height.
+ */
+function moveTab(tab, to) {
+  const from = groupOfTab(tab);
+  if (!from) return;
+  if (to.kind === 'join') {
+    if (to.before === tab) return;
+    from.tabs.splice(from.tabs.indexOf(tab), 1);
+    const at = to.before ? to.group.tabs.indexOf(to.before) : -1;
+    to.group.tabs.splice(at < 0 ? to.group.tabs.length : at, 0, tab);
+    to.group.active = tab;
+  } else {
+    if (to.group === from && from.tabs.length === 1) return;   // splitting a group off itself changes nothing
+    from.tabs.splice(from.tabs.indexOf(tab), 1);
+    to.group.size /= 2;
+    const fresh = { tabs: [tab], active: tab, size: to.group.size };
+    const i = dock.groups.indexOf(to.group);
+    dock.groups.splice(to.kind === 'above' ? i : i + 1, 0, fresh);
+  }
+  if (!from.tabs.length) removeGroup(from);
+  saveDock();
+  renderGit();
+}
+
+/** Menu items to bring back the panels closed most recently (kept while the app runs). */
+function reopenItems() {
+  const closed = (state.closedPanels || []).slice(0, 5);
+  if (!closed.length) return [];
+  return ['-', { header: 'Reopen a closed panel' }, ...closed.map((c) => {
+    const owner = state.byId.get(c.owner);
+    return {
+      label: c.owner === state.currentId || !owner ? c.title : `${c.title} (${owner.name})`,
+      action: () => request('panels.reopen', { owner: c.owner, id: c.id }).then(() => {
+        // The host has already sent the panels: open it where it is, if it shows with this session.
+        const t = `panel:${c.owner}/${c.id}`;
+        const g = groupOfTab(t);
+        if (g && groupTabs(g).includes(t)) activateTab(g, t);
+        else toast(`Reopened "${c.title}". It shows with "${owner?.name ?? 'its session'}".`);
+      }).catch((e) => toast(e.message, true)),
+    };
+  })];
+}
+
+function resetDock() {
+  const tabs = ['changes', 'repo', ...dock.groups.flatMap((g) => g.tabs).filter(isPanelTab)];
+  for (const g of dock.groups) { g.el?.remove(); g.divider?.remove(); }
+  dock.groups = [{ tabs, active: 'changes', size: 1 }];
+  saveDock();
+  renderGit();
+}
+
+/** Dragging a divider shares the height of the groups either side of it. */
+function makeDivider(g) {
+  const div = h('div', { class: 'dock-divider', role: 'separator', 'aria-orientation': 'horizontal', title: 'Drag to resize' });
+  div.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    const i = dock.groups.indexOf(g);
+    const prev = dock.groups.slice(0, i).reverse().find((x) => !x.el.hidden);
+    if (!prev) return;
+    const a = prev.el.getBoundingClientRect().height, b = g.el.getBoundingClientRect().height;
+    const share = prev.size + g.size, startY = e.clientY, MIN = 90;
+    div.classList.add('dragging');
+    const move = (ev) => {
+      const top = Math.max(MIN, Math.min(a + b - MIN, a + ev.clientY - startY));
+      prev.size = (share * top) / (a + b);
+      g.size = share - prev.size;
+      layoutDock();
+    };
+    const up = () => {
+      div.classList.remove('dragging');
+      saveDock();
+      removeEventListener('mousemove', move);
+      removeEventListener('mouseup', up);
+    };
+    addEventListener('mousemove', move);
+    addEventListener('mouseup', up);
+  });
+  return div;
+}
+
+// Tabs: click to open, drag to move (pointer events, as the other tab rows: WebView2 blocks HTML drag and drop here),
+// right-click for the same moves from a menu, middle-click to close a panel.
+(() => {
+  const host = $('#dockGroups');
+  const THRESHOLD = 8;
+  let press = null;     // { tab, x, y, pointerId, label } from pointerdown until pointerup
+  let drag = null;      // { ghost, hint, target } once the pointer has moved far enough
+  let swallowClick = false;
+
+  const clearMarks = () => host.querySelectorAll('.drop-before, .drop-after').forEach((el) => el.classList.remove('drop-before', 'drop-after'));
+
+  /** Where a drop at (x, y) would put the tab, or null for nowhere useful. */
+  function dropTarget(x, y) {
+    const el = document.elementFromPoint(x, y);
+    const groupEl = el?.closest('#dockGroups .dock-group');
+    if (!groupEl || groupEl.hidden) return null;
+    const g = groupEl.dock;
+    const strip = el.closest('.tw-title');
+    if (strip) {
+      const tabs = [...g.tabsEl.querySelectorAll('.tw-tab')];
+      const next = tabs.find((t) => x < t.getBoundingClientRect().left + t.getBoundingClientRect().width / 2);
+      return { kind: 'join', group: g, before: next ? next.dataset.tab : null, mark: next || tabs[tabs.length - 1], side: next ? 'drop-before' : 'drop-after', rect: strip.getBoundingClientRect() };
+    }
+    if (groupOfTab(press.tab) === g && g.tabs.length === 1) return null;
+    const r = groupEl.getBoundingClientRect();
+    const above = y < r.top + r.height / 2;
+    return { kind: above ? 'above' : 'below', group: g, rect: { left: r.left, width: r.width, top: above ? r.top : r.top + r.height / 2, height: r.height / 2 } };
+  }
+
+  function showTarget(t) {
+    clearMarks();
+    drag.hint.hidden = !t || t.kind === 'join';
+    if (!t) return;
+    if (t.kind === 'join') { t.mark?.classList.add(t.side); return; }
+    Object.assign(drag.hint.style, { left: t.rect.left + 'px', top: t.rect.top + 'px', width: t.rect.width + 'px', height: t.rect.height + 'px' });
+  }
+
+  function endDrag(drop) {
+    const was = drag;
+    drag = null;
+    document.body.classList.remove('dock-dragging');
+    was.ghost.remove();
+    was.hint.remove();
+    clearMarks();
+    swallowClick = true;
+    setTimeout(() => { swallowClick = false; }, 0);
+    if (drop && was.target) moveTab(press.tab, was.target);
+  }
+
+  host.addEventListener('pointerdown', (e) => {
+    const tab = e.button === 0 && e.target.closest('.tw-tab[data-tab]');
+    if (!tab) return;
+    press = { tab: tab.dataset.tab, x: e.clientX, y: e.clientY, pointerId: e.pointerId, label: tab.textContent };
+  });
+  addEventListener('pointermove', (e) => {
+    if (!press || e.pointerId !== press.pointerId) return;
+    if (!drag) {
+      if (Math.hypot(e.clientX - press.x, e.clientY - press.y) < THRESHOLD) return;
+      drag = { ghost: h('div', { class: 'dock-ghost' }, press.label), hint: h('div', { class: 'dock-hint', hidden: true }), target: null };
+      document.body.append(drag.ghost, drag.hint);
+      document.body.classList.add('dock-dragging');
+    }
+    drag.ghost.style.left = e.clientX + 14 + 'px';
+    drag.ghost.style.top = e.clientY + 10 + 'px';
+    drag.target = dropTarget(e.clientX, e.clientY);
+    showTarget(drag.target);
+  });
+  addEventListener('pointerup', (e) => {
+    if (!press || e.pointerId !== press.pointerId) return;
+    if (drag) endDrag(true);
+    press = null;
+  });
+  addEventListener('pointercancel', () => { if (drag) endDrag(false); press = null; });
+  addEventListener('keydown', (e) => { if (drag && e.key === 'Escape') { e.stopPropagation(); endDrag(false); press = null; } }, true);
+
+  host.addEventListener('click', (e) => {
+    const tab = e.target.closest('.tw-tab[data-tab]');
+    if (!tab || swallowClick) return;
+    const g = tab.closest('.dock-group').dock;
+    if (g.tabs.includes(tab.dataset.tab)) activateTab(g, tab.dataset.tab);
+  });
+
+  host.addEventListener('mousedown', (e) => { if (e.button === 1 && e.target.closest('.panel-tab')) e.preventDefault(); });   // no autoscroll
+  host.addEventListener('auxclick', (e) => {
+    const tab = e.button === 1 && e.target.closest('.panel-tab');
+    const p = tab && panelByTab(tab.dataset.tab);
+    if (p) { e.preventDefault(); confirmClosePanel(p); }
+  });
+
+  host.addEventListener('contextmenu', (e) => {
+    const tab = e.target.closest('.tw-tab[data-tab]');
+    if (!tab) return;
+    e.preventDefault();
+    const t = tab.dataset.tab;
+    const g = tab.closest('.dock-group').dock;
+    const i = dock.groups.indexOf(g);
+    const p = isPanelTab(t) && panelByTab(t);
+    const alone = g.tabs.length === 1;
+    const items = [
+      !alone && { label: 'Move to a new group above', action: () => moveTab(t, { kind: 'above', group: g }) },
+      !alone && { label: 'Move to a new group below', action: () => moveTab(t, { kind: 'below', group: g }) },
+      i > 0 && { label: 'Move to the group above', action: () => moveTab(t, { kind: 'join', group: dock.groups[i - 1], before: null }) },
+      i < dock.groups.length - 1 && { label: 'Move to the group below', action: () => moveTab(t, { kind: 'join', group: dock.groups[i + 1], before: null }) },
+      { label: g.folded ? 'Unfold group' : 'Fold group to its tabs', action: () => toggleFold(g) },
+      p && '-',
+      p && { label: 'Close panel…', danger: true, action: () => confirmClosePanel(p) },
+      ...reopenItems(),
+      '-',
+      { label: 'Example panel skill…', action: showExampleSkill },
+      { label: 'Reset layout', action: resetDock },
+    ].filter(Boolean);
+    while (items[0] === '-') items.shift();   // nothing to move: just Reset layout
+    showMenu(e.clientX, e.clientY, items);
+  });
+})();
 
 /**
  * The Git panel's toolbar, after Visual Studio's: the branch with its outgoing/incoming counts, the branch's open pull
@@ -1529,7 +1889,7 @@ async function remoteOp(s, op) {
   } finally {
     s.remoteBusy = null;
   }
-  if (currentSession() === s && state.gitTab !== 'changes') toast(s.info.text, !!s.info.error);   // the info bar is on Git Changes
+  if (currentSession() === s && !isTabShown('changes')) toast(s.info.text, !!s.info.error);   // the info bar is on Git Changes
   renderGit();
 }
 
@@ -1873,7 +2233,7 @@ async function renderRepo(s, body) {
     const asked = s.logGen;
     let log, failure;
     try { log = await request('git.log', { id: s.id }); } catch (e) { failure = e.message; } finally { s.logLoading = false; }
-    const current = currentSession() === s && state.gitTab === 'repo';
+    const current = currentSession() === s && isTabShown('repo');
     if (s.logGen !== asked) { if (current) renderGit(); return; }   // the history changed while loading: ask again
     if (failure) {   // not cached as an empty history; remembered for this generation, so Retry or a real change asks again
       s.logError = { gen: asked, message: failure };
@@ -1940,21 +2300,12 @@ function renderCommitDetails(s, el) {
   );
 }
 
-$('.tw-tabs').addEventListener('click', (e) => {
-  const b = e.target.closest('.tw-tab');
-  if (!b) return;
-  state.gitTab = b.dataset.tab;
-  const s = currentSession();
-  if (s && state.gitTab === 'repo') invalidateLog(s);   // refresh history whenever the tab is opened
-  renderGit();
-});
-
 $('#gitRefresh').addEventListener('click', () => {
   const s = currentSession();
   if (!s) return;
   invalidateLog(s);
   request('git.refresh', { id: s.id }).catch((e) => toast(e.message, true));
-  if (state.gitTab === 'repo') renderGit();
+  if (isTabShown('repo')) renderGit();
 });
 $('#gitHide').addEventListener('click', toggleGit);
 
@@ -1993,11 +2344,11 @@ function panelVisibleFor(p, s) {
   return p.scope === 'project' && !!owner?.project && owner.project === s.project;
 }
 
-const visiblePanels = () => state.panels.filter((p) => panelVisibleFor(p, currentSession()));
-const activePanel = () => (state.gitTab.startsWith('panel:') ? visiblePanels().find((p) => panelTab(p) === state.gitTab) : null);
-
 function onPanels(m) {
+  if (!state.panelsLoaded) for (const p of m.panels || []) panelSeen.set(panelTab(p), p.updated);   // nothing is "new" at start
   state.panels = m.panels || [];
+  state.closedPanels = m.closed || [];
+  state.panelsLoaded = true;
   // A closed panel's folds go with it.
   const live = new Set(state.panels.map(foldsKey));
   if (Object.keys(panelFolds).some((k) => !live.has(k))) {
@@ -2007,26 +2358,12 @@ function onPanels(m) {
   const c = m.changed;
   // A panel Claude has just shown in the session you're looking at opens, side panel and all.
   if (c?.created && c.owner === state.currentId) {
-    state.gitTab = `panel:${c.owner}/${c.id}`;
+    placePanels();   // its tab goes to the bottom group, and opens there
+    const g = groupOfTab(panelTab(c));
+    if (g) { g.active = panelTab(c); saveDock(); }
     if (!state.gitVisible) { state.gitVisible = true; store.set('gitVisible', true); applyGitVisibility(); }
   }
-  if (state.gitTab.startsWith('panel:') || !c) renderGit();
-  else renderPanelTabs();
-}
-
-/** The panel tabs for the selected session; a tab whose panel isn't shown here any more falls back to Git Changes. */
-function renderPanelTabs() {
-  const shown = visiblePanels();
-  if (state.gitTab.startsWith('panel:') && !shown.some((p) => panelTab(p) === state.gitTab)) state.gitTab = 'changes';
-  fill($('#panelTabs'), shown.map((p) => {
-    const owner = state.byId.get(p.owner);
-    return h('button', {
-      class: 'tw-tab panel-tab' + (panelTab(p) === state.gitTab ? ' active' : ''), 'data-tab': panelTab(p),
-      title: `${p.title}${p.badge ? ` (${p.badge.text})` : ''}${p.owner !== state.currentId && owner ? `\nFrom ${owner.name}` : ''}`,
-    }, h('span', { class: 'panel-tab-title' }, p.title), p.badge && h('span', { class: `tw-badge tone-${tone(p.badge.tone)}` }, p.badge.text));
-  }));
-  // With many panels the tabs scroll sideways (with ◀ ▶ like the other tab rows): keep the open one in view.
-  requestAnimationFrame(() => document.querySelector('.tw-tabs .tw-tab.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
+  renderGit();
 }
 
 function scopeText(p) {
@@ -2057,6 +2394,7 @@ function renderPanel(p, body) {
   const filterFocused = document.activeElement?.classList.contains('panel-filter') && body.contains(document.activeElement);
 
   const meta = [p.subtitle, owner && `from ${owner.name}`].filter(Boolean).join(' · ');
+  const ticked = allItems(p).filter((i) => i.checked).length;
   const scroll = h('div', { class: 'git-scroll panel-scroll' },
     p.stats?.length > 0 && panelStats(p),
     p.groups ? panelGroups(p)
@@ -2071,6 +2409,7 @@ function renderPanel(p, body) {
     h('div', { class: 'panel-head' },
       h('div', { class: 'panel-heading' }, h('div', { class: 'panel-title' }, p.title),
         h('div', { class: 'panel-meta' }, meta, p.updated && [meta ? ' · ' : '', liveTime(p.updated)])),
+      ticked > 0 && h('button', { class: 'btn', title: 'Types the ticked items into the session you\'re looking at, for you to say what to do with them', onclick: () => askAboutTicked(p) }, `Ask about ticked (${ticked})`),
       p.refresh && h('button', { class: 'btn', title: `Sends "${p.refresh}" to ${owner?.name ?? 'its session'}`, onclick: () => refreshPanel(p) }, 'Refresh'),
       h('button', { class: 'icon-btn', title: 'Panel options', 'aria-label': 'Panel options', onclick: (e) => panelMenu(p, e.currentTarget) }, iconEl('more'))),
     filter && h('div', { class: 'panel-filter-row' }, filter),
@@ -2224,7 +2563,7 @@ const BUTTON_HINT = {
 /** at: the indexes of the groups holding these items ("0/2/"), so a tick names the item it was made on. */
 function panelItems(p, items, at = '') {
   if (!items.length) return h('div', { class: 'git-message' }, 'Nothing here.');
-  return items.map((it, i) => {
+  return sortedItems(p, items).map(([it, i]) => {
     const search = [it.key, it.title, it.subtitle, ...(it.badges || []).map((b) => b.text)].filter(Boolean).join(' ').toLowerCase();
     const tick = it.checked != null && h('input', {
       type: 'checkbox', class: 'panel-check', checked: it.checked, 'aria-label': `Done: ${it.title}`,
@@ -2267,12 +2606,89 @@ function panelButton(p, b) {
     showAddDialog('new', { directory: owner?.directory, name: b.name, project: owner?.project ?? null, prompt: b.prompt });
     return;
   }
+  typeHere(b.prompt);
+}
+
+/** Types text into the session you're looking at, for you to finish or send (never sent from here). */
+function typeHere(text) {
   const s = currentSession();
   if (!s) return;
   if (!s.running) { toast(`"${s.name}" isn't running. Start it, then try again.`, true); return; }
   if (state.expandedId !== s.id) expand(s.id);
-  s.term.paste(b.prompt);
+  s.term.paste(text);
   setTimeout(() => s.term.focus(), 40);
+}
+
+/** Every item in a panel, wherever it sits. */
+const allItems = (p) => [...(p.items || []), ...(p.groups || []).flatMap(function walk(g) { return [...g.items, ...(g.groups || []).flatMap(walk)]; })];
+
+/** Types the ticked items into the session you're looking at, so you can say what to do with them. */
+function askAboutTicked(p) {
+  const ticked = allItems(p).filter((i) => i.checked);
+  const list = ticked.map((i) => (i.key ? `${i.key} (${i.title})` : `"${i.title}"`)).join(', ');
+  typeHere(`About the items I ticked in the "${p.title}" panel: ${list}. `);
+}
+
+// How each list panel's items are sorted ({ 'owner/id': 'time' | 'key' | 'title' }); missing means as Claude sent them.
+const panelSort = store.get('panelSort', {});
+const SORTS = { time: 'Newest first', key: 'Key', title: 'Title' };
+
+function setPanelSort(p, mode) {
+  if (mode) panelSort[foldsKey(p)] = mode; else delete panelSort[foldsKey(p)];
+  store.set('panelSort', panelSort);
+  renderGit();
+}
+
+/** Items in the panel's chosen order, each with its index as sent (ticks name items by that). */
+function sortedItems(p, items) {
+  const order = items.map((it, i) => [it, i]);
+  const mode = panelSort[foldsKey(p)];
+  const text = (x) => (x ?? '').toString();
+  if (mode === 'time') order.sort((a, b) => (b[0].time ? Date.parse(b[0].time) : -Infinity) - (a[0].time ? Date.parse(a[0].time) : -Infinity) || a[1] - b[1]);
+  else if (mode === 'key') order.sort((a, b) => text(a[0].key ?? a[0].title).localeCompare(text(b[0].key ?? b[0].title), undefined, { numeric: true }));
+  else if (mode === 'title') order.sort((a, b) => a[0].title.localeCompare(b[0].title, undefined, { numeric: true }));
+  return order;
+}
+
+const EXAMPLE_SKILL = `---
+name: my-tasks
+description: Show my open issues in a Claude Terminals panel. Use when I ask for my tasks, or to refresh the My tasks panel.
+---
+
+1. Get my open issues with our tracker's MCP tools (change this line to name yours,
+   e.g. "the llamatrack my_tasks tool for project ACME").
+
+2. Show them with the claude-terminals show_panel tool:
+   - id "my-tasks", title "My tasks", refresh "/my-tasks"
+   - subtitle: the tracker and project, e.g. "LlamaTrack · ACME"
+   - badge: the number of open issues
+   - groups by status: "In progress", "To do", then "Backlog" with collapsed: true
+   - each item: key, title, link to the issue, subtitle with the component,
+     priority as a badge (tone "danger" for urgent, "warning" for high),
+     time = when it was last updated, checked: false
+   - each item's buttons:
+     - "Start session" (target "new", name "<key> <a few words>"), prompt:
+       Work on <tracker> issue <key>, "<title>". Read it and its comments with the
+       <tracker> tools, create a branch named <key>-<short-slug>, and propose a fix
+       before changing code.
+     - "Ask here", prompt: Summarise <key> and its latest comments.
+     - "Copy branch" (target "copy"), text: <key>-<short-slug>
+
+3. Reply in one line: how many issues there are and which is most urgent.
+`;
+
+function showExampleSkill() {
+  const text = h('textarea', { class: 'skill-text', readonly: true, spellcheck: 'false' }, EXAMPLE_SKILL);
+  openModal('Example panel skill', [
+    h('p', {}, 'A skill tells Claude when and how to build a panel. Save this as ', h('code', {}, '.claude/skills/my-tasks/SKILL.md'),
+      ' in a repository (shared with everyone who works in it) or in ', h('code', {}, '~/.claude/skills/my-tasks/SKILL.md'),
+      ' (just you), change step 1 to your tracker\'s MCP tools, then type ', h('code', {}, '/my-tasks'), ' in a session.'),
+    text,
+  ], [
+    h('button', { class: 'btn', onclick: closeModal }, 'Close'),
+    h('button', { class: 'btn primary', onclick: () => navigator.clipboard.writeText(EXAMPLE_SKILL).then(() => toast('Copied.'), (e) => toast(e.message, true)) }, 'Copy'),
+  ]);
+  $('#modalHost .modal').classList.add('wide');
 }
 
 /** Refresh asks the session that made the panel to rebuild it (the prompt it gave, e.g. the slash command). */
@@ -2311,14 +2727,6 @@ function confirmClosePanel(p) {
     'Close', true, () => request('panels.close', { owner: p.owner, id: p.id }).catch((e) => toast(e.message, true)));
 }
 
-// Middle-click closes a panel's tab (after asking), as it closes session and diff tabs.
-$('#panelTabs').addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); });   // no autoscroll
-$('#panelTabs').addEventListener('auxclick', (e) => {
-  if (e.button !== 1) return;
-  const tab = e.target.closest('.panel-tab');
-  const p = tab && state.panels.find((x) => panelTab(x) === tab.dataset.tab);
-  if (p) { e.preventDefault(); confirmClosePanel(p); }
-});
 
 function panelMenu(p, anchor) {
   const owner = state.byId.get(p.owner);
@@ -2331,6 +2739,11 @@ function panelMenu(p, anchor) {
     { label: `${owner ? owner.name : 'Its session'} only`, checked: scope === 'session', action: () => setScope('session') },
     proj && { label: `Every ${proj.name} session`, checked: scope === 'project', action: () => setScope('project') },
     { label: 'Every session', checked: scope === 'everywhere', action: () => setScope('everywhere') },
+    ...(p.items || p.groups ? [
+      { header: 'Sort items' },
+      { label: 'As Claude sent them', checked: !panelSort[foldsKey(p)], action: () => setPanelSort(p, null) },
+      ...Object.entries(SORTS).map(([mode, label]) => ({ label, checked: panelSort[foldsKey(p)] === mode, action: () => setPanelSort(p, mode) })),
+    ] : []),
     '-',
     p.refresh && { label: 'Refresh', action: () => refreshPanel(p) },
     { label: 'Copy as Markdown', action: () => navigator.clipboard.writeText(panelMarkdown(p)).then(() => toast('Copied.')) },
@@ -3537,7 +3950,6 @@ $('#btnAddEmpty').addEventListener('click', () => showAddDialog());
 makeScrollable($('#projectTabs'));
 makeScrollable($('#sessionTabs'));
 makeScrollable($('#docTabs'), 'doc');
-makeScrollable($('.tw-tabs'), 'tw');   // Git and panel tabs
 
 /** Moves `id` before or after `targetId` in a list of ids. */
 function moveId(ids, id, targetId, before) {

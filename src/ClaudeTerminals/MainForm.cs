@@ -86,6 +86,7 @@ internal sealed class MainForm : Form
     {
         type = "panels",
         panels = panelStore.Snapshot(),
+        closed = panelStore.Closed().Select(p => new { owner = p.Owner, id = p.Id, title = p.Title }),
         changed = change?.Id == null ? null : new { owner = change.Owner, id = change.Id, created = change.Created },
     };
 
@@ -549,6 +550,9 @@ internal sealed class MainForm : Form
                 if (!done) Post(PanelsMessage());
                 return done;
             }
+            case "panels.reopen":
+                if (!panelStore.Reopen(Str(msg, "owner"), Str(msg, "id"))) throw new InvalidOperationException("That panel can't be reopened any more.");
+                return null;
             case "panels.close":
                 panelStore.Close(Str(msg, "owner"), Str(msg, "id"));
                 return null;

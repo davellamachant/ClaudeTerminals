@@ -65,6 +65,7 @@ Releases are signed by **Llamachant Technology Ltd**. If SmartScreen still warns
 | Rename, recolour, reorder or delete a project | Right-click the project. *Edit project* sets its name and colour (a swatch, a custom colour or Automatic). Deleting it keeps its sessions; they just have no project |
 | Look back through the conversation | Hover the ticks at the right edge of the open terminal; click one (or right-click › *Show conversation*) to open the **Conversation** tab at that prompt |
 | Write a commit message | **Suggest**, next to Commit in the Git panel |
+| Arrange the side panel | Drag a tab (Git Changes, Git Repository or a panel) onto another group's tab row to move it there, or onto the top or bottom half of a group to split it into a new group above or below. Drag the dividers to resize. The chevron at the left of a tab row (or double-clicking the row) folds a group down to its tabs. Right-click a tab for the same moves, *Reset layout* and *Reopen a closed panel*. The layout is remembered |
 | Light, dark or follow Windows; accent colour | The palette button at the top right |
 | Check for updates | Click the version chip (**v1.x.y ▾**) at the top right |
 | Terminal font size | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
@@ -121,7 +122,12 @@ Claude can put things beside the terminal for you to keep in view: your task lis
   - tick boxes. Your ticks are saved, Claude can read them (`get_panel`), and they survive a refresh.
   
   Long lists get a filter box. Buttons can also copy a text (a branch name, a command) to the clipboard. All of it is drawn by the app from plain data; Claude never supplies HTML, SVG or scripts.
-- **Panels stay** until you close them (middle-click the tab, or ⋯ › *Close panel*; both ask first) or remove their session, including across restarts. They are kept in `panels.json` next to `sessions.json`. *Copy as Markdown* copies a panel's content.
+- **Working with a panel:**
+  - **Updated dot:** a tab Claude has updated since you last looked at it gets a dot.
+  - **Ask about ticked (n):** types the ticked items into the session you're looking at, so you can say what to do with them.
+  - **Sorting:** the ⋯ menu sorts list items by time, key or title, remembered per panel.
+- **Panels stay** until you close them (middle-click the tab, or ⋯ › *Close panel*; both ask first) or remove their session, including across restarts. A panel closed by mistake can be brought back while the app runs: right-click any tab › *Reopen a closed panel*. Panels are kept in `panels.json` next to `sessions.json`. *Copy as Markdown* copies a panel's content.
+- **Getting started:** right-click any tab › *Example panel skill…* shows a ready-made `/my-tasks` skill (groups by status, ticks, Start session / Ask here / Copy branch buttons, Refresh) to save as `.claude/skills/my-tasks/SKILL.md` and point at your tracker's MCP tools.
 
 ### Theme and colours
 

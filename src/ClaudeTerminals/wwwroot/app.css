@@ -280,14 +280,55 @@ button.chip:hover { border-color: var(--border); color: var(--text); }
 .tw-badge.tone-success { background: color-mix(in srgb, var(--ok) 45%, transparent); }
 .tw-badge.tone-warning { background: color-mix(in srgb, var(--attention) 50%, transparent); }
 .tw-badge.tone-danger { background: color-mix(in srgb, var(--danger) 50%, transparent); }
-.tw-session { padding: 6px 8px 0; }
+.tw-session { display: flex; align-items: center; gap: 2px; padding: 5px 4px 5px 8px; border-bottom: 1px solid var(--border-soft); }
+.tw-session select { flex: 1; min-width: 0; margin-right: 4px; }
+
+/* Docking: groups of tabs stacked in the side panel */
+#dockGroups { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.dock-group { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.dock-body { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+/* Each group reads as its own window: a darker title strip holding its tabs, and a gap (the divider) between groups,
+   with a grip in the middle. The group you're working in gets an accent line along its title, as in Visual Studio. */
+.dock-group > .tw-title { background: var(--chrome-2); border-bottom: 1px solid var(--border); box-shadow: inset 0 2px 0 transparent; }
+.dock-group:focus-within > .tw-title { box-shadow: inset 0 2px 0 var(--accent); }
+.dock-divider {
+  flex: none; height: 8px; cursor: row-resize; position: relative;
+  background: var(--chrome-3); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+}
+.dock-divider::after {   /* grip */
+  content: ''; position: absolute; left: 50%; top: 2px; width: 28px; height: 2px; margin-left: -14px; border-radius: 1px;
+  background: var(--border-strong);
+}
+.dock-divider:hover, .dock-divider.dragging { background: var(--accent-strong); }
+.dock-divider:hover::after, .dock-divider.dragging::after { background: #fff; }
+body.dock-dragging, body.dock-dragging * { cursor: grabbing !important; user-select: none; }
+.dock-ghost {
+  position: fixed; z-index: 1000; pointer-events: none; padding: 3px 10px; border-radius: 4px; font-weight: 600;
+  background: var(--panel-2); border: 1px solid var(--accent); color: var(--text); box-shadow: 0 4px 14px rgba(0, 0, 0, .35); white-space: nowrap;
+}
+.dock-hint {
+  position: fixed; z-index: 999; pointer-events: none; border: 2px solid var(--accent); border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+/* Folding a group to its tab row; the chevron points right while folded */
+.dock-fold { flex: none; margin: 0 0 0 2px; color: var(--text-dim); }
+.dock-fold .ic { transition: transform .12s; }
+.dock-group.folded .dock-fold .ic { transform: rotate(-90deg); }
+.dock-group.folded > .dock-body { display: none; }
+/* A panel Claude has changed since you last looked */
+.tw-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--working); flex: none; }
+textarea.skill-text {
+  width: 100%; height: 340px; resize: vertical; margin-top: 8px; padding: 8px; border-radius: 4px; border: 1px solid var(--border);
+  background: var(--code-bg); color: var(--text); font: 12px/1.5 "Cascadia Mono", Consolas, monospace; white-space: pre; user-select: text;
+}
+.tw-tab.drop-before { box-shadow: inset 3px 0 0 var(--accent); }
+.tw-tab.drop-after { box-shadow: inset -3px 0 0 var(--accent); }
 .tw-session select, .field input, .field select, textarea.commit-msg {
   width: 100%; background: var(--chrome-2); color: var(--text); border: 1px solid var(--border); border-radius: 4px;
   font: inherit; padding: 4px 6px; outline: none;
 }
 .tw-session select:focus, .field input:focus, textarea.commit-msg:focus { border-color: var(--focus); }
 .tw-session select:disabled { opacity: 1; cursor: default; appearance: none; color: var(--text-dim); }   /* locked to the open session: no arrow */
-#gitBody { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 
 .git-branch { display: flex; align-items: center; gap: 6px; padding: 8px 10px 4px; min-width: 0; }
 .git-branch .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

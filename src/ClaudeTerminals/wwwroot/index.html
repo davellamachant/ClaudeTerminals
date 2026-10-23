@@ -72,20 +72,13 @@
       <div id="splitter"></div>
 
       <aside id="gitPanel">
-        <div class="tw-title">
-          <div class="tw-tabs">
-            <button class="tw-tab active" data-tab="changes">Git Changes</button>
-            <button class="tw-tab" data-tab="repo">Git Repository</button>
-            <span id="panelTabs" class="panel-tabs"></span>
-          </div>
-          <div class="spacer"></div>
-          <button id="gitRefresh" class="icon-btn" title="Refresh"></button>
-          <button id="gitHide" class="icon-btn" title="Hide (Ctrl+Shift+G)"></button>
-        </div>
         <div class="tw-session">
           <select id="gitSession" title="Session"></select>
+          <button id="gitRefresh" class="icon-btn" title="Refresh Git"></button>
+          <button id="gitHide" class="icon-btn" title="Hide (Ctrl+Shift+G)"></button>
         </div>
-        <div id="gitBody"></div>
+        <!-- Groups of tabs (Git Changes, Git Repository, panels), stacked; built by the dock code in app.js. -->
+        <div id="dockGroups"></div>
       </aside>
     </div>
   </div>

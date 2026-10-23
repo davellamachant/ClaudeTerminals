@@ -315,6 +315,37 @@ public class PanelTests : IDisposable
     }
 
     [Fact]
+    public void A_closed_panel_can_be_reopened_as_it_was()
+    {
+        var store = new PanelStore(StoreFile);
+        var (panel, _) = store.Show("s1", Json(RichPanel));
+        store.SetChecked("s1", "rich", "0/0", true, panel.Version);
+        store.Close("s1", "rich");
+        Assert.Equal("rich", Assert.Single(store.Closed()).Id);
+
+        Assert.True(store.Reopen("s1", "rich"));
+        Assert.True(Assert.Single(store.Snapshot()).Groups![0].Items[0].Checked);   // ticks and all
+        Assert.Empty(store.Closed());
+        Assert.False(store.Reopen("s1", "rich"));                                    // only once
+    }
+
+    [Fact]
+    public void A_closed_panel_whose_id_is_in_use_again_or_whose_session_is_gone_isnt_offered()
+    {
+        var store = new PanelStore(StoreFile);
+        store.Show("s1", Json(TasksPanel));
+        store.Close("s1", "my-tasks");
+        store.Show("s1", Json(TasksPanel));          // Claude showed it again meanwhile
+        Assert.Empty(store.Closed());
+        Assert.False(store.Reopen("s1", "my-tasks"));
+
+        store.Show("s2", Json(TasksPanel));
+        store.Close("s2", "my-tasks");
+        store.KeepOwners(["s1"]);                    // s2 was removed
+        Assert.Empty(store.Closed());
+    }
+
+    [Fact]
     public void A_session_has_at_most_twenty_panels()
     {
         var store = new PanelStore(StoreFile);

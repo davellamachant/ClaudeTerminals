@@ -92,10 +92,43 @@ internal sealed class PanelStore
     {
         lock (gate)
         {
-            if (panels.RemoveAll(p => p.Owner == owner && p.Id == id) == 0) return false;
+            var panel = panels.FirstOrDefault(p => p.Owner == owner && p.Id == id);
+            if (panel == null) return false;
+            panels.Remove(panel);
+            // Kept for this run of the app, newest first, so a mis-click can be undone.
+            closed.RemoveAll(p => p.Owner == owner && p.Id == id);
+            closed.Insert(0, panel);
+            if (closed.Count > MaxClosed) closed.RemoveAt(closed.Count - 1);
             Save();
         }
         Changed?.Invoke(new PanelChange(owner, id));
+        return true;
+    }
+
+    private const int MaxClosed = 10;
+    private readonly List<Panel> closed = [];
+
+    /// <summary>Recently closed panels that could be reopened (their session still has no panel with that id), newest first.</summary>
+    public List<Panel> Closed()
+    {
+        lock (gate) return closed.Where(c => !panels.Any(p => p.Owner == c.Owner && p.Id == c.Id)).ToList();
+    }
+
+    /// <summary>Puts a recently closed panel back, as it was (ticks included).</summary>
+    public bool Reopen(string owner, string id)
+    {
+        lock (gate)
+        {
+            var panel = closed.FirstOrDefault(p => p.Owner == owner && p.Id == id);
+            if (panel == null || panels.Any(p => p.Owner == owner && p.Id == id)) return false;
+            if (panels.Count(p => p.Owner == owner) >= PanelSpec.MaxPanelsPerSession)
+                throw new PanelException($"That session already has {PanelSpec.MaxPanelsPerSession} panels; close one first.");
+            closed.Remove(panel);
+            panel.Version++;
+            panels.Add(panel);
+            Save();
+        }
+        Changed?.Invoke(new PanelChange(owner, id, Created: true));
         return true;
     }
 
@@ -159,6 +192,7 @@ internal sealed class PanelStore
     {
         lock (gate)
         {
+            closed.RemoveAll(p => !owners.Contains(p.Owner));   // a removed session's panels can't come back
             if (panels.RemoveAll(p => !owners.Contains(p.Owner)) == 0) return;
             Save();
         }
