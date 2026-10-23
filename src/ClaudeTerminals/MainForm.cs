@@ -523,7 +523,8 @@ internal sealed class MainForm : Form
             {
                 var items = msg.GetProperty("sessions").EnumerateArray()
                     .Select(item => (Dir: Str(item, "directory"), Name: Str(item, "name"), Command: Str(item, "command"), Project: ProjectId(item),
-                        Prompt: OptStr(item, "prompt")?.Trim() is { Length: > 0 and <= PanelSpec.MaxPrompt } p ? p : null))
+                        Prompt: OptStr(item, "prompt")?.Trim() is { Length: > 0 and <= PanelSpec.MaxPrompt } p ? p : null,
+                        Conversation: OptStr(item, "conversation") is { } conv && TerminalSession.IsConversationId(conv) ? conv : null))
                     .ToList();
                 // All or nothing: check every folder before adding any. Adding as we went left the earlier sessions
                 // added but unsaved and unshown after a failure, and a retry then added them a second time.
@@ -538,7 +539,12 @@ internal sealed class MainForm : Form
                         Command = string.IsNullOrWhiteSpace(item.Command) ? "claude" : item.Command.Trim(),
                         Project = item.Project,
                     };
-                    TidyConversation(info);   // "claude --resume X" from the resume picker: conversation X
+                    TidyConversation(info);   // a "claude --resume X" typed as the command: conversation X
+                    if (item.Conversation != null && TerminalSession.CanTrackConversation(info.Command))
+                    {
+                        info.Conversation = item.Conversation;   // picked in the resume picker
+                        info.Command = TerminalSession.StripContinue(info.Command);
+                    }
                     // A new Claude session gets a conversation of its own from the start, so it always reopens that one,
                     // even with other sessions in the same folder. One that should carry on the folder's latest
                     // (--continue) learns its conversation once Claude has picked it.
