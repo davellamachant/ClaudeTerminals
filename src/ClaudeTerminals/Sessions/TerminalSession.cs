@@ -67,7 +67,8 @@ internal sealed partial class TerminalSession : IDisposable
             var firstPrompt = FirstPromptOnce;
             var onCommandLine = firstPrompt != null && CommandLineResolver.RunsDirectly(Info.Command, env);
             var command = PrepareCommand(Info.Command, ResumeOnce, () => ConversationIndex.HasConversation(Info.Directory), ThemeSettingsFile(claudeTheme),
-                mcpConfig, newConversation: firstPrompt != null, firstPrompt: onCommandLine ? firstPrompt : null);
+                mcpConfig, newConversation: firstPrompt != null, firstPrompt: onCommandLine ? firstPrompt : null,
+                conversation: Info.Conversation, isSaved: id => ConversationReader.IsSaved(id, Info.Directory));
             ResumeOnce = null;
             FirstPromptOnce = null;
             PromptToType = onCommandLine ? null : firstPrompt;
@@ -84,9 +85,13 @@ internal sealed partial class TerminalSession : IDisposable
     public void Write(string data) => process?.Write(data);
 
     /// <summary>
-    /// The command line for this start of a claude session:
+    /// The command line for this start of a claude session. A command that names its own conversation (--resume,
+    /// --session-id, --fork-session) is left alone; otherwise:
+    /// - with the session's own <paramref name="conversation"/>: --resume it once Claude has saved it
+    ///   (<paramref name="isSaved"/>), or --session-id it before then (resuming an unsaved one fails with "No conversation
+    ///   found"), so Claude starts that very conversation; any --continue is dropped;
     /// - after an update, the conversation it was in (<paramref name="resumeId"/>) replaces --continue, or is added to a
-    ///   plain claude; a command that names its own conversation is left alone;
+    ///   plain claude;
     /// - otherwise --continue is dropped when the folder has no saved conversation yet (<paramref name="hasConversation"/>),
     ///   since claude would stop with "No conversation found to continue". The saved command keeps it for next time.
     /// Anything that isn't an interactive claude is left alone.
@@ -105,7 +110,8 @@ internal sealed partial class TerminalSession : IDisposable
     /// (--mcp-config, --allowedTools) would otherwise take it as one of theirs.
     /// </param>
     internal static string PrepareCommand(string command, string? resumeId, Func<bool> hasConversation, string? themeSettings = null,
-        string? mcpConfig = null, bool newConversation = false, string? firstPrompt = null)
+        string? mcpConfig = null, bool newConversation = false, string? firstPrompt = null,
+        string? conversation = null, Func<string, bool>? isSaved = null)
     {
         var tokens = command.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
         if (tokens.Length == 0 || !(tokens[0].Equals("claude", StringComparison.OrdinalIgnoreCase) || tokens[0].Equals("claude.exe", StringComparison.OrdinalIgnoreCase)))
@@ -115,9 +121,11 @@ internal sealed partial class TerminalSession : IDisposable
         if (Has("-p", "--print")) return command;   // no interface, so nothing to theme or continue
 
         var result = command.Trim();
-        if (!Has("-r", "--resume", "--session-id", "--fork-session"))
+        if (!Has(OwnConversationFlags))
         {
-            if (newConversation)
+            if (IsConversationId(conversation))
+                result = WithoutContinue(command) + (isSaved?.Invoke(conversation!) == true ? " --resume " : " --session-id ") + conversation;
+            else if (newConversation)
                 result = WithoutContinue(command);
             else if (resumeId != null && ConversationId().IsMatch(resumeId))
                 result = WithoutContinue(command) + " --resume " + resumeId;
@@ -149,6 +157,48 @@ internal sealed partial class TerminalSession : IDisposable
             return null;   // Claude just uses its own theme setting
         }
     }
+
+    /// <summary>Options with which a command picks its own conversation; the app then leaves the choice to it.</summary>
+    private static readonly string[] OwnConversationFlags = ["-r", "--resume", "--session-id", "--fork-session"];
+
+    /// <summary>A session id Claude accepts for --session-id: a GUID.</summary>
+    internal static bool IsConversationId(string? id) => id != null && Guid.TryParse(id, out _) && ConversationId().IsMatch(id);
+
+    /// <summary>
+    /// Whether the app can look after this command's conversation (the session's <see cref="SessionInfo.Conversation"/>):
+    /// an interactive claude that doesn't pick its own.
+    /// </summary>
+    internal static bool CanTrackConversation(string command)
+    {
+        var tokens = command.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (tokens.Length == 0 || !(tokens[0].Equals("claude", StringComparison.OrdinalIgnoreCase) || tokens[0].Equals("claude.exe", StringComparison.OrdinalIgnoreCase)))
+            return false;
+        var flags = tokens.Skip(1).Select(t => t.Split('=')[0]).ToList();
+        return !flags.Any(f => OwnConversationFlags.Concat(["-p", "--print"]).Contains(f, StringComparer.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Takes "--resume &lt;id&gt;" (or -r, or --resume=&lt;id&gt;) out of a claude command, so the session keeps the
+    /// conversation itself and the command keeps only the person's own options: "claude --resume X --model opus" becomes
+    /// ("claude --model opus", X). Anything else comes back unchanged, with no id.
+    /// </summary>
+    internal static (string Command, string? Conversation) TakeConversation(string command)
+    {
+        var m = ResumeFlag().Match(command);
+        if (!m.Success || !IsConversationId(m.Groups[1].Value)) return (command, null);
+        var rest = (command[..m.Index] + command[(m.Index + m.Length)..]).Trim();
+        return CanTrackConversation(rest) ? (rest, m.Groups[1].Value) : (command, null);
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\s+(?:--resume|-r)(?:=|\s+)([0-9A-Fa-f-]{36})(?=\s|$)")]
+    private static partial System.Text.RegularExpressions.Regex ResumeFlag();
+
+    /// <summary>The command without --continue / -c (the app picks the conversation instead).</summary>
+    internal static string StripContinue(string command) => WithoutContinue(command);
+
+    /// <summary>Whether this session carries on a conversation when it starts again, rather than starting a new one.</summary>
+    internal static bool CarriesOnConversation(SessionInfo info) =>
+        (IsConversationId(info.Conversation) && CanTrackConversation(info.Command)) || CarriesOnConversation(info.Command);
 
     /// <summary>Whether starting this command again carries on a conversation (--continue or --resume) rather than starting a new one.</summary>
     internal static bool CarriesOnConversation(string command)

@@ -75,7 +75,8 @@ const reset = `
   closeMenu(); if (!$('#modalHost').hidden) closeModal();
   for (const t of [...docs.tabs]) closeDoc(t.key);
   showTerminalDoc(); collapse();
-  state.gitTab = 'changes';
+  resetDock();   // one group of side-panel tabs, Git Changes open
+  if (state.gitWidth !== 400) { state.gitWidth = 400; applyGitVisibility(); layout(true); }
   showAllProjects();
 `;
 
@@ -102,7 +103,7 @@ await shot('diff');
 // 4. Git Repository history with a commit selected.
 await js(`${reset} expand('checkout');
   const s = state.byId.get('checkout');
-  state.gitTab = 'repo'; s.log = null; renderGit();
+  s.log = null; activateTab(dock.groups[0], 'repo');
   for (let i = 0; i < 20 && !s.log; i++) await new Promise((r) => setTimeout(r, 200));
   await selectCommit(s, s.log[1].sha);
   await new Promise((r) => setTimeout(r, 500));`);
@@ -125,6 +126,27 @@ await js(`${reset} expand('checkout');
 await shot('rail');
 await js(`hideRailCard(); document.querySelector('.chat-rail i.hot')?.classList.remove('hot');`);
 
+// 8. A panel Claude showed: My tasks, grouped by status, with ticks, badges, times and buttons.
+await js(`${reset} expand('checkout');
+  for (let i = 0; i < 40 && !state.panelsLoaded; i++) await new Promise((r) => setTimeout(r, 200));
+  state.gitWidth = 560; applyGitVisibility(); layout(true);   // refit now: a same-frame width change isn't seen by the resize observer
+  activateTab(groupOfTab('panel:checkout/my-tasks'), 'panel:checkout/my-tasks');`);
+await shot('panels');
+
+// 9. Docking: Git Changes on top, the errors panel below it (stat tiles, a trend, details with coloured code), and the
+// My tasks tab marked as updated.
+await js(`${reset} expand('checkout');
+  state.gitWidth = 560; applyGitVisibility(); layout(true);   // refit now: a same-frame width change isn't seen by the resize observer
+  const errors = panelByTab('panel:checkout/errors');
+  setFolded(errors, 'd:ERR-1042', false);
+  moveTab('panel:checkout/errors', { kind: 'below', group: dock.groups[0] });
+  moveTab('panel:checkout/my-tasks', { kind: 'join', group: dock.groups[1], before: null });
+  dock.groups[0].size = 0.42; dock.groups[1].size = 0.58;
+  activateTab(dock.groups[1], 'panel:checkout/errors');
+  panelSeen.set('panel:checkout/my-tasks', 'earlier'); renderGit();
+  await new Promise((r) => setTimeout(r, 2500));`);   // Monaco colours the code block meanwhile
+await shot('docking');
+
 // 7. The light theme, on the Conversation tab: the whole conversation as text, opened at an earlier prompt.
 await js(`${reset} setThemePref('light'); expand('checkout');
   openConversation(state.byId.get('checkout'), 1);
@@ -132,6 +154,6 @@ await js(`${reset} setThemePref('light'); expand('checkout');
   await new Promise((r) => setTimeout(r, 800));`);
 await shot('conversation');
 
-await js(`${reset} setThemePref('dark');`);
+await js(`${reset} setThemePref('dark'); panelSeen.clear();`);
 await send('Emulation.clearDeviceMetricsOverride');
 ws.close();

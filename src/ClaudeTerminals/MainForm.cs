@@ -48,14 +48,79 @@ internal sealed class MainForm : Form
         flushTimer.Tick += (_, _) => FlushOutput();
         flushTimer.Start();
 
+        var tidied = false;
         foreach (var info in SessionStore.Load())
         {
             // A session whose project no longer exists (e.g. projects.json was lost) just has no project.
             if (info.Project != null && !projects.Any(p => p.Id == info.Project)) info.Project = null;
+            tidied |= TidyConversation(info);
             AddSessionRuntime(info);
         }
+        if (tidied) SaveSessions();
         ApplyResumeAfterUpdate();
         StartPanels();
+
+        conversationTimer.Tick += (_, _) => FollowConversations();
+        conversationTimer.Start();
+    }
+
+    // ---------------------------------------------------------------- each session's own conversation
+
+    /// <summary>
+    /// A session keeps its conversation itself rather than in its command: "claude --resume X" becomes "claude" with
+    /// conversation X (sessions saved before the app did this). An id that isn't a valid session id is dropped.
+    /// </summary>
+    private static bool TidyConversation(SessionInfo info)
+    {
+        if (info.Conversation != null && !TerminalSession.IsConversationId(info.Conversation)) { info.Conversation = null; return true; }
+        if (info.Conversation != null) return false;
+        var (command, conversation) = TerminalSession.TakeConversation(info.Command);
+        if (conversation == null) return false;
+        (info.Command, info.Conversation) = (command, conversation);
+        return true;
+    }
+
+    private readonly System.Windows.Forms.Timer conversationTimer = new() { Interval = 10_000 };
+    private bool following;
+
+    /// <summary>
+    /// Follows the conversation each running Claude is in, so the session reopens that one: it changes with /clear or
+    /// /resume inside Claude, and a session started with --continue only learns its conversation once Claude has picked
+    /// it. Only conversations Claude has saved count (an unsaved one can't be resumed).
+    /// </summary>
+    private async void FollowConversations()
+    {
+        if (following) return;
+        var running = sessions.Values.Where(s => s.IsRunning && TerminalSession.CanTrackConversation(s.Info.Command))
+            .Select(s => (Session: s, Pids: s.ProcessIds())).ToList();
+        if (running.Count == 0) return;
+        following = true;
+        try
+        {
+            var live = await Task.Run(() => running.Select(r => (r.Session, Id: ConversationReader.ResumableConversation(r.Pids))).ToList());
+            var changed = false;
+            foreach (var (s, id) in live) changed |= AdoptConversation(s, id);
+            if (changed) { SaveSessions(); Post(SessionList()); }
+        }
+        finally
+        {
+            following = false;
+        }
+    }
+
+    /// <summary>Makes <paramref name="live"/> the session's conversation (dropping --continue, which it no longer needs).</summary>
+    private bool AdoptConversation(TerminalSession s, string? live)
+    {
+        if (!sessions.ContainsKey(s.Id) || live == null || live == s.Info.Conversation || !TerminalSession.CanTrackConversation(s.Info.Command)) return false;
+        s.Info.Conversation = live;
+        s.Info.Command = TerminalSession.StripContinue(s.Info.Command);
+        return true;
+    }
+
+    /// <summary>Catches up on the session's conversation right now (before it's stopped or restarted).</summary>
+    private void CatchUpConversation(TerminalSession s)
+    {
+        if (s.IsRunning && AdoptConversation(s, ConversationReader.ResumableConversation(s.ProcessIds()))) SaveSessions();
     }
 
     // ---------------------------------------------------------------- panels
@@ -241,6 +306,8 @@ internal sealed class MainForm : Form
             return;
         }
         flushTimer.Stop();
+        conversationTimer.Stop();
+        foreach (var s in sessions.Values) CatchUpConversation(s);   // so each reopens where it was
         foreach (var s in sessions.Values) s.Dispose();
         panelServer?.Dispose();
         base.OnFormClosing(e);
@@ -253,7 +320,7 @@ internal sealed class MainForm : Form
     internal static string CloseMessage(IReadOnlyCollection<TerminalSession> running)
     {
         var n = running.Count;
-        var carryOn = running.Count(s => TerminalSession.CarriesOnConversation(s.Info.Command));
+        var carryOn = running.Count(s => TerminalSession.CarriesOnConversation(s.Info));
         var fresh = n - carryOn;
         var sessionsAre = n == 1 ? "1 session is" : $"{n} sessions are";
         var restart = (carryOn, fresh) switch
@@ -312,6 +379,7 @@ internal sealed class MainForm : Form
             directory = s.Info.Directory,
             command = s.Info.Command,
             project = s.Info.Project,
+            conversation = s.Info.Conversation,
             running = s.IsRunning,
         }),
     };
@@ -427,6 +495,7 @@ internal sealed class MainForm : Form
             case "restart":
             {
                 var s = Get(msg);
+                CatchUpConversation(s);   // a session with its own conversation restarts in the one it's in now
                 // Restarting to pick up a new theme: carry on in the exact conversation the session is in.
                 if (Bool(msg, "resume") && s.IsRunning && ConversationReader.ResumableConversation(s.ProcessIds()) is { } live)
                     s.ResumeOnce = live;
@@ -441,6 +510,7 @@ internal sealed class MainForm : Form
             {
                 // Stopping disposes the process without raising Exited, so tell the page itself (code null = stopped).
                 var s = Get(msg);
+                CatchUpConversation(s);
                 if (s.Stop())
                 {
                     FlushOutput();
@@ -453,7 +523,8 @@ internal sealed class MainForm : Form
             {
                 var items = msg.GetProperty("sessions").EnumerateArray()
                     .Select(item => (Dir: Str(item, "directory"), Name: Str(item, "name"), Command: Str(item, "command"), Project: ProjectId(item),
-                        Prompt: OptStr(item, "prompt")?.Trim() is { Length: > 0 and <= PanelSpec.MaxPrompt } p ? p : null))
+                        Prompt: OptStr(item, "prompt")?.Trim() is { Length: > 0 and <= PanelSpec.MaxPrompt } p ? p : null,
+                        Conversation: OptStr(item, "conversation") is { } conv && TerminalSession.IsConversationId(conv) ? conv : null))
                     .ToList();
                 // All or nothing: check every folder before adding any. Adding as we went left the earlier sessions
                 // added but unsaved and unshown after a failure, and a retry then added them a second time.
@@ -461,13 +532,25 @@ internal sealed class MainForm : Form
                     if (!Directory.Exists(item.Dir)) throw new DirectoryNotFoundException(item.Dir);
                 foreach (var item in items)
                 {
-                    var added = AddSessionRuntime(new SessionInfo
+                    var info = new SessionInfo
                     {
                         Name = string.IsNullOrWhiteSpace(item.Name) ? Path.GetFileName(item.Dir.TrimEnd('\\')) : item.Name.Trim(),
                         Directory = item.Dir,
-                        Command = string.IsNullOrWhiteSpace(item.Command) ? "claude --continue" : item.Command.Trim(),
+                        Command = string.IsNullOrWhiteSpace(item.Command) ? "claude" : item.Command.Trim(),
                         Project = item.Project,
-                    });
+                    };
+                    TidyConversation(info);   // a "claude --resume X" typed as the command: conversation X
+                    if (item.Conversation != null && TerminalSession.CanTrackConversation(info.Command))
+                    {
+                        info.Conversation = item.Conversation;   // picked in the resume picker
+                        info.Command = TerminalSession.StripContinue(info.Command);
+                    }
+                    // A new Claude session gets a conversation of its own from the start, so it always reopens that one,
+                    // even with other sessions in the same folder. One that should carry on the folder's latest
+                    // (--continue) learns its conversation once Claude has picked it.
+                    if (info.Conversation == null && TerminalSession.CanTrackConversation(info.Command) && !TerminalSession.CarriesOnConversation(info.Command))
+                        info.Conversation = Guid.NewGuid().ToString();
+                    var added = AddSessionRuntime(info);
                     added.FirstPromptOnce = item.Prompt;   // from a panel's button: its first start is a new conversation with this prompt
                 }
                 SaveSessions();
@@ -478,7 +561,20 @@ internal sealed class MainForm : Form
             {
                 var s = Get(msg);
                 if (msg.TryGetProperty("name", out var n) && !string.IsNullOrWhiteSpace(n.GetString())) s.Info.Name = n.GetString()!.Trim();
-                if (msg.TryGetProperty("command", out var c) && !string.IsNullOrWhiteSpace(c.GetString())) s.Info.Command = c.GetString()!.Trim();
+                if (msg.TryGetProperty("command", out var c) && !string.IsNullOrWhiteSpace(c.GetString()))
+                {
+                    // A --resume typed into the command becomes the session's conversation.
+                    var (command, conversation) = TerminalSession.TakeConversation(c.GetString()!.Trim());
+                    s.Info.Command = command;
+                    if (conversation != null) s.Info.Conversation = conversation;
+                }
+                // The conversation to reopen: one picked from the saved ones, or "new" for a fresh one.
+                if (OptStr(msg, "conversation") is { } pick && TerminalSession.CanTrackConversation(s.Info.Command))
+                {
+                    s.Info.Conversation = pick == "new" ? Guid.NewGuid().ToString()
+                        : TerminalSession.IsConversationId(pick) ? pick : throw new ArgumentException("That isn't a conversation id.");
+                    s.Info.Command = TerminalSession.StripContinue(s.Info.Command);
+                }
                 if (msg.TryGetProperty("project", out _)) s.Info.Project = ProjectId(msg);
                 SaveSessions();
                 Post(SessionList());
@@ -771,6 +867,9 @@ internal sealed class MainForm : Form
 
     private void NoteConversationsForResume()
     {
+        // Sessions with their own conversation keep it in sessions.json; the note is for the others (e.g. a command
+        // with its own options the app doesn't look after).
+        foreach (var s in sessions.Values) CatchUpConversation(s);
         var map = new Dictionary<string, string>();
         foreach (var s in sessions.Values.Where(s => s.IsRunning))
             if (ConversationReader.ResumableConversation(s.ProcessIds()) is { } live) map[s.Id] = live;
