@@ -316,11 +316,8 @@ body.dock-dragging, body.dock-dragging * { cursor: grabbing !important; user-sel
 .dock-fold .ic { transition: transform .12s; }
 .dock-group.folded .dock-fold .ic { transform: rotate(-90deg); }
 .dock-group.folded > .dock-body { display: none; }
-.dock-pad { display: none; }
-body.dock-dragging .dock-group.folded > .dock-pad {
-  display: flex; align-items: center; justify-content: center; height: 24px; margin: 3px 6px;
-  border: 1px dashed var(--border-strong); border-radius: 4px; color: var(--text-dim); font-size: 11px;
-}
+/* Dropping on the top or bottom edge of a folded group's tab row: a line where the new group goes */
+.dock-hint.line { border: none; border-radius: 2px; background: var(--accent); box-shadow: 0 0 6px var(--accent); }
 /* A panel Claude has changed since you last looked */
 .tw-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--working); flex: none; }
 textarea.skill-text {

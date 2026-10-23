@@ -1521,10 +1521,7 @@ function makeGroupEl(g) {
   const title = h('div', { class: 'tw-title' }, fold, g.tabsEl);
   // Double-clicking the tab row folds the group too (not its ◀ ▶ buttons, which are often clicked in quick succession).
   title.addEventListener('dblclick', (e) => { if (!e.target.closest('.scroll-btn, .dock-fold')) toggleFold(g); });
-  // A folded group is only its tab row, which has no top or bottom half to split on: while a tab is dragged, these
-  // strips appear above and below it to drop on instead.
-  g.el = h('div', { class: 'dock-group' }, h('div', { class: 'dock-pad above' }, 'New group above'), title, g.body,
-    h('div', { class: 'dock-pad below' }, 'New group below'));
+  g.el = h('div', { class: 'dock-group' }, title, g.body);
   g.el.dock = g;
   g.foldBtn = fold;
   makeScrollable(g.tabsEl, 'tw');
@@ -1709,12 +1706,18 @@ function makeDivider(g) {
     if (!groupEl) return el?.closest('#dockGroups') ? belowEverything(y) : null;
     if (groupEl.hidden) return null;
     const g = groupEl.dock;
-    const pad = el.closest('.dock-pad');
-    if (pad) {
-      if (groupOfTab(press.tab) === g && g.tabs.length === 1) return null;
-      return { kind: pad.classList.contains('above') ? 'above' : 'below', group: g, rect: pad.getBoundingClientRect() };
-    }
     const strip = el.closest('.tw-title');
+    // A folded group is only its tab row, with no top or bottom half to split on: the row's top and bottom quarters
+    // put the tab in a new group above or below it instead (a line shows where), the middle joins the row.
+    if (strip && g.folded) {
+      const r = strip.getBoundingClientRect();
+      const edge = y < r.top + r.height / 4 ? 'above' : y > r.bottom - r.height / 4 ? 'below' : null;
+      if (edge) {
+        if (groupOfTab(press.tab) === g && g.tabs.length === 1) return null;
+        const at = edge === 'above' ? r.top : r.bottom;
+        return { kind: edge, group: g, line: true, rect: { left: r.left, width: r.width, top: at - 2, height: 4 } };
+      }
+    }
     if (strip) {
       const tabs = [...g.tabsEl.querySelectorAll('.tw-tab')];
       const next = tabs.find((t) => x < t.getBoundingClientRect().left + t.getBoundingClientRect().width / 2);
@@ -1742,6 +1745,7 @@ function makeDivider(g) {
     drag.hint.hidden = !t || t.kind === 'join';
     if (!t) return;
     if (t.kind === 'join') { t.mark?.classList.add(t.side); return; }
+    drag.hint.classList.toggle('line', !!t.line);
     Object.assign(drag.hint.style, { left: t.rect.left + 'px', top: t.rect.top + 'px', width: t.rect.width + 'px', height: t.rect.height + 'px' });
   }
 
