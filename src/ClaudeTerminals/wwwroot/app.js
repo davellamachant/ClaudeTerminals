@@ -733,7 +733,7 @@ function renderSessionTabs() {
     const like = sessions.find((s) => s.id === state.currentId) || sessions[0];
     return h('button', {
       class: 'icon-btn small session-add', 'aria-label': `New session ${where}`,
-      title: `New session ${where}: in the same folder as ${like.name}, in a new worktree, or in a different folder`,
+      title: `New session ${where}: in the same folder as ${like.name}${like.git?.isRepo ? ", in a new worktree" : ""}, or in a different folder`,
       onclick: (e) => quickAddMenu(like, e.currentTarget),
     }, iconEl('plus'));
   };
@@ -1366,9 +1366,7 @@ function quickAddMenu(s, anchor) {
   showMenu(r.left, r.bottom + 2, [
     { header: p ? `New session in ${p.name}` : 'New session with no project' },
     { label: 'In the same folder', action: () => quickSession(s) },
-    s.git?.isRepo
-      ? { label: 'In a new worktree…', action: () => showWorktreeDialog(s) }
-      : { label: 'In a new worktree… (not a Git repository)', action: () => toast(`${s.directory} isn't in a Git repository, so it has no worktrees.`, true) },
+    s.git?.isRepo && { label: 'In a new worktree…', action: () => showWorktreeDialog(s) },   // worktrees need a Git repository
     '-',
     { label: 'A different folder…', action: () => showAddDialog('new', { directory: s.directory, project: s.project ?? null }) },
   ]);
