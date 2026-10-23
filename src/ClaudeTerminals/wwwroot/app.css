@@ -270,14 +270,68 @@ button.chip:hover { border-color: var(--border); color: var(--text); }
 }
 .tw-tab:hover { color: var(--text); }
 .tw-tab.active { color: var(--text); border-bottom-color: var(--accent); }
-.tw-session { padding: 6px 8px 0; }
+.tw-title .tw-tabs { min-width: 0; overflow-x: auto; scrollbar-width: none; flex: 0 1 auto; }
+.tw-tab { white-space: nowrap; flex: none; }
+.panel-tabs { display: contents; }
+.panel-tab { display: inline-flex; align-items: center; gap: 5px; }
+.panel-tab-title { max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+.tw-badge { padding: 0 5px; border-radius: 8px; font-size: 10.5px; line-height: 15px; font-weight: 600; background: var(--hover-strong); color: var(--text); }
+.tw-badge.tone-info { background: color-mix(in srgb, var(--working) 45%, transparent); }
+.tw-badge.tone-success { background: color-mix(in srgb, var(--ok) 45%, transparent); }
+.tw-badge.tone-warning { background: color-mix(in srgb, var(--attention) 50%, transparent); }
+.tw-badge.tone-danger { background: color-mix(in srgb, var(--danger) 50%, transparent); }
+.tw-session { display: flex; align-items: center; gap: 2px; padding: 5px 4px 5px 8px; border-bottom: 1px solid var(--border-soft); }
+.tw-session select { flex: 1; min-width: 0; margin-right: 4px; }
+
+/* Docking: groups of tabs stacked in the side panel */
+#dockGroups { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow-y: auto; }   /* scrolls only if the groups' minimum heights don't fit */
+.dock-group { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.dock-group:not(.folded) { min-height: 140px; }   /* an open group always has room for its header and some content */
+.dock-body { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+/* Each group reads as its own window: a darker title strip holding its tabs, and a gap (the divider) between groups,
+   with a grip in the middle. The group you're working in gets an accent line along its title, as in Visual Studio. */
+.dock-group > .tw-title { background: var(--chrome-2); border-bottom: 1px solid var(--border); box-shadow: inset 0 2px 0 transparent; }
+.dock-group:focus-within > .tw-title { box-shadow: inset 0 2px 0 var(--accent); }
+.dock-divider {
+  flex: none; height: 8px; cursor: row-resize; position: relative;
+  background: var(--chrome-3); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+}
+.dock-divider::after {   /* grip */
+  content: ''; position: absolute; left: 50%; top: 2px; width: 28px; height: 2px; margin-left: -14px; border-radius: 1px;
+  background: var(--border-strong);
+}
+.dock-divider:hover, .dock-divider.dragging { background: var(--accent-strong); }
+.dock-divider:hover::after, .dock-divider.dragging::after { background: #fff; }
+body.dock-dragging, body.dock-dragging * { cursor: grabbing !important; user-select: none; }
+.dock-ghost {
+  position: fixed; z-index: 1000; pointer-events: none; padding: 3px 10px; border-radius: 4px; font-weight: 600;
+  background: var(--panel-2); border: 1px solid var(--accent); color: var(--text); box-shadow: 0 4px 14px rgba(0, 0, 0, .35); white-space: nowrap;
+}
+.dock-hint {
+  position: fixed; z-index: 999; pointer-events: none; border: 2px solid var(--accent); border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+/* Folding a group to its tab row; the chevron points right while folded */
+.dock-fold { flex: none; margin: 0 0 0 2px; color: var(--text-dim); }
+.dock-fold .ic { transition: transform .12s; }
+.dock-group.folded .dock-fold .ic { transform: rotate(-90deg); }
+.dock-group.folded > .dock-body { display: none; }
+/* Dropping on the top or bottom edge of a folded group's tab row: a line where the new group goes */
+.dock-hint.line { border: none; border-radius: 2px; background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+/* A panel Claude has changed since you last looked */
+.tw-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--working); flex: none; }
+textarea.skill-text {
+  width: 100%; height: 340px; resize: vertical; margin-top: 8px; padding: 8px; border-radius: 4px; border: 1px solid var(--border);
+  background: var(--code-bg); color: var(--text); font: 12px/1.5 "Cascadia Mono", Consolas, monospace; white-space: pre; user-select: text;
+}
+.tw-tab.drop-before { box-shadow: inset 3px 0 0 var(--accent); }
+.tw-tab.drop-after { box-shadow: inset -3px 0 0 var(--accent); }
 .tw-session select, .field input, .field select, textarea.commit-msg {
   width: 100%; background: var(--chrome-2); color: var(--text); border: 1px solid var(--border); border-radius: 4px;
   font: inherit; padding: 4px 6px; outline: none;
 }
 .tw-session select:focus, .field input:focus, textarea.commit-msg:focus { border-color: var(--focus); }
 .tw-session select:disabled { opacity: 1; cursor: default; appearance: none; color: var(--text-dim); }   /* locked to the open session: no arrow */
-#gitBody { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 
 .git-branch { display: flex; align-items: center; gap: 6px; padding: 8px 10px 4px; min-width: 0; }
 .git-branch .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -548,6 +602,12 @@ textarea.commit-msg { resize: vertical; min-height: 54px; height: 54px; user-sel
 .tab-scroller.doc { flex: none; width: 100%; height: 30px; background: var(--chrome-2); border-bottom: 2px solid var(--accent-strong); }
 .tab-scroller.doc > .doc-tabs { flex: 1 1 auto; height: 100%; border-bottom: 0; }
 .tab-scroller.doc > .scroll-btn { height: 24px; margin: 0 3px; }
+/* The Git panel's tab row (Git and panel tabs): takes the title's free width, the refresh/hide buttons stay put. */
+.tab-scroller.tw { flex: 0 1 auto; height: 100%; }
+.tab-scroller.tw > .tw-tabs { flex: 0 1 auto; }
+.tab-scroller.tw > .scroll-btn { height: 22px; width: 20px; }
+.tab-scroller.tw > .scroll-btn:first-child { margin-right: 2px; }
+.tab-scroller.tw > .scroll-btn:last-child { margin: 0 2px; }
 /* Title-bar buttons keep their size; the tab rows beside them shrink and scroll instead. */
 #titlebar > .tb-btn, #projectBar > .tb-btn { flex: none; white-space: nowrap; }
 
@@ -647,6 +707,90 @@ body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; user-selec
 .md hr { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
 .md a { color: var(--link); text-decoration: none; }
 .md a:hover { text-decoration: underline; }
+
+/* ---------------------------------------------------------------- panels (shown by Claude) */
+.panel-head { display: flex; align-items: center; gap: 6px; padding: 8px 8px 8px 10px; border-bottom: 1px solid var(--border-soft); }
+.panel-heading { flex: 1; min-width: 0; }
+.panel-title { font-weight: 600; font-size: 13px; color: var(--text-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.panel-meta { color: var(--text-dim); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.panel-scroll { padding-bottom: 0; user-select: text; }
+.panel-md { padding: 10px 12px; }
+.panel-item { display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border-bottom: 1px solid var(--border-soft); }
+.panel-item-top { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.panel-key { font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; font-weight: 600; }
+.panel-item-top a { color: var(--link); text-decoration: none; }
+.panel-item-top a:hover, .panel-item-title a:hover { text-decoration: underline; }
+.panel-item-title { font-weight: 600; word-break: break-word; }
+.panel-item-title a { color: var(--link); text-decoration: none; }
+.panel-item-sub { color: var(--text-dim); word-break: break-word; }
+.panel-item-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 3px; }
+.panel-badge { padding: 0 6px; border-radius: 8px; font-size: 11px; line-height: 17px; background: var(--hover-strong); color: var(--text); }
+.panel-badge.tone-info { background: color-mix(in srgb, var(--working) 24%, transparent); }
+.panel-badge.tone-success { background: color-mix(in srgb, var(--ok) 24%, transparent); }
+.panel-badge.tone-warning { background: color-mix(in srgb, var(--attention) 26%, transparent); }
+.panel-badge.tone-danger { background: color-mix(in srgb, var(--danger) 26%, transparent); }
+/* Folding: Markdown headings and item groups */
+.fold-head { cursor: pointer; display: flex; align-items: center; gap: 4px; }
+.fold-head:focus-visible { outline: 1px solid var(--focus); outline-offset: -1px; }
+.fold-chev { display: inline-flex; flex: none; color: var(--text-dim); transition: transform .12s; }
+.fold-chev .ic { width: 12px; height: 12px; }
+.folded > .fold-head .fold-chev { transform: rotate(-90deg); }
+.folded > .fold-body { display: none; }
+.md .md-fold > .md-h { margin-left: -16px; }   /* the chevron sits in the margin, so text lines up with the body */
+.md .md-fold > .md-h:hover { color: var(--text); }
+.panel-md { padding-left: 26px; }
+.panel-group-head { border-bottom: 1px solid var(--border-soft); padding-left: calc(4px + var(--depth, 0) * 14px); }
+.panel-group .panel-group > .panel-group-head { position: static; }   /* only the outer headers stick */
+.panel-group .panel-group .panel-item { padding-left: calc(10px + 14px); }
+.panel-group .panel-group .panel-group .panel-item { padding-left: calc(10px + 28px); }
+.panel-empty { padding: 6px 10px 8px calc(26px + var(--depth, 0) * 14px); color: var(--text-dim); }
+/* Items: tick box, details, time, progress, trend */
+.panel-item.has-check { flex-direction: row; align-items: flex-start; gap: 8px; }
+.panel-item-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.panel-check { margin: 2px 0 0; accent-color: var(--accent-strong); width: 14px; height: 14px; flex: none; cursor: pointer; }
+.panel-item.done .panel-item-title { color: var(--text-dim); text-decoration: line-through; }
+.panel-time { margin-left: auto; color: var(--text-dim); font-size: 11.5px; white-space: nowrap; }
+.panel-details-head { color: var(--link); font-size: 12px; width: fit-content; }
+.panel-details-head .fold-chev { color: inherit; }
+.panel-details-md { margin: 4px 0 2px; padding: 6px 8px; border-left: 2px solid var(--border); user-select: text; }
+.panel-details-md > :last-child { margin-bottom: 0; }
+.panel-progress { display: flex; align-items: center; gap: 8px; }
+.panel-progress-bar { flex: 1; height: 6px; border-radius: 3px; background: var(--hover-strong); overflow: hidden; max-width: 260px; }
+.panel-progress-bar > span { display: block; height: 100%; background: var(--accent-strong); }
+.panel-progress-text { color: var(--text-dim); font-size: 11.5px; white-space: nowrap; }
+svg.sparkline { display: block; overflow: visible; }
+svg.sparkline polyline { stroke: var(--accent); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+svg.sparkline circle { fill: var(--accent); }
+
+/* Stats: tiles above the content */
+.panel-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--border-soft); }
+.panel-stat { padding: 6px 8px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--border-soft); border-top: 2px solid var(--border); min-width: 0; }
+.panel-stat.tone-info { border-top-color: var(--working); }
+.panel-stat.tone-success { border-top-color: var(--ok); }
+.panel-stat.tone-warning { border-top-color: var(--attention); }
+.panel-stat.tone-danger { border-top-color: var(--danger); }
+.panel-stat-label { color: var(--text-dim); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.panel-stat-value { font-size: 17px; font-weight: 600; color: var(--text-strong); display: flex; align-items: baseline; gap: 5px; }
+.panel-stat-change { font-size: 10px; color: var(--text-dim); }
+.panel-stat-note { color: var(--text-dim); font-size: 11px; }
+.panel-stat svg.sparkline { margin-top: 3px; width: 100%; }
+
+/* Filter */
+.panel-filter-row { padding: 6px 8px; border-bottom: 1px solid var(--border-soft); }
+.panel-filter {
+  width: 100%; background: var(--chrome-2); color: var(--text); border: 1px solid var(--border); border-radius: 4px;
+  font: inherit; padding: 3px 6px; outline: none;
+}
+.panel-filter:focus { border-color: var(--focus); }
+.filtering .panel-group.folded > .fold-body { display: block; }   /* matches show even in folded groups */
+
+.md pre.md-code code.colored span { font-family: inherit; }
+.panel-foot { padding: 6px 10px; border-top: 1px solid var(--border-soft); color: var(--text-dim); font-size: 11.5px; }
+.field textarea.first-prompt {
+  width: 100%; min-height: 96px; resize: vertical; background: var(--chrome-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 4px; font: inherit; line-height: 1.45; padding: 6px; outline: none; user-select: text;
+}
+.field textarea.first-prompt:focus { border-color: var(--focus); }
 
 /* ---------------------------------------------------------------- updates */
 .tb-btn.update-btn { color: var(--update-fg); background: color-mix(in srgb, var(--ok) 28%, transparent); border-radius: 4px; gap: 4px; }
