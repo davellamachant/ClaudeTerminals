@@ -29,7 +29,7 @@ One window for many local Claude Code sessions, with a Visual Studio–style Git
 
 ## What it does
 
-- **All your sessions in one window.** Every Claude Code session runs in its own real terminal, shown side by side as live tiles. Click one to work in it full-size; status dots show which are working and which are waiting for you.
+- **All your sessions in one window.** Every Claude Code session runs in its own real terminal, shown side by side as live tiles. Click one to work in it full-size; status dots show which are working, which are waiting for you and which need an answer before Claude can carry on.
 - **Projects.** Group sessions (for example one product's worktrees) and show or hide each group; hidden sessions keep running and still tell you when they need you.
 - **Git, Visual Studio style.** Each session's worktree gets Git Changes (stage, commit, Undo Changes, fetch, pull, push) and Git Repository (history, outgoing commits), with side-by-side diffs that update as Claude edits. **Suggest** writes the commit message for you, and a chip links the branch's pull request on GitHub or Azure DevOps.
 - **Look back through a conversation.** A rail of ticks beside the terminal, one per prompt; hover for a preview, click to read the whole conversation in its own tab. Works even in Claude's full-screen mode.
@@ -86,11 +86,12 @@ Plain `Esc` always goes to the terminal, because Claude Code uses it to interrup
 
 **Status dots:** each state has its own shape and motion as well as its colour.
 - **Working:** a blue ring spins round the dot, and the session's name on its tab shimmers.
+- **Needs your answer:** a pink dot that hops, landing with a small ring, and the tab glows pink. Claude is asking you something (a permission, a question, a plan to approve, whether to trust the folder) and can't carry on until you answer; it goes back to normal once you have.
 - **Waiting for you:** an orange dot in a ring that beats and sends out a ping every couple of seconds; it means the session finished working while you weren't watching (or rang the bell).
 - **Idle:** a green dot with a slowly breathing glow. When a session finishes working while you watch it, the dot pops in with one ring.
 - **Not running:** a hollow grey ring that stays still.
 
-With Windows' animation effects turned off the dots stay still, and their shapes still tell the states apart.
+With Windows' animation effects turned off the dots stay still, and their shapes (and the pink tab outline) still tell the states apart.
 
 **Each session has its own conversation:** a new session's command is just `claude` (plus any options you add), and the app gives it a conversation id of its own.
 - **Starting:** it starts Claude with `--session-id <id>` until there's something saved, then with `--resume <id>`. Restarting the app or the session always reopens that conversation, even with several sessions in the same folder.
