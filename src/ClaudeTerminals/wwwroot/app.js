@@ -308,6 +308,7 @@ function renderProjectBar() {
     h('button', { class: 'tb-btn text project-add', title: 'New project', onclick: showNewProjectDialog }, iconEl('plus'),
       state.projects.length ? 'Project' : 'New project (group sessions)'),
   );
+  syncStatus(bar);
 }
 
 function projectMenu(p, x, y) {
@@ -653,12 +654,43 @@ function statusText(s) {
   return { exited: 'Not running', attention: 'Waiting for you', working: 'Working…', running: 'Idle' }[statusClass(s)];
 }
 
+/** The dot's state, the one before it and when it began, which its animations go by (see syncStatus). */
+function dotState(s) {
+  const cls = statusClass(s);
+  if (s.dotState?.cls !== cls) s.dotState = { cls, from: s.dotState?.cls ?? '', since: document.timeline.currentTime };
+  return s.dotState;
+}
+
+function statusDot(s) {
+  const d = dotState(s);
+  return h('span', { class: 'dot ' + d.cls, 'data-from': d.from, 'data-since': d.since });
+}
+
+// Dots and tab names are rebuilt often (a tile header on every title change) and a rebuilt one's animation started
+// over, which made it flicker. Endless animations run on the page's clock instead, so every dot of a state moves in
+// step and a rebuilt one carries on; one-offs (the settle when a session is done) run from when the state began, so
+// they play once.
+function syncStatus(root) {
+  for (const el of root.querySelectorAll('.dot, .tab-name')) {
+    const since = Number(el.dataset.since) || 0;
+    for (const a of el.getAnimations({ subtree: true })) a.startTime = a.effect.getTiming().iterations === Infinity ? 0 : since;
+  }
+}
+
 function renderTileState(s) {
   s.tile.classList.toggle('attention', s.attention);
-  const dot = s.header.querySelector('.dot');
-  if (dot) { dot.className = 'dot ' + statusClass(s); dot.title = statusText(s); }
-  const tab = $(`.session-tab[data-id="${s.id}"] .dot`);
-  if (tab) { tab.className = 'dot ' + statusClass(s); tab.title = statusText(s); }
+  const d = dotState(s);
+  const tab = $(`.session-tab[data-id="${s.id}"]`);
+  tab?.classList.toggle('working', d.cls === 'working');   // its name shimmers
+  for (const dot of [s.header.querySelector('.dot'), tab?.querySelector('.dot')]) {
+    if (!dot) continue;
+    dot.className = 'dot ' + d.cls;
+    dot.dataset.from = d.from;
+    dot.dataset.since = d.since;
+    dot.title = statusText(s);
+  }
+  syncStatus(s.header);
+  if (tab) syncStatus(tab);
   updateProjectIndicators(groupOf(s));
 }
 
@@ -669,9 +701,11 @@ function updateProjectIndicators(projectId) {
   const members = state.sessions.filter((x) => groupOf(x) === projectId);
   const waiting = members.filter((x) => x.attention).length;
   const working = members.some((x) => x.running && x.act.state === 'working');
-  name.querySelector('.dot')?.remove();
+  // The dot stays while a session is working, so its spinner isn't restarted on every update.
+  const dot = name.querySelector('.dot');
+  if (!working) dot?.remove();
+  else if (!dot) { name.append(h('span', { class: 'dot working', title: 'A session is working' })); syncStatus(name); }
   name.querySelector('.badge')?.remove();
-  if (working) name.append(h('span', { class: 'dot working', title: 'A session is working' }));
   if (waiting) name.append(h('span', { class: 'badge', title: `${waiting} session${waiting === 1 ? '' : 's'} waiting for you` }, String(waiting)));
 }
 
@@ -711,7 +745,7 @@ function renderSessionTabs() {
   // start, so the tabs themselves carry no project tag.
   const shown = visibleSessions();
   const tabs = shown.map((s, i) => h('div', {
-    class: 'session-tab' + (state.expandedId === s.id ? ' active' : ''),
+    class: 'session-tab' + (state.expandedId === s.id ? ' active' : '') + (statusClass(s) === 'working' ? ' working' : ''),
     'data-id': s.id,
     title: `${s.directory}\n${statusText(s)}\nClick again to go back to all sessions · middle-click to close`,
     onclick: (e) => {
@@ -725,7 +759,7 @@ function renderSessionTabs() {
     onauxclick: (e) => { if (e.button === 1) confirmRemove(s); },
     oncontextmenu: (e) => { e.preventDefault(); sessionMenu(s, e.clientX, e.clientY); },
   }, h('button', { class: 'tab-label' },
-    h('span', { class: 'dot ' + statusClass(s) }), s.name, i < 9 ? h('span', { class: 'key' }, `Ctrl+${i + 1}`) : null),
+    statusDot(s), h('span', { class: 'tab-name' }, s.name), i < 9 ? h('span', { class: 'key' }, `Ctrl+${i + 1}`) : null),
   // Closing a session tab removes the session, after the same confirmation as "Remove session…".
   h('button', { class: 'icon-btn small tab-close', title: 'Close session…', onclick: () => confirmRemove(s) }, iconEl('close'))));
   if (!state.projects.length) {
@@ -751,6 +785,7 @@ function renderSessionTabs() {
     }, g.name),
     g.tabs)));
   }
+  syncStatus(host);
   $('#btnGrid').classList.toggle('active', !state.expandedId);
   revealActive(host, '.session-tab.active');   // e.g. after Ctrl+N opens a tab scrolled out of view
   renderDocTabs();

@@ -172,16 +172,78 @@ svg.ic { width: 16px; height: 16px; flex: none; display: block; }
 .session-tab .tab-label {
   display: inline-flex; align-items: center; gap: 7px; height: 100%; padding: 0; border: 0; background: none; cursor: pointer;
 }
+.session-tab .dot { margin: 0 2px; }   /* room for the rings round it, whatever the state, so the tab never changes width */
 .session-tab { padding-right: 4px; user-select: none; }
 .session-tab .tab-close { visibility: hidden; margin-left: -2px; }
 .session-tab:hover .tab-close, .session-tab.active .tab-close, .session-tab:focus-within .tab-close { visibility: visible; }
 
-.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); flex: none; }
+/* Session status dots. Each state has a shape and a motion of its own as well as a colour: idle is a dot in a slowly
+   breathing glow, working a comet turning round a breathing core, waiting a dot in a ring that keeps sending out
+   pings, not running a hollow ring that stays still. The rings reach past the 8px dot, so a tab keeps its width
+   whatever the state, and syncStatus (app.js) keeps the animations going when a dot is rebuilt. */
+.dot { position: relative; width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); flex: none; }
+.dot::before, .dot::after { position: absolute; border-radius: 50%; pointer-events: none; }
+.dot.exited { background: none; box-shadow: inset 0 0 0 1.5px var(--text-faint); }
+
+/* Idle: resting, like a sleeping laptop's light. */
 .dot.running { background: var(--ok); }
-.dot.working { background: var(--working); animation: pulse 1s ease-in-out infinite; }
-.dot.attention { background: var(--attention); box-shadow: 0 0 0 3px color-mix(in srgb, var(--attention) 25%, transparent); }
-.dot.exited { background: var(--text-faint); }
+.dot.running::after {
+  content: ''; inset: -4px; background: radial-gradient(closest-side, var(--ok), transparent);
+  opacity: 0; animation: dot-rest 4s ease-in-out infinite;
+}
+
+/* Working: a 14px comet, a thick arc fading back from a bright round head, round a glowing core. */
+.dot.working { --head: color-mix(in srgb, var(--working) 45%, #fff); background: none; }
+.dot.working::before {
+  content: ''; inset: -3px;
+  background: radial-gradient(circle at 50% 1.25px, var(--head) 1.25px, transparent 1.75px),
+    conic-gradient(transparent 10%, color-mix(in srgb, var(--working) 35%, transparent) 45%, var(--working) 90%, var(--head));
+  -webkit-mask: radial-gradient(closest-side, transparent calc(100% - 2.75px), #000 calc(100% - 2.25px));
+  animation: dot-spin 1s linear infinite;
+}
+.dot.working::after {
+  content: ''; inset: 1.5px; background: var(--working);
+  box-shadow: 0 0 6px 1px color-mix(in srgb, var(--working) 70%, transparent);
+  animation: dot-breathe 2s ease-in-out infinite;
+}
+/* On a light background a white head and a glow only blur it. */
+:root[data-theme="light"] .dot.working { --head: var(--working); }
+:root[data-theme="light"] .dot.working::after { box-shadow: none; }
+
+/* Waiting for you: a dot in a ring, beating and sending out a ping every couple of seconds until you look. */
+.dot.attention { background: var(--attention); animation: dot-beat 2.2s ease-out infinite; }
+.dot.attention::before { content: ''; inset: 0; background: var(--attention); opacity: 0; animation: dot-ping 2.2s ease-out infinite; }
+.dot.attention::after { content: ''; inset: -3.5px; box-shadow: inset 0 0 0 1.5px var(--attention); }
+
+/* Done working: the dot settles in with a little overshoot and sends out one ring. */
+.dot.running[data-from="working"] { animation: dot-settle .45s cubic-bezier(.3, 1.7, .5, 1); }
+.dot.running[data-from="working"]::before {
+  content: ''; inset: 0; box-shadow: inset 0 0 0 1.5px var(--ok); opacity: 0;
+  animation: dot-ripple .8s cubic-bezier(0, 0, .2, 1);
+}
+
+/* A working session's name shimmers as well, the way Claude's own "thinking" text does: a light sweeping across it. */
+.session-tab.working .tab-name {
+  --shine: color-mix(in srgb, var(--working) 40%, #fff);
+  background: linear-gradient(90deg, currentColor 40%, var(--shine) 50%, currentColor 60%) 0 0 / 300% 100%;
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  animation: tab-shimmer 2.4s linear infinite;
+}
+:root[data-theme="light"] .session-tab.working .tab-name { --shine: var(--working); }
+
+@keyframes dot-spin { to { transform: rotate(1turn); } }
+@keyframes dot-breathe { 50% { transform: scale(.65); opacity: .8; } }
+@keyframes dot-ripple { from { transform: scale(1); opacity: .7; } to { transform: scale(3); opacity: 0; } }
+@keyframes dot-ping { 0% { transform: scale(1); opacity: .9; } 60%, 100% { transform: scale(3); opacity: 0; } }
+@keyframes dot-beat { 0%, 30%, 100% { transform: scale(1); } 10% { transform: scale(1.3); } }
+@keyframes dot-rest { 0%, 100% { transform: scale(.6); opacity: 0; } 50% { transform: scale(1); opacity: .55; } }
+@keyframes dot-settle { from { transform: scale(.4); } }
+@keyframes tab-shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
 @keyframes pulse { 50% { opacity: .35; } }
+/* Windows' "Animation effects" off: the shapes alone tell the states apart. */
+@media (prefers-reduced-motion: reduce) {
+  .dot, .dot::before, .dot::after, .session-tab .tab-name { animation: none !important; }
+}
 
 /* ---------------------------------------------------------------- layout */
 #main { flex: 1; display: flex; min-height: 0; }
@@ -540,7 +602,7 @@ textarea.commit-msg { resize: vertical; min-height: 54px; height: 54px; user-sel
 .project-tab.shown .project-check { color: var(--accent); }
 .project-check svg.ic { width: 14px; height: 14px; }
 .project-name { gap: 6px; padding: 0 10px 0 4px; font-weight: 600; }
-.project-name .dot { width: 7px; height: 7px; }
+.project-name .dot { width: 7px; height: 7px; margin-left: 3px; }   /* room for the spinner's ring beside the name */
 .project-name .badge {
   min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--attention); color: #000;
   font-size: 10px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center;
