@@ -16,6 +16,11 @@ internal sealed class SessionInfo
     /// --session-id before anything has been saved. Null until known, e.g. for a session made with --continue.
     /// </summary>
     public string? Conversation { get; set; }
+    /// <summary>
+    /// The repository Git Changes shows, when the person picked one other than the folder's own (e.g. a session one
+    /// folder above several repositories). Null for the default: the folder's repository, or the first one inside it.
+    /// </summary>
+    public string? GitRepo { get; set; }
 }
 
 internal sealed partial class ProjectInfo
