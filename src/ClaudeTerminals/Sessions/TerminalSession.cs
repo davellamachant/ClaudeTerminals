@@ -21,6 +21,9 @@ internal sealed partial class TerminalSession : IDisposable
     public bool IsRunning => process != null;
     public string? RepoRoot { get; private set; }
 
+    /// <summary>The repositories Git Changes can switch between (see <see cref="GitService.FindRepositoriesAsync"/>); <see cref="RepoRoot"/> is one of them.</summary>
+    public IReadOnlyList<string> Repositories { get; private set; } = [];
+
     /// <summary>
     /// A conversation to reopen at the next start, once: set after an update restarted the app, so a plain "claude"
     /// session carries on where it was instead of starting a new conversation.
@@ -242,7 +245,8 @@ internal sealed partial class TerminalSession : IDisposable
             watcher?.Dispose();
             watcher = null;
         }
-        var root = await GitService.GetTopLevelAsync(Info.Directory);
+        var repos = await GitService.FindRepositoriesAsync(Info.Directory);
+        var root = ChooseRepository(repos, Info.GitRepo);
         var external = root != null ? await GitService.GetExternalGitDirAsync(root) : null;
         lock (gitLock)
         {
@@ -250,6 +254,7 @@ internal sealed partial class TerminalSession : IDisposable
             // recording this answer's repository root) now would orphan the watcher, with its file watcher and 15 s poll
             // running for the rest of the app's life, and could replace the newer setup's root.
             if (disposed || generation != gitGeneration) return;
+            Repositories = repos;
             RepoRoot = root;
             // Watch the session folder even if it isn't a repo yet, so a later `git init` is picked up.
             if (Directory.Exists(Info.Directory))
@@ -259,6 +264,21 @@ internal sealed partial class TerminalSession : IDisposable
             }
         }
         await RefreshStatusAsync();
+    }
+
+    /// <summary>The picked repository while it is still there; otherwise the folder's own repository, or the first one inside it.</summary>
+    internal static string? ChooseRepository(IReadOnlyList<string> repos, string? picked) =>
+        repos.FirstOrDefault(r => string.Equals(r, picked, StringComparison.OrdinalIgnoreCase)) ?? repos.FirstOrDefault();
+
+    /// <summary>Shows another of <see cref="Repositories"/> in Git Changes; false if it isn't one of them.</summary>
+    public async Task<bool> SelectRepositoryAsync(string root)
+    {
+        var match = Repositories.FirstOrDefault(r => string.Equals(r, root, StringComparison.OrdinalIgnoreCase));
+        if (match == null) return false;
+        // The default needs no remembering, so a session whose folder later becomes a repository simply follows it.
+        Info.GitRepo = string.Equals(match, Repositories[0], StringComparison.OrdinalIgnoreCase) ? null : match;
+        await InitGitAsync();
+        return true;
     }
 
     /// <summary>Recomputes git status; overlapping requests are coalesced into one follow-up run.</summary>

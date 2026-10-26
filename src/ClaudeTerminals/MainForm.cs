@@ -399,6 +399,7 @@ internal sealed class MainForm : Form
         isRepo = st.IsRepo,
         error = st.Error,
         root = s.RepoRoot,
+        repos = s.Repositories,
         head = st.HeadId,
         branch = st.Branch,
         upstream = st.Upstream,
@@ -727,6 +728,14 @@ internal sealed class MainForm : Form
             {
                 var s = Get(msg);
                 await s.InitGitAsync();
+                return null;
+            }
+            case "git.selectRepo":
+            {
+                var s = Get(msg);
+                if (!await s.SelectRepositoryAsync(Str(msg, "root")))
+                    throw new InvalidOperationException("That repository isn't in the session's folder any more. Refresh and try again.");
+                SaveSessions();
                 return null;
             }
             case "git.diff":

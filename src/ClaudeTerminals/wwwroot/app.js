@@ -1421,6 +1421,14 @@ function onGitStatus(m) {
   if (!s) return;
   // A new last commit, or a push/pull changing what is outgoing, makes the cached history stale.
   if (s.git && (s.git.head !== m.head || s.git.upstream !== m.upstream || s.git.ahead !== m.ahead)) invalidateLog(s);
+  if (s.git && s.git.root !== m.root) {
+    // Another repository: what was shown for the last one (its history, pull request and file diffs) no longer applies.
+    invalidateLog(s);
+    s.prInfo = null;
+    s.selectedCommit = null;
+    s.commitInfo = null;
+    for (const t of docs.tabs.filter((x) => x.sessionId === s.id && !isConvTab(x))) closeDoc(t.key);
+  }
   s.git = m;
   renderTileHeader(s);
   refreshOpenDiff(s);   // the visible diff follows its own session, whichever one the Git panel shows
@@ -1879,6 +1887,7 @@ function branchLine(s) {
   const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
   return h('div', { class: 'git-toolbar' },
+    repoPicker(s),
     h('div', { class: 'git-branch', title: g.upstream ? `Tracking ${g.upstream}` : 'No upstream branch' },
       iconEl('branch'), h('span', { class: 'name' }, g.branch || '(unknown)'),
       g.upstream && h('span', { class: 'ab', title: `${plural(ahead, 'outgoing commit')} / ${plural(behind, 'incoming commit')}` },
@@ -1900,6 +1909,25 @@ function branchLine(s) {
         class: 'icon-btn', title: 'More Git actions',
         onclick: (e) => { const r = e.currentTarget.getBoundingClientRect(); gitMoreMenu(s, r.left, r.bottom + 2); },
       }, iconEl('more'))));
+}
+
+/**
+ * Switches between the repositories in the session's folder (its own, and any in folders below it), for a session
+ * started above several repositories. Null when there is only the one.
+ */
+function repoPicker(s) {
+  const repos = s.git?.repos || [];
+  if (repos.length < 2) return null;
+  const dir = s.directory.replace(/[\\/]+$/, '');
+  const label = (r) => {
+    const rel = r.toLowerCase().startsWith(dir.toLowerCase() + '\\') ? r.slice(dir.length + 1) : null;
+    if (rel) return rel;
+    return r.toLowerCase() === dir.toLowerCase() ? `${leafName(r)} (this folder)` : `${leafName(r)} (contains this folder)`;
+  };
+  return h('select', {
+    class: 'repo-picker', title: `Repository: ${s.git.root}\nThe Git repositories in ${s.directory}`,
+    onchange: (e) => request('git.selectRepo', { id: s.id, root: e.target.value }).catch((err) => { toast(err.message, true); renderGit(); }),
+  }, ...repos.map((r) => h('option', { value: r, selected: r === s.git.root }, label(r))));
 }
 
 const PR_CACHE_MS = 3 * 60_000;

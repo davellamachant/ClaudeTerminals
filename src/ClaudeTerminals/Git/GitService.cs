@@ -743,6 +743,68 @@ internal static class GitService
         return r.Ok ? Path.GetFullPath(r.Text.Trim()) : null;
     }
 
+    /// <summary>Folders never searched for nested repositories: build output and package caches are big and hold none worth showing.</summary>
+    private static readonly HashSet<string> SkippedFolders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "node_modules", "bin", "obj", "packages", ".vs", ".idea", ".vscode", "dist", "build", "out", "target", "vendor", "__pycache__",
+    };
+
+    /// <summary>
+    /// The repositories a session in <paramref name="dir"/> can show: the one containing it (if any) and any repositories in
+    /// folders below it, down to <paramref name="maxDepth"/> levels. A repository's own subfolders are searched too
+    /// (submodules, repositories checked out inside another). Junctions and links aren't followed, so the search can't
+    /// loop or wander off the folder. Full paths, the containing repository first, then by path.
+    /// </summary>
+    public static async Task<List<string>> FindRepositoriesAsync(string dir, int maxDepth = 4, int maxFolders = 5000)
+    {
+        var found = new List<string>();
+        if (!Directory.Exists(dir)) return found;
+        if (await GetTopLevelAsync(dir) is { } top) found.Add(top);
+        var nested = await Task.Run(() => FindNestedRepositories(Path.GetFullPath(dir), maxDepth, maxFolders));
+        found.AddRange(nested.Where(r => !found.Contains(r, StringComparer.OrdinalIgnoreCase)));
+        return found;
+    }
+
+    internal static List<string> FindNestedRepositories(string dir, int maxDepth, int maxFolders)
+    {
+        var list = new List<string>();
+        var queue = new Queue<(string Path, int Depth)>();
+        queue.Enqueue((dir, 0));
+        var visited = 0;
+        while (queue.Count > 0 && visited++ < maxFolders)
+        {
+            var (path, depth) = queue.Dequeue();
+            IEnumerable<string> children;
+            try
+            {
+                children = Directory.EnumerateDirectories(path).ToList();
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                continue;
+            }
+            foreach (var child in children)
+            {
+                var name = Path.GetFileName(child);
+                if (name.StartsWith('.') || SkippedFolders.Contains(name)) continue;
+                try
+                {
+                    if (new DirectoryInfo(child).Attributes.HasFlag(FileAttributes.ReparsePoint)) continue;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    continue;
+                }
+                // A folder is a repository's top when it has .git: a folder, or a file for linked worktrees and submodules.
+                var git = Path.Combine(child, ".git");
+                if (Directory.Exists(git) || File.Exists(git)) list.Add(child);
+                if (depth + 1 < maxDepth) queue.Enqueue((child, depth + 1));
+            }
+        }
+        list.Sort(StringComparer.OrdinalIgnoreCase);
+        return list;
+    }
+
     /// <summary>Returns the git dir if it lives outside the worktree (linked worktrees), so it can be watched too.</summary>
     public static async Task<string?> GetExternalGitDirAsync(string dir)
     {
