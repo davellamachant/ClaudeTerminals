@@ -323,6 +323,32 @@ internal static class GitService
     }
 
     /// <summary>
+    /// Creates a worktree of the repository at <paramref name="repoDir"/> in the new folder <paramref name="path"/>, on a
+    /// new branch <paramref name="branch"/> started from <paramref name="startPoint"/> (the current commit when null).
+    /// Changes the repository. The branch name, start point and folder are checked first, so git's options can't be
+    /// smuggled in through them.
+    /// </summary>
+    public static async Task<GitResult> AddWorktreeAsync(string repoDir, string path, string branch, string? startPoint)
+    {
+        static GitResult Fail(string message) => new(1, [], message);
+        if (branch.StartsWith('-') || !(await RunAsync(repoDir, ["check-ref-format", "--branch", branch])).Ok)
+            return Fail($"\"{branch}\" isn't a valid branch name.");
+        if ((await RunAsync(repoDir, ["rev-parse", "--verify", "--quiet", "refs/heads/" + branch])).Ok)
+            return Fail($"A branch named \"{branch}\" already exists. Pick another name.");
+        if (!Path.IsPathFullyQualified(path)) return Fail("The folder must be a full path, such as D:\\Source\\repo-feature.");
+        if (Directory.Exists(path) && Directory.EnumerateFileSystemEntries(path).Any()) return Fail($"{path} already exists and isn't empty.");
+        if (File.Exists(path)) return Fail($"{path} is a file.");
+        var args = new List<string> { "worktree", "add", "-b", branch, path };
+        if (!string.IsNullOrWhiteSpace(startPoint))
+        {
+            if (startPoint.StartsWith('-') || !(await RunAsync(repoDir, ["rev-parse", "--verify", "--quiet", startPoint + "^{commit}"])).Ok)
+                return Fail($"\"{startPoint}\" isn't a branch or commit in this repository.");
+            args.Add(startPoint);
+        }
+        return await RunAsync(repoDir, args, timeout: TimeSpan.FromMinutes(5));   // checking out a big tree takes a while
+    }
+
+    /// <summary>
     /// Builds both sides of a diff. mode: "unstaged" (index → working tree), "staged" (HEAD → index),
     /// or "commit" (parent → commit).
     /// </summary>

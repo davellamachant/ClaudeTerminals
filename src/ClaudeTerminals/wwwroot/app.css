@@ -467,10 +467,10 @@ textarea.commit-msg { resize: vertical; min-height: 54px; height: 54px; user-sel
 
 .menu { position: fixed; z-index: 200; min-width: 200px; padding: 4px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 8px 24px rgba(0, 0, 0, .45); }
 .menu-item { display: flex; align-items: center; gap: 8px; height: 26px; padding: 0 10px; border-radius: 4px; cursor: pointer; white-space: nowrap; }
-.menu-item:hover { background: var(--accent-strong); color: #fff; }
-.menu-item.danger:hover { background: var(--danger-fill); }
+.menu-item:hover, .menu-item.active { background: var(--accent-strong); color: #fff; }
+.menu-item.danger:hover, .menu-item.danger.active { background: var(--danger-fill); }
 .menu-item .kbd { margin-left: auto; padding-left: 24px; color: var(--text-faint); }
-.menu-item:hover .kbd { color: #ddd; }
+.menu-item:hover .kbd, .menu-item.active .kbd { color: #ddd; }
 .menu-sep { height: 1px; background: var(--border); margin: 4px 2px; }
 .menu-header { padding: 6px 10px 3px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; color: var(--text-faint); cursor: default; }
 .menu-check { width: 12px; flex: none; text-align: center; }
@@ -629,6 +629,14 @@ textarea.commit-msg { resize: vertical; min-height: 54px; height: 54px; user-sel
 .session-group-label:focus-visible { outline: 1px solid var(--focus); outline-offset: -2px; }
 .session-group.unknown .session-group-label { font-style: italic; }
 .session-group .session-tab { height: 26px; }
+/* The + at the end of a project's group (or of an ungrouped row): another session in that project */
+.session-add {
+  flex: none; width: 22px; height: 22px; margin: 0 3px; color: var(--text-dim);
+  border: 1px solid var(--border); border-radius: 4px;   /* an outline sets it apart from the tabs beside it */
+}
+.session-group .session-add { color: var(--proj); border-color: color-mix(in srgb, var(--proj) 45%, transparent); }
+.session-add:hover { color: var(--text); border-color: var(--border-strong); }
+.session-group .session-add:hover { border-color: color-mix(in srgb, var(--proj) 75%, transparent); background: color-mix(in srgb, var(--proj) 16%, transparent); }
 
 /* Drag to reorder tabs: an accent bar on the side the dragged tab will land. */
 .session-tab.dragging, .project-tab.dragging, .doc-tab.dragging { opacity: .4; }
