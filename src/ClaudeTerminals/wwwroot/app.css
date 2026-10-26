@@ -467,10 +467,10 @@ textarea.commit-msg { resize: vertical; min-height: 54px; height: 54px; user-sel
 
 .menu { position: fixed; z-index: 200; min-width: 200px; padding: 4px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 8px 24px rgba(0, 0, 0, .45); }
 .menu-item { display: flex; align-items: center; gap: 8px; height: 26px; padding: 0 10px; border-radius: 4px; cursor: pointer; white-space: nowrap; }
-.menu-item:hover { background: var(--accent-strong); color: #fff; }
-.menu-item.danger:hover { background: var(--danger-fill); }
+.menu-item:hover, .menu-item.active { background: var(--accent-strong); color: #fff; }
+.menu-item.danger:hover, .menu-item.danger.active { background: var(--danger-fill); }
 .menu-item .kbd { margin-left: auto; padding-left: 24px; color: var(--text-faint); }
-.menu-item:hover .kbd { color: #ddd; }
+.menu-item:hover .kbd, .menu-item.active .kbd { color: #ddd; }
 .menu-sep { height: 1px; background: var(--border); margin: 4px 2px; }
 .menu-header { padding: 6px 10px 3px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; color: var(--text-faint); cursor: default; }
 .menu-check { width: 12px; flex: none; text-align: center; }

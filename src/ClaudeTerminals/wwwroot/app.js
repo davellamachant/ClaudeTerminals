@@ -948,6 +948,7 @@ function terminalKey(s, e) {
 }
 
 document.addEventListener('keydown', (e) => {
+  if (menuKey(e)) { e.preventDefault(); e.stopPropagation(); return; }
   if (handleShortcut(e)) { e.preventDefault(); e.stopPropagation(); return; }
   if (e.key === 'Escape' && !e.shiftKey) {
     if (closeMenu()) return;
@@ -977,7 +978,10 @@ function showMenu(x, y, items) {
   // Items: '-' for a separator, { header } for a section title, or { label, action } with optional kbd, danger, and
   // checked (ticked when true). If any item can be ticked, all get the tick column so their labels line up.
   const ticks = items.some((it) => it && it.checked !== undefined);
-  const menu = h('div', { class: 'menu', onmousedown: (e) => e.preventDefault() }, items.filter(Boolean).map((it) => it === '-'
+  const menu = h('div', {
+    class: 'menu', onmousedown: (e) => e.preventDefault(),
+    onmousemove: (e) => e.currentTarget.querySelector('.menu-item.active')?.classList.remove('active'),   // the pointer takes over
+  }, items.filter(Boolean).map((it) => it === '-'
     ? h('div', { class: 'menu-sep' })
     : it.header
       ? h('div', { class: 'menu-header' }, it.header)
@@ -988,10 +992,32 @@ function showMenu(x, y, items) {
   const r = menu.getBoundingClientRect();
   menu.style.left = Math.min(x, innerWidth - r.width - 4) + 'px';
   menu.style.top = Math.min(y, innerHeight - r.height - 4) + 'px';
+  // Opened from the keyboard (a focused button's Enter or Space reports no click count): start on the first item.
+  if (window.event?.type === 'click' && window.event.detail === 0) menu.querySelector('.menu-item')?.classList.add('active');
   openMenuEl = menu;
 }
 
 document.addEventListener('mousedown', (e) => { if (openMenuEl && !openMenuEl.contains(e.target)) closeMenu(); }, true);
+
+/**
+ * The keyboard for an open menu: the arrow keys (and Home/End) move a highlight, Enter or Space picks the highlighted
+ * item, Escape closes it. Focus stays where it was (see showMenu), so these keys are taken here before the terminal or
+ * a field gets them. True if the key was the menu's.
+ */
+function menuKey(e) {
+  if (!openMenuEl || e.ctrlKey || e.altKey || e.metaKey) return false;
+  const items = [...openMenuEl.querySelectorAll('.menu-item')];
+  const at = items.findIndex((i) => i.classList.contains('active'));
+  const move = { ArrowDown: at + 1, ArrowUp: (at < 0 ? items.length : at) - 1, Home: 0, End: items.length - 1 }[e.key];
+  if (move !== undefined) {
+    items[at]?.classList.remove('active');
+    items[(move + items.length) % items.length]?.classList.add('active');
+    return true;
+  }
+  if ((e.key === 'Enter' || e.key === ' ') && at >= 0) { items[at].click(); return true; }
+  if (e.key === 'Escape' && !e.shiftKey) { closeMenu(); return true; }
+  return false;
+}
 
 function sessionMenu(s, x, y) {
   showMenu(x, y, [
@@ -1415,21 +1441,29 @@ function showWorktreeDialog(s) {
   folder.addEventListener('input', () => { folderEdited = true; });
   const create = h('button', { class: 'btn primary' }, 'Create worktree and session');
   const go = async () => {
+    if (create.disabled) return;   // already creating (Enter in a field doesn't go through the button)
     const b = branch.value.trim();
     if (!b) { error.hidden = false; error.textContent = 'Name the new branch.'; return; }
     if (!folder.value.trim()) { error.hidden = false; error.textContent = 'Choose a folder for the worktree.'; return; }
     create.disabled = true;
     create.textContent = 'Creating…';
     error.hidden = true;
+    let path;
     try {
-      const path = await request('worktree.add', { id: s.id, branch: b, path: folder.value.trim(), base: base.value.trim() || null });
-      closeModal();
-      await addAndOpen({ directory: path, name: freeName(name.value.trim() || b), command: ownOptionsOnly(s.command), project: s.project ?? '' });
+      path = await request('worktree.add', { id: s.id, branch: b, path: folder.value.trim(), base: base.value.trim() || null });
     } catch (e) {
       error.hidden = false;
       error.textContent = e.message;
       create.disabled = false;
       create.textContent = 'Create worktree and session';
+      return;
+    }
+    closeModal();
+    // The worktree exists now, so the dialog can't be retried: a failure from here on is reported on its own.
+    try {
+      await addAndOpen({ directory: path, name: freeName(name.value.trim() || b), command: ownOptionsOnly(s.command), project: s.project ?? '' });
+    } catch (e) {
+      toast(`The worktree was created in ${path}, but no session could be added there: ${e.message}`, true);
     }
   };
   create.addEventListener('click', go);
