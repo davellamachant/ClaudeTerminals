@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -6,7 +7,8 @@ using System.Text.RegularExpressions;
 namespace ClaudeTerminals.Sessions;
 
 internal sealed record ConversationInfo(
-    string SessionId, string? Cwd, string? Branch, string Title, string? FirstPrompt, string? LastPrompt, DateTime Modified, long Size);
+    string SessionId, string? Cwd, string? Branch, string Title, string? FirstPrompt, string? LastPrompt, DateTime Modified, long Size,
+    DateTime? Started = null);
 
 /// <summary>
 /// Reads Claude Code's saved conversations (~/.claude/projects/&lt;encoded-cwd&gt;/&lt;sessionId&gt;.jsonl).
@@ -80,6 +82,10 @@ internal static partial class ConversationIndex
     /// <summary>Whether Claude has a saved conversation for this folder, i.e. whether claude --continue has one to continue.</summary>
     public static bool HasConversation(string directory) => List(directory, 1).Count > 0;
 
+    /// <summary>The saved conversation <paramref name="sessionId"/>, or null while Claude hasn't saved anything in it.</summary>
+    public static ConversationInfo? Find(string sessionId, string? directory) =>
+        ConversationReader.FindTranscript(sessionId, directory) is { } path ? Read(new FileInfo(path)) : null;
+
     private static IEnumerable<string> SafeEnumerate(string dir)
     {
         try
@@ -99,6 +105,7 @@ internal static partial class ConversationIndex
 
         string? cwd = null, branch = null, firstPrompt = null, sessionId = null;
         string? aiTitle = null, customTitle = null, lastPrompt = null;
+        DateTime? started = null;
         try
         {
             using var stream = new FileStream(file.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
@@ -108,6 +115,9 @@ internal static partial class ConversationIndex
                 if (!TryParse(line, out var e)) continue;
                 sessionId ??= Str(e, "sessionId");
                 cwd ??= Str(e, "cwd");
+                if (started == null && Str(e, "timestamp") is { } ts &&
+                    DateTime.TryParse(ts, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var at))
+                    started = at;
                 if (branch == null && Str(e, "gitBranch") is { } b && b != "HEAD") branch = b;
                 if (firstPrompt == null && Str(e, "type") == "user" && !Bool(e, "isMeta") && !Bool(e, "isSidechain"))
                     firstPrompt = UserText(e);
@@ -136,7 +146,7 @@ internal static partial class ConversationIndex
         if (firstPrompt == null && aiTitle == null && customTitle == null && lastPrompt == null) return null;
 
         var title = customTitle ?? aiTitle ?? Truncate(firstPrompt ?? lastPrompt, 120) ?? "(untitled)";
-        var info = new ConversationInfo(sessionId, cwd, branch, title, Truncate(firstPrompt, 300), Truncate(lastPrompt, 300), file.LastWriteTime, file.Length);
+        var info = new ConversationInfo(sessionId, cwd, branch, title, Truncate(firstPrompt, 300), Truncate(lastPrompt, 300), file.LastWriteTime, file.Length, started);
         Cache[file.FullName] = (file.LastWriteTimeUtc, info);
         return info;
     }

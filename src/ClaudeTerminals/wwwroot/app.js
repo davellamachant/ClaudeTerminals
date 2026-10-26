@@ -89,7 +89,7 @@ function relTime(iso) {
   if (s < 60) return 'just now';
   if (s < 3600) return `${Math.floor(s / 60)} min ago`;
   if (s < 86400) return `${Math.floor(s / 3600)} hr ago`;
-  if (s < 86400 * 7) return `${Math.floor(s / 86400)} days ago`;
+  if (s < 86400 * 7) return Math.floor(s / 86400) === 1 ? '1 day ago' : `${Math.floor(s / 86400)} days ago`;
   return d.toLocaleDateString();
 }
 
@@ -467,9 +467,15 @@ function syncSessions(list, projects) {
   if (state.expandedId && !state.byId.has(state.expandedId)) state.expandedId = null;
 
   layout(true);
-  // Every session starts, visible or not: a project being hidden only hides it from view.
+  // Claude sessions brought back with the app start when they're first opened, not all at once: Claude's start-up
+  // context (hooks, the date, Git status) is then fresh when you use it, and a session nobody opens runs nothing. A new
+  // session, and any other command (a dev server, say), starts straight away, visible or not.
+  const restoring = !state.restored;
+  state.restored = true;
   for (const s of state.sessions) {
-    if (!s.running && !s.started) startSession(s);
+    if (s.running || s.started || s.startsOnOpen) continue;
+    if (restoring && isClaudeCommand(s.command)) { s.startsOnOpen = true; renderTileHeader(s); }
+    else startSession(s);
   }
   applyProjectFilter(true);
 }
@@ -491,6 +497,7 @@ function createSession(info) {
     if (state.expandedId !== s.id) expand(s.id);
   });
   s.header.addEventListener('contextmenu', (e) => { e.preventDefault(); sessionMenu(s, e.clientX, e.clientY); });
+  s.header.addEventListener('mouseenter', () => loadConversationInfo(s));
   s.rail = h('div', { class: 'chat-rail' });
   attachRail(s.rail);
   s.tile = h('div', { class: 'tile', 'data-id': s.id }, s.header, h('div', { class: 'tile-body' }, s.surface, s.rail, s.cover, s.exitedBadge));
@@ -524,7 +531,7 @@ function createSession(info) {
   term.attachCustomKeyEventHandler((e) => terminalKey(s, e));
   term.onData((data) => {
     if (!s.running) {
-      if (data === '\r') restartSession(s);
+      if (data === '\r') (s.startsOnOpen ? startSession(s) : restartSession(s));
       return;
     }
     s.act.lastIn = performance.now();
@@ -559,8 +566,11 @@ function fitTerm(s) {
   try { s.fit.fit(); } catch { /* not attached yet */ }
 }
 
+const isClaudeCommand = (command) => /^claude(\.exe)?(\s|$)/i.test((command || '').trim());
+
 function startSession(s) {
   s.started = true;
+  s.startsOnOpen = false;
   fitTerm(s);
   s.startedTheme = themeName();
   request('start', { id: s.id, cols: s.term.cols, rows: s.term.rows, theme: s.startedTheme })
@@ -576,6 +586,8 @@ function startSession(s) {
 
 /** resume: carry on in the exact conversation the session is in (used when restarting for a new theme). */
 function restartSession(s, { resume = false } = {}) {
+  s.started = true;
+  s.startsOnOpen = false;
   fitTerm(s);
   s.term.reset();
   s.startedTheme = themeName();
@@ -650,6 +662,7 @@ function statusClass(s) {
 }
 
 function statusText(s) {
+  if (s.startsOnOpen) return 'Starts when you open it';
   return { exited: 'Not running', attention: 'Waiting for you', working: 'Working…', running: 'Idle' }[statusClass(s)];
 }
 
@@ -688,7 +701,7 @@ function renderTileHeader(s) {
   const gs = gitSummary(s);
   fill(s.header,
     h('span', { class: 'dot ' + statusClass(s), title: statusText(s) }),
-    h('span', { class: 'tile-name' }, s.name),
+    h('span', { class: 'tile-name', title: conversationLine(s) }, s.name),
     projectTag(s),
     h('span', { class: 'tile-title', title: s.title }, s.title),
     gs && h('button', {
@@ -698,9 +711,36 @@ function renderTileHeader(s) {
     h('button', { class: 'icon-btn', title: 'Session options', onclick: (e) => { const r = e.currentTarget.getBoundingClientRect(); sessionMenu(s, r.left, r.bottom + 2); } }, iconEl('more')),
     expanded && h('button', { class: 'icon-btn', title: 'Back to all sessions (Shift+Esc)', onclick: collapse }, iconEl('collapse')),
   );
-  s.exitedBadge.hidden = s.running || !s.started;
-  s.exitedBadge.textContent = s.exitCode === null ? 'Not running' : `Exited (${s.exitCode})`;
+  s.exitedBadge.hidden = s.running || !(s.started || s.startsOnOpen);
+  s.exitedBadge.textContent = s.startsOnOpen ? 'Starts when you open it' : s.exitCode === null ? 'Not running' : `Exited (${s.exitCode})`;
   renderTileState(s);
+}
+
+function sessionTabTitle(s) {
+  return [s.directory, statusText(s), conversationLine(s), 'Click again to go back to all sessions · middle-click to close'].filter(Boolean).join('\n');
+}
+
+/**
+ * What a Claude session's tooltips say about its own conversation, so one that isn't the conversation you expect shows
+ * before you type into it. Null for other commands, and until it has been fetched (see loadConversationInfo).
+ */
+function conversationLine(s) {
+  if (!isClaudeCommand(s.command)) return null;
+  if (!s.conversation) return /\s(-c|--continue)(\s|$)/i.test(s.command + ' ') ? "Conversation: the folder's latest, once Claude has picked it" : null;
+  const c = s.convInfo;
+  if (c?.id !== s.conversation) return null;
+  if (!c.saved) return 'Conversation: a new one, nothing in it yet';
+  const started = c.started && new Date(c.started).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  return `Conversation: ${c.title}\n${started ? `Started ${started} · ` : ''}last used ${relTime(c.modified)}`;
+}
+
+/** Fetches the session's conversation for its tooltips when the pointer reaches its tab or tile header, so it's current. */
+async function loadConversationInfo(s) {
+  if (!isClaudeCommand(s.command) || !s.conversation) return;
+  try { s.convInfo = await request('conversationInfo', { id: s.id }); } catch { return; }
+  const tab = $(`.session-tab[data-id="${s.id}"]`);
+  if (tab) tab.title = sessionTabTitle(s);
+  s.header.querySelector('.tile-name')?.setAttribute('title', conversationLine(s) ?? '');
 }
 
 function renderSessionTabs() {
@@ -713,7 +753,8 @@ function renderSessionTabs() {
   const tabs = shown.map((s, i) => h('div', {
     class: 'session-tab' + (state.expandedId === s.id ? ' active' : ''),
     'data-id': s.id,
-    title: `${s.directory}\n${statusText(s)}\nClick again to go back to all sessions · middle-click to close`,
+    title: sessionTabTitle(s),
+    onmouseenter: () => loadConversationInfo(s),
     onclick: (e) => {
       if (e.target.closest('.tab-close')) return;
       // Clicking the session that's open (its terminal showing) goes back to the tiles; otherwise it opens the session,
@@ -837,6 +878,7 @@ function expand(id) {
   if (switched) { state.currentId = id; store.set('currentId', id); }
   renderSessionPicker();   // locked to the open session
   layout();
+  if (s.startsOnOpen) startSession(s);   // after the layout, so Claude starts at the open terminal's size
   for (const x of state.sessions) renderTileHeader(x);
   renderSessionTabs();
   setTimeout(() => s.term.focus(), 30);
@@ -2684,6 +2726,7 @@ function panelButton(p, b) {
 function typeHere(text) {
   const s = currentSession();
   if (!s) return;
+  if (s.startsOnOpen) { expand(s.id); toast(`Starting "${s.name}". Try again once Claude is up.`); return; }
   if (!s.running) { toast(`"${s.name}" isn't running. Start it, then try again.`, true); return; }
   if (state.expandedId !== s.id) expand(s.id);
   s.term.paste(text);
@@ -2765,6 +2808,7 @@ function showExampleSkill() {
 /** Refresh asks the session that made the panel to rebuild it (the prompt it gave, e.g. the slash command). */
 function refreshPanel(p) {
   const owner = state.byId.get(p.owner);
+  if (owner?.startsOnOpen) { startSession(owner); toast(`Starting "${owner.name}". Refresh again once Claude is up.`); return; }
   if (!owner?.running) { toast(`"${owner?.name ?? 'Its session'}" isn't running, so it can't refresh this panel.`, true); return; }
   post({ type: 'input', id: owner.id, data: p.refresh });
   setTimeout(() => post({ type: 'input', id: owner.id, data: '\r' }), 150);

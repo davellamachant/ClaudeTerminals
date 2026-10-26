@@ -128,7 +128,7 @@ internal static partial class ConversationReader
         }
     }
 
-    private static string? FindTranscript(string sessionId, string? cwd)
+    internal static string? FindTranscript(string sessionId, string? cwd)
     {
         var root = ConversationIndex.ProjectsRoot;
         var name = sessionId + ".jsonl";
