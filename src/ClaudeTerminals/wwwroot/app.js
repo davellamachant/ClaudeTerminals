@@ -738,7 +738,7 @@ function renderSessionTabs() {
     }, iconEl('plus'));
   };
   if (!state.projects.length) {
-    host.replaceChildren(...tabs, shown.length ? plus(shown, 'like these') : null);   // nothing to group by
+    fill(host, ...tabs, shown.length ? plus(shown, 'like these') : null);   // nothing to group by
   } else {
     const groups = [];
     shown.forEach((s, i) => {
