@@ -280,9 +280,11 @@ svg.ic { width: 16px; height: 16px; flex: none; display: block; }
 }
 @keyframes tab-shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
 @keyframes pulse { 50% { opacity: .35; } }
-/* Windows' "Animation effects" off: the shapes alone tell the states apart. */
+/* Windows' "Animation effects" off: the shapes alone tell the states apart. Waiting then keeps a steady glow, since its
+   glow otherwise comes only from dot-shine and it would be a plain dot like idle. */
 @media (prefers-reduced-motion: reduce) {
   .dot, .dot::before, .dot::after, .session-tab .tab-name { animation: none !important; }
+  .dot.attention { box-shadow: 0 0 6px 2px var(--glow); }
 }
 
 /* ---------------------------------------------------------------- layout */
