@@ -478,7 +478,7 @@ function syncSessions(list, projects) {
 function createSession(info) {
   const s = {
     ...info, running: false, started: false, exitCode: null, title: '', git: null,
-    attention: false, asking: false, act: { lastOut: 0, lastIn: 0, burstStart: 0, state: 'idle', workingSince: 0, readAt: 0 },
+    attention: false, asking: false, act: { lastOut: 0, lastIn: 0, burstStart: 0, state: 'idle', workingSince: 0, drawnAt: 0, readAt: 0 },
     log: null, selectedCommit: null, commitInfo: null, commitDraft: '', info: null, collapsed: new Set(),
   };
 
@@ -579,6 +579,7 @@ function startSession(s) {
 function restartSession(s, { resume = false } = {}) {
   fitTerm(s);
   s.term.reset();
+  setAsking(s, false);   // the question went with the old screen (and a failed restart writes no output to clear it)
   s.startedTheme = themeName();
   request('restart', { id: s.id, cols: s.term.cols, rows: s.term.rows, theme: s.startedTheme, resume })
     .then(() => { s.running = true; s.exitCode = null; renderTileHeader(s); renderSessionTabs(); })
@@ -588,7 +589,8 @@ function restartSession(s, { resume = false } = {}) {
 function onOutput(id, data) {
   const s = state.byId.get(id);
   if (!s) return;
-  s.term.write(data);
+  // xterm draws written output later, in chunks; the screen is only read for "asking" once this output is on it.
+  s.term.write(data, () => { s.act.drawnAt = performance.now(); });
   noteActivity(s);
 }
 
@@ -637,9 +639,10 @@ setInterval(() => {
       if (now - a.workingSince > 4000 && state.expandedId !== s.id) setAttention(s, true);
       else renderTileState(s);
     }
-    // Once the screen has settled after new output (mid-redraw it can be half drawn), see whether Claude is asking.
-    if (s.running && a.lastOut !== a.readAt && now - a.lastOut > 250) {
-      a.readAt = a.lastOut;
+    // Once the screen has settled after new output has been drawn (mid-redraw it can be half drawn), see whether Claude
+    // is asking. Only Claude: a shell or a dev server can print text that looks like its menus.
+    if (s.running && a.drawnAt !== a.readAt && now - a.drawnAt > 250 && /^claude(\.exe)?(\s|$)/i.test(s.command.trim())) {
+      a.readAt = a.drawnAt;
       setAsking(s, isAsking(s.term));
     }
   }
