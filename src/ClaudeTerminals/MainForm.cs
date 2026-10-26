@@ -880,8 +880,13 @@ internal sealed class MainForm : Form
         // with its own options the app doesn't look after).
         foreach (var s in sessions.Values) CatchUpConversation(s);
         var map = new Dictionary<string, string>();
-        foreach (var s in sessions.Values.Where(s => s.IsRunning))
-            if (ConversationReader.ResumableConversation(s.ProcessIds()) is { } live) map[s.Id] = live;
+        foreach (var s in sessions.Values)
+        {
+            if (s.IsRunning && ConversationReader.ResumableConversation(s.ProcessIds()) is { } live) map[s.Id] = live;
+            // A Claude session starts when it's first opened, so one not opened since the last update still has that
+            // update's note to use: it's passed on rather than lost.
+            else if (!s.IsRunning && s.ResumeOnce != null) map[s.Id] = s.ResumeOnce;
+        }
         try { File.WriteAllText(ResumeFile, JsonSerializer.Serialize(map)); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* sessions start fresh instead */ }
     }
