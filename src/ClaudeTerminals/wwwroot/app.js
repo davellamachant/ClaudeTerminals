@@ -709,11 +709,11 @@ function statusDot(s) {
 // a rebuilt one carries on; one-offs (the settle when a session is done) run from when the state began, so they play
 // once.
 function syncStatus(root) {
-  const animated = '.dot, .tab-name, .session-tab';
+  const animated = '.dot, .tab-name';
   for (const el of [...(root.matches(animated) ? [root] : []), ...root.querySelectorAll(animated)]) {
     const since = Number(el.dataset.since) || 0;
     for (const a of el.getAnimations({ subtree: true })) {
-      if (a.effect.target !== el) continue;   // one inside it, such as a tab's dot, goes by its own
+      if (a.effect.target !== el) continue;   // an element inside it goes by its own
       a.startTime = a.effect.getTiming().iterations === Infinity ? 0 : since;
     }
   }
@@ -725,7 +725,7 @@ function renderTileState(s) {
   s.tile.classList.toggle('asking', d.cls === 'asking');
   const tab = $(`.session-tab[data-id="${s.id}"]`);
   tab?.classList.toggle('working', d.cls === 'working');   // its name shimmers
-  tab?.classList.toggle('asking', d.cls === 'asking');     // it lights up
+  tab?.classList.toggle('asking', d.cls === 'asking');     // its name stands out
   for (const dot of [s.header.querySelector('.dot'), tab?.querySelector('.dot')]) {
     if (!dot) continue;
     dot.className = 'dot ' + d.cls;

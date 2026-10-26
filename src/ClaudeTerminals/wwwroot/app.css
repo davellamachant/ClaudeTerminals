@@ -209,21 +209,17 @@ svg.ic { width: 16px; height: 16px; flex: none; display: block; }
 .dot.attention::after { content: ''; inset: -3.5px; box-shadow: inset 0 0 0 1.5px var(--attention); }
 
 /* Needs your answer (a permission prompt, a question, a plan to approve): a pink ball that hops twice and rests, the
-   way a Dock icon calls you, landing with a squash and a ring each time, and its tab lights up with each hop. Claude
+   way a Dock icon calls you, landing with a squash and a ring each time, and glowing brightest as it leaps. Claude
    is stuck until you answer, so this is the loudest state. */
-.dot.asking { background: none; }
+.dot.asking { --glow: color-mix(in srgb, var(--asking) 85%, transparent); background: none; }
 .dot.asking::after {
-  content: ''; inset: 0; background: var(--asking); box-shadow: 0 0 6px 1px color-mix(in srgb, var(--asking) 70%, transparent);
-  transform-origin: 50% 100%; animation: dot-hop 1.6s infinite;
+  content: ''; inset: 0; background: var(--asking);
+  transform-origin: 50% 100%; animation: dot-hop 1.6s infinite, dot-glow 1.6s ease-in-out infinite;
 }
 .dot.asking::before { content: ''; inset: 0; box-shadow: inset 0 0 0 1.5px var(--asking); opacity: 0; animation: dot-land 1.6s ease-out infinite; }
-:root[data-theme="light"] .dot.asking::after { box-shadow: none; }
-.session-tab.asking { position: relative; color: var(--text); }
-.session-tab.asking::before {
-  content: ''; position: absolute; inset: -1px; border-radius: inherit; pointer-events: none;
-  box-shadow: inset 0 0 0 1.5px var(--asking), 0 0 8px color-mix(in srgb, var(--asking) 55%, transparent);
-  animation: tab-call 1.6s ease-in-out infinite;
-}
+/* On a light background a wide glow only blurs the dot, so it stays close. */
+:root[data-theme="light"] .dot.asking { --glow: color-mix(in srgb, var(--asking) 45%, transparent); }
+.session-tab.asking { color: var(--text); }
 
 /* Done working: the dot settles in with a little overshoot and sends out one ring. */
 .dot.running[data-from="working"] { animation: dot-settle .45s cubic-bezier(.3, 1.7, .5, 1); }
@@ -269,12 +265,17 @@ svg.ic { width: 16px; height: 16px; flex: none; display: block; }
   42% { transform: scale(1); opacity: .6; }
   60%, 100% { transform: scale(2.1); opacity: 0; }
 }
-@keyframes tab-call { 0%, 55%, 100% { opacity: .55; } 14% { opacity: 1; } }
+/* The ball itself lights up: whiter and with its widest glow at the top of the first hop (12% of dot-hop), dimming as it rests. */
+@keyframes dot-glow {
+  0%, 60%, 100% { background: var(--asking); box-shadow: 0 0 3px 0 var(--glow); }
+  12% { background: color-mix(in srgb, var(--asking) 55%, #fff); box-shadow: 0 0 9px 3px var(--glow); }
+  33% { background: color-mix(in srgb, var(--asking) 75%, #fff); box-shadow: 0 0 6px 2px var(--glow); }
+}
 @keyframes tab-shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
 @keyframes pulse { 50% { opacity: .35; } }
 /* Windows' "Animation effects" off: the shapes alone tell the states apart. */
 @media (prefers-reduced-motion: reduce) {
-  .dot, .dot::before, .dot::after, .session-tab .tab-name, .session-tab::before { animation: none !important; }
+  .dot, .dot::before, .dot::after, .session-tab .tab-name { animation: none !important; }
 }
 
 /* ---------------------------------------------------------------- layout */
