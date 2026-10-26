@@ -701,7 +701,7 @@ function updateProjectIndicators(projectId) {
   const members = state.sessions.filter((x) => groupOf(x) === projectId);
   const waiting = members.filter((x) => x.attention).length;
   const working = members.some((x) => x.running && x.act.state === 'working');
-  // The dot stays while a session is working, so its spinner isn't restarted on every update.
+  // The dot stays while a session is working, so its bouncing dots aren't restarted on every update.
   const dot = name.querySelector('.dot');
   if (!working) dot?.remove();
   else if (!dot) { name.append(h('span', { class: 'dot working', title: 'A session is working' })); syncStatus(name); }
