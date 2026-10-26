@@ -137,6 +137,7 @@ host.addEventListener('message', (e) => {
     case 'git.status': onGitStatus(m); break;
     case 'panels': onPanels(m); break;
     case 'typePrompt': typePrompt(m.id, m.text); break;
+    case 'newConversations': showNewConversations(m.ids); break;
   }
 });
 
@@ -1368,6 +1369,22 @@ function showResumeDialog(s) {
     resumeBtn,
   ]);
   $('#modalHost .modal').classList.add('wide');
+}
+
+/**
+ * Sessions saved before each had a conversation of its own: the app never knew which conversation they were in, so
+ * they now start a new one. Said once, so nobody types into one expecting the conversation it had.
+ */
+function showNewConversations(ids) {
+  const names = ids.map((id) => state.byId.get(id)?.name).filter(Boolean);
+  if (!names.length) return;
+  const one = names.length === 1;
+  openModal(one ? 'A session starts a new conversation' : 'Some sessions start a new conversation', [
+    h('div', {}, `Earlier versions of Claude Terminals didn't keep track of which conversation ${one ? 'this session was' : 'these sessions were'} in, ` +
+      `so ${one ? 'it starts' : 'each starts'} a new one, and reopens that one from now on:`),
+    h('ul', { class: 'name-list' }, names.map((n) => h('li', {}, n))),
+    h('div', { class: 'dim' }, 'To go back to an earlier conversation, pick it with Resume a different conversation… in the session’s menu.'),
+  ], [h('button', { class: 'btn primary', onclick: closeModal }, 'OK')]);
 }
 
 // ------------------------------------------------------------------ Git tool window
