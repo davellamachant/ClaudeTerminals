@@ -265,7 +265,8 @@ function hideAllProjects() {
 
 /**
  * The project row: per project a checkbox (show or hide it alongside the others) and its name (show only it), with a
- * count of its sessions waiting for you and a dot while any of them is working, so a hidden project still gets noticed.
+ * count of its sessions waiting for you and a dot while any of them is asking you something or working, so a hidden
+ * project still gets noticed.
  */
 function renderProjectBar() {
   const bar = $('#projectTabs');   // the grid button sits before it in the same row and is left alone
@@ -275,8 +276,7 @@ function renderProjectBar() {
     : [];
   const tabs = groups.map((p) => {
     const members = state.sessions.filter((s) => groupOf(s) === p.id);
-    const waiting = members.filter((s) => s.attention).length;
-    const working = members.some((s) => s.running && s.act.state === 'working');
+    const waiting = members.filter(waitingForYou).length;
     const shown = !state.hiddenProjects.has(p.id);
     const what = p.unknown ? 'sessions with no project' : p.name;
     return h('div', {
@@ -296,7 +296,7 @@ function renderProjectBar() {
       title: `${shown ? 'Hide' : 'Show'} ${what} · Ctrl+click to show only this\n${members.length} session${members.length === 1 ? '' : 's'} · right-click for options`,
       onclick: (e) => (e.ctrlKey ? showOnlyProject(p.id) : toggleProject(p.id)),
     }, p.name,
-    working ? h('span', { class: 'dot working', title: 'A session is working' }) : null,
+    projectDot(members),
     waiting ? h('span', { class: 'badge', title: `${waiting} session${waiting === 1 ? '' : 's'} waiting for you` }, String(waiting)) : null));
   });
   const allShown = groups.length > 0 && groups.every((g) => !state.hiddenProjects.has(g.id));
@@ -479,7 +479,7 @@ function syncSessions(list, projects) {
 function createSession(info) {
   const s = {
     ...info, running: false, started: false, exitCode: null, title: '', git: null,
-    attention: false, act: { lastOut: 0, lastIn: 0, burstStart: 0, state: 'idle', workingSince: 0 },
+    attention: false, asking: false, act: { lastOut: 0, lastIn: 0, burstStart: 0, state: 'idle', workingSince: 0, drawnAt: 0, readAt: 0 },
     log: null, selectedCommit: null, commitInfo: null, commitDraft: '', info: null, collapsed: new Set(),
   };
 
@@ -580,6 +580,7 @@ function startSession(s) {
 function restartSession(s, { resume = false } = {}) {
   fitTerm(s);
   s.term.reset();
+  setAsking(s, false);   // the question went with the old screen (and a failed restart writes no output to clear it)
   s.startedTheme = themeName();
   request('restart', { id: s.id, cols: s.term.cols, rows: s.term.rows, theme: s.startedTheme, resume })
     .then(() => { s.running = true; s.exitCode = null; renderTileHeader(s); renderSessionTabs(); })
@@ -589,7 +590,8 @@ function restartSession(s, { resume = false } = {}) {
 function onOutput(id, data) {
   const s = state.byId.get(id);
   if (!s) return;
-  s.term.write(data);
+  // xterm draws written output later, in chunks; the screen is only read for "asking" once this output is on it.
+  s.term.write(data, () => { s.act.drawnAt = performance.now(); });
   noteActivity(s);
 }
 
@@ -599,6 +601,7 @@ function onExited(id, code) {
   s.running = false;
   s.exitCode = code;
   s.act.state = 'idle';
+  s.asking = false;
   const what = code == null ? 'Process stopped' : `Process exited with code ${code}`;   // null: stopped from the menu
   s.term.write(`\r\n\x1b[90m[${what} — press Enter to restart]\x1b[0m\r\n`);
   renderTileHeader(s);
@@ -616,10 +619,13 @@ function noteActivity(s) {
     if (now - a.burstStart > 1200) {
       a.state = 'working';
       a.workingSince = a.burstStart;
-      // Working again means it's no longer waiting for you, e.g. another session handed it a task. "Waiting" takes
-      // priority in statusClass, so without this the dot stayed yellow until the session was opened.
+      // Working again means it's no longer waiting for you, e.g. another session handed it a task or you answered its
+      // question. "Waiting" takes priority in statusClass, so without this the dot stayed yellow until the session was
+      // opened.
+      const asked = s.asking;
+      s.asking = false;
       if (s.attention) setAttention(s, false);
-      else renderTileState(s);
+      else { renderTileState(s); if (asked) renderDocTabs(); }
     }
   }
   a.lastOut = now;
@@ -634,6 +640,12 @@ setInterval(() => {
       if (now - a.workingSince > 4000 && state.expandedId !== s.id) setAttention(s, true);
       else renderTileState(s);
     }
+    // Once the screen has settled after new output has been drawn (mid-redraw it can be half drawn), see whether Claude
+    // is asking. Only Claude: a shell or a dev server can print text that looks like its menus.
+    if (s.running && a.drawnAt !== a.readAt && now - a.drawnAt > 250 && /^claude(\.exe)?(\s|$)/i.test(s.command.trim())) {
+      a.readAt = a.drawnAt;
+      setAsking(s, isAsking(s.term));
+    }
   }
 }, 500);
 
@@ -644,15 +656,44 @@ function setAttention(s, on) {
   renderDocTabs();
 }
 
+function setAsking(s, on) {
+  if (s.asking === on) return;
+  s.asking = on;
+  renderTileState(s);
+  renderDocTabs();
+}
+
+// Claude asks by putting a menu where its prompt box was: a permission prompt, a question (AskUserQuestion), a plan to
+// approve, the folder trust check. Each has a picked numbered choice ("> 1. Yes") or an "Esc to cancel" hint. While the
+// prompt box (a rule with "> " under it) is there, it wants a prompt instead, so text like that in the conversation
+// above doesn't count.
+function isAsking(term) {
+  const b = term.buffer.active;
+  let choice = false, prev = '';
+  for (let y = b.baseY; y < b.baseY + term.rows; y++) {
+    const line = b.getLine(y)?.translateToString(true) ?? '';
+    if (/^\s*─{8,}/.test(prev) && /^[>!❯](\s|$)/.test(line)) return false;
+    if (/^\s*[>❯›] ?\d+\. |\bEsc to cancel\b/.test(line)) choice = true;
+    prev = line;
+  }
+  return choice;
+}
+
+/** Whether a session counts in the "waiting for you" badges: done while you were away, or asking you something. */
+function waitingForYou(s) {
+  return s.attention || s.asking;
+}
+
 function statusClass(s) {
   if (!s.running) return 'exited';
+  if (s.asking) return 'asking';
   if (s.attention) return 'attention';
   if (s.act.state === 'working') return 'working';
   return 'running';
 }
 
 function statusText(s) {
-  return { exited: 'Not running', attention: 'Waiting for you', working: 'Working…', running: 'Idle' }[statusClass(s)];
+  return { exited: 'Not running', asking: 'Needs your answer', attention: 'Waiting for you', working: 'Working…', running: 'Idle' }[statusClass(s)];
 }
 
 /** The dot's state, the one before it and when it began, which its animations go by (see syncStatus). */
@@ -667,22 +708,28 @@ function statusDot(s) {
   return h('span', { class: 'dot ' + d.cls, 'data-from': d.from, 'data-since': d.since });
 }
 
-// Dots and tab names are rebuilt often (a tile header on every title change) and a rebuilt one's animation started
-// over, which made it flicker. Endless animations run on the page's clock instead, so every dot of a state moves in
-// step and a rebuilt one carries on; one-offs (the settle when a session is done) run from when the state began, so
-// they play once.
+// Dots and tabs are rebuilt often (a tile header on every title change) and a rebuilt one's animation started over,
+// which made it flicker. Endless animations run on the page's clock instead, so every dot of a state moves in step and
+// a rebuilt one carries on; one-offs (the settle when a session is done) run from when the state began, so they play
+// once.
 function syncStatus(root) {
-  for (const el of root.querySelectorAll('.dot, .tab-name')) {
+  const animated = '.dot, .tab-name';
+  for (const el of [...(root.matches(animated) ? [root] : []), ...root.querySelectorAll(animated)]) {
     const since = Number(el.dataset.since) || 0;
-    for (const a of el.getAnimations({ subtree: true })) a.startTime = a.effect.getTiming().iterations === Infinity ? 0 : since;
+    for (const a of el.getAnimations({ subtree: true })) {
+      if (a.effect.target !== el) continue;   // an element inside it goes by its own
+      a.startTime = a.effect.getTiming().iterations === Infinity ? 0 : since;
+    }
   }
 }
 
 function renderTileState(s) {
   s.tile.classList.toggle('attention', s.attention);
   const d = dotState(s);
+  s.tile.classList.toggle('asking', d.cls === 'asking');
   const tab = $(`.session-tab[data-id="${s.id}"]`);
   tab?.classList.toggle('working', d.cls === 'working');   // its name shimmers
+  tab?.classList.toggle('asking', d.cls === 'asking');     // its name stands out
   for (const dot of [s.header.querySelector('.dot'), tab?.querySelector('.dot')]) {
     if (!dot) continue;
     dot.className = 'dot ' + d.cls;
@@ -695,17 +742,23 @@ function renderTileState(s) {
   updateProjectIndicators(groupOf(s));
 }
 
-/** Refreshes one project tab's working dot and waiting badge in place (rebuilding the bar would drop keyboard focus). */
+/** A project tab's dot: hopping while one of its sessions asks you something, else spinning while one works. */
+function projectDot(members) {
+  if (members.some((x) => x.running && x.asking)) return h('span', { class: 'dot asking', title: 'A session needs your answer' });
+  if (members.some((x) => x.running && x.act.state === 'working')) return h('span', { class: 'dot working', title: 'A session is working' });
+  return null;
+}
+
+/** Refreshes one project tab's dot and waiting badge in place (rebuilding the bar would drop keyboard focus). */
 function updateProjectIndicators(projectId) {
   const name = document.querySelector(`.project-tab[data-id="${projectId}"] .project-name`);
   if (!name) return;
   const members = state.sessions.filter((x) => groupOf(x) === projectId);
-  const waiting = members.filter((x) => x.attention).length;
-  const working = members.some((x) => x.running && x.act.state === 'working');
-  // The dot stays while a session is working, so its bouncing dots aren't restarted on every update.
-  const dot = name.querySelector('.dot');
-  if (!working) dot?.remove();
-  else if (!dot) { name.append(h('span', { class: 'dot working', title: 'A session is working' })); syncStatus(name); }
+  const waiting = members.filter(waitingForYou).length;
+  // A dot in the same state stays, so its animation isn't restarted on every update.
+  const dot = name.querySelector('.dot'), want = projectDot(members);
+  if (!want) dot?.remove();
+  else if (dot?.className !== want.className) { dot?.remove(); name.append(want); syncStatus(name); }
   name.querySelector('.badge')?.remove();
   if (waiting) name.append(h('span', { class: 'badge', title: `${waiting} session${waiting === 1 ? '' : 's'} waiting for you` }, String(waiting)));
 }
@@ -746,7 +799,7 @@ function renderSessionTabs() {
   // start, so the tabs themselves carry no project tag.
   const shown = visibleSessions();
   const tabs = shown.map((s, i) => h('div', {
-    class: 'session-tab' + (state.expandedId === s.id ? ' active' : '') + (statusClass(s) === 'working' ? ' working' : ''),
+    class: 'session-tab' + (state.expandedId === s.id ? ' active' : '') + (['working', 'asking'].includes(statusClass(s)) ? ' ' + statusClass(s) : ''),
     'data-id': s.id,
     title: `${s.directory}\n${statusText(s)}\nClick again to go back to all sessions · middle-click to close`,
     onclick: (e) => {
@@ -3200,7 +3253,7 @@ function cycleDoc(delta) {
 
 function renderDocTabs() {
   const ex = state.byId.get(state.expandedId);
-  const waiting = visibleSessions().filter((s) => s.attention).length;   // hidden projects show theirs on the project tabs
+  const waiting = visibleSessions().filter(waitingForYou).length;   // hidden projects show theirs on the project tabs
   const termTab = h('div', {
     class: 'doc-tab terminal' + (docs.active === 'terminal' ? ' active' : ''),
     title: 'Terminals (Shift+Esc from a diff, Ctrl+PgUp/PgDn to switch tabs)',
