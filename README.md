@@ -86,7 +86,7 @@ Plain `Esc` always goes to the terminal, because Claude Code uses it to interrup
 
 **Status dots:** each state has its own shape and motion as well as its colour.
 - **Working:** three small blue dots bounce in turn, and the session's name on its tab shimmers.
-- **Waiting for you:** an orange dot in a ring that beats and sends out a ping every couple of seconds; it means the session finished working while you weren't watching (or rang the bell).
+- **Waiting for you:** an orange dot that beats every couple of seconds, glowing brightly with each beat; it means the session finished working while you weren't watching (or rang the bell).
 - **Idle:** a green dot with a slowly breathing glow. When a session finishes working while you watch it, the dot pops in with one ring.
 - **Not running:** a hollow grey ring that stays still.
 
