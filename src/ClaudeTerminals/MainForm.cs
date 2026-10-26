@@ -592,6 +592,11 @@ internal sealed class MainForm : Form
                     var (command, conversation) = TerminalSession.TakeConversation(c.GetString()!.Trim());
                     s.Info.Command = command;
                     if (conversation != null) s.Info.Conversation = conversation;
+                    // A command that is now a plain claude (e.g. --continue taken out) gets a conversation of its own
+                    // right away, rather than a new one at every start until the next time the app starts: the one it's
+                    // in if it's running, otherwise a new one.
+                    CatchUpConversation(s);
+                    if (TerminalSession.NeedsOwnConversation(s.Info)) s.Info.Conversation = Guid.NewGuid().ToString();
                 }
                 // The conversation to reopen: one picked from the saved ones, or "new" for a fresh one.
                 if (OptStr(msg, "conversation") is { } pick && TerminalSession.CanTrackConversation(s.Info.Command))
