@@ -165,4 +165,27 @@ public sealed class SessionP2Tests : IDisposable
         Assert.Equal("the latest prompt", c.LastPrompt);
         Assert.Equal("the first prompt", c.FirstPrompt);
     }
+
+    // ---- a session's own conversation, for its tooltips
+
+    [Fact]
+    public void A_sessions_conversation_is_found_by_its_id_with_when_it_started()
+    {
+        var id = Guid.NewGuid().ToString();
+        var dir = Path.Combine(config, "projects", "C--work-x");
+        Directory.CreateDirectory(dir);
+        object[] lines =
+        [
+            new { type = "user", sessionId = id, cwd = @"C:\work\x", timestamp = "2026-10-22T08:30:12.345Z", message = new { role = "user", content = "the first prompt" } },
+            new { type = "ai-title", aiTitle = "Fix the login page" },
+        ];
+        File.WriteAllLines(Path.Combine(dir, $"{id}.jsonl"), lines.Select(l => JsonSerializer.Serialize(l)));
+
+        var c = ConversationIndex.Find(id, @"C:\work\x");
+
+        Assert.NotNull(c);
+        Assert.Equal("Fix the login page", c.Title);
+        Assert.Equal(new DateTime(2026, 10, 22, 8, 30, 12, 345, DateTimeKind.Utc), c.Started);
+        Assert.Null(ConversationIndex.Find(Guid.NewGuid().ToString(), @"C:\work\x"));   // nothing saved in it yet
+    }
 }

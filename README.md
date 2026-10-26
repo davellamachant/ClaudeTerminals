@@ -97,13 +97,15 @@ With Windows' animation effects turned off the dots stay still, and their shapes
 **Each session has its own conversation:** a new session's command is just `claude` (plus any options you add), and the app gives it a conversation id of its own.
 - **Starting:** it starts Claude with `--session-id <id>` until there's something saved, then with `--resume <id>`. Restarting the app or the session always reopens that conversation, even with several sessions in the same folder.
 - **Following Claude:** when you `/clear` or `/resume` inside Claude, the app follows it to the new conversation once Claude has saved it.
-- **Where to see it:** Edit session shows the id.
+- **Where to see it:** hover the session's tab or the name on its tile for the conversation's title, when it started and when it was last used (or that it's a new one, with nothing in it yet). Edit session shows the id.
 - **Existing sessions:** a session made with `claude --continue` (the previous default) starts on the folder's latest conversation once, then keeps that one. A plain `claude` session saved before 1.1.0 never told the app which conversation it was in, so it gets a new one of its own, and the app says once which sessions those are; *Resume a different conversation…* takes one back to an earlier conversation.
 - **Commands that choose for themselves:** commands with their own `--resume`, `--session-id` or `--fork-session` are left alone.
 
 **Resuming:** the picker reads Claude Code's saved conversations from `~/.claude/projects`. Picking one (in New session, or *Resume a different conversation…*) makes it the session's conversation; *New conversation* gives the session a fresh one. Close the conversation in any other terminal first. Conversations updated in the last few minutes are tagged *active now* as a reminder.
 
-**Closing the app** stops the sessions but loses nothing: Claude keeps every conversation, and the sessions start again with the app. The closing prompt says which pick up where they left off (those that continue or resume) and which start a new conversation.
+**Closing the app** stops the sessions but loses nothing: Claude keeps every conversation, and the sessions come back with the app. The closing prompt says which pick up where they left off (those that continue or resume) and which start a new conversation.
+
+**Starting when opened:** when the app starts, a Claude session it brings back waits until you first open it (its tile says *Starts when you open it*; pressing Enter in it works too). Claude's start-up context, such as hooks, the date and Git status, is then fresh when you use the session, and one you don't open runs nothing. New sessions, and sessions running any other command (a dev server, say), start straight away.
 
 Sessions are saved in `%APPDATA%\ClaudeTerminals\sessions.json`. Set `CLAUDE_TERMINALS_DATA` to use a different folder (separate profiles, testing). Only one copy runs per profile; launching again brings the existing window forward.
 

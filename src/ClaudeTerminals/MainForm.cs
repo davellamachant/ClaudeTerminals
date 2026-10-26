@@ -335,8 +335,9 @@ internal sealed class MainForm : Form
     }
 
     /// <summary>
-    /// Closing only stops the sessions: Claude keeps every conversation and the sessions start again with the app, so say
-    /// that (and which of them carry on their conversation) rather than that they'll be "terminated".
+    /// Closing only stops the sessions: Claude keeps every conversation and the sessions come back with the app (a Claude
+    /// session starts when it's first opened), so say that (and which of them carry on their conversation) rather than
+    /// that they'll be "terminated".
     /// </summary>
     internal static string CloseMessage(IReadOnlyCollection<TerminalSession> running)
     {
@@ -347,12 +348,12 @@ internal sealed class MainForm : Form
         var restart = (carryOn, fresh) switch
         {
             (_, 0) => n == 1
-                ? "It starts again the next time you open Claude Terminals and picks up where it left off."
-                : "They start again the next time you open Claude Terminals and pick up where they left off.",
+                ? "It comes back the next time you open Claude Terminals and picks up where it left off."
+                : "They come back the next time you open Claude Terminals and pick up where they left off.",
             (0, _) => n == 1
-                ? "It starts again the next time you open Claude Terminals, with a new conversation (the current one can be reopened with \"Resume a different conversation…\")."
-                : "They start again the next time you open Claude Terminals, with new conversations (the current ones can be reopened with \"Resume a different conversation…\").",
-            _ => $"They start again the next time you open Claude Terminals: {carryOn} pick{(carryOn == 1 ? "s" : "")} up where {(carryOn == 1 ? "it" : "they")} left off, " +
+                ? "It comes back the next time you open Claude Terminals, with a new conversation (the current one can be reopened with \"Resume a different conversation…\")."
+                : "They come back the next time you open Claude Terminals, with new conversations (the current ones can be reopened with \"Resume a different conversation…\").",
+            _ => $"They come back the next time you open Claude Terminals: {carryOn} pick{(carryOn == 1 ? "s" : "")} up where {(carryOn == 1 ? "it" : "they")} left off, " +
                  $"{fresh} start{(fresh == 1 ? "s" : "")} a new conversation (the current one can be reopened with \"Resume a different conversation…\").",
         };
         return $"{sessionsAre} running. Closing stops {(n == 1 ? "it" : "them")}, but nothing is lost: Claude keeps every conversation.\n\n" +
@@ -751,6 +752,14 @@ internal sealed class MainForm : Form
                 var dir = OptStr(msg, "directory");
                 return await Task.Run(() => ConversationIndex.List(dir, string.IsNullOrWhiteSpace(dir) ? 300 : 100));
             }
+            case "conversationInfo":
+            {
+                // The session's own conversation for its tooltips, running or not: saved is false until Claude has saved it.
+                var s = Get(msg);
+                if (s.Info.Conversation is not { } id) return null;
+                var c = await Task.Run(() => ConversationIndex.Find(id, s.Info.Directory));
+                return new { id, saved = c != null, title = c?.Title, started = c?.Started, modified = c?.Modified };
+            }
             case "openUrl":
             {
                 if (Uri.TryCreate(Str(msg, "uri"), UriKind.Absolute, out var u) && (u.Scheme == Uri.UriSchemeHttp || u.Scheme == Uri.UriSchemeHttps))
@@ -910,8 +919,13 @@ internal sealed class MainForm : Form
         // with its own options the app doesn't look after).
         foreach (var s in sessions.Values) CatchUpConversation(s);
         var map = new Dictionary<string, string>();
-        foreach (var s in sessions.Values.Where(s => s.IsRunning))
-            if (ConversationReader.ResumableConversation(s.ProcessIds()) is { } live) map[s.Id] = live;
+        foreach (var s in sessions.Values)
+        {
+            if (s.IsRunning && ConversationReader.ResumableConversation(s.ProcessIds()) is { } live) map[s.Id] = live;
+            // A Claude session starts when it's first opened, so one not opened since the last update still has that
+            // update's note to use: it's passed on rather than lost.
+            else if (!s.IsRunning && s.ResumeOnce != null) map[s.Id] = s.ResumeOnce;
+        }
         try { File.WriteAllText(ResumeFile, JsonSerializer.Serialize(map)); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* sessions start fresh instead */ }
     }
