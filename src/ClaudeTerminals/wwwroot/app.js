@@ -137,6 +137,7 @@ host.addEventListener('message', (e) => {
     case 'git.status': onGitStatus(m); break;
     case 'panels': onPanels(m); break;
     case 'typePrompt': typePrompt(m.id, m.text); break;
+    case 'newConversations': showNewConversations(m.ids); break;
   }
 });
 
@@ -264,7 +265,8 @@ function hideAllProjects() {
 
 /**
  * The project row: per project a checkbox (show or hide it alongside the others) and its name (show only it), with a
- * count of its sessions waiting for you and a dot while any of them is working, so a hidden project still gets noticed.
+ * count of its sessions waiting for you and a dot while any of them is asking you something or working, so a hidden
+ * project still gets noticed.
  */
 function renderProjectBar() {
   const bar = $('#projectTabs');   // the grid button sits before it in the same row and is left alone
@@ -274,8 +276,7 @@ function renderProjectBar() {
     : [];
   const tabs = groups.map((p) => {
     const members = state.sessions.filter((s) => groupOf(s) === p.id);
-    const waiting = members.filter((s) => s.attention).length;
-    const working = members.some((s) => s.running && s.act.state === 'working');
+    const waiting = members.filter(waitingForYou).length;
     const shown = !state.hiddenProjects.has(p.id);
     const what = p.unknown ? 'sessions with no project' : p.name;
     return h('div', {
@@ -295,7 +296,7 @@ function renderProjectBar() {
       title: `${shown ? 'Hide' : 'Show'} ${what} · Ctrl+click to show only this\n${members.length} session${members.length === 1 ? '' : 's'} · right-click for options`,
       onclick: (e) => (e.ctrlKey ? showOnlyProject(p.id) : toggleProject(p.id)),
     }, p.name,
-    working ? h('span', { class: 'dot working', title: 'A session is working' }) : null,
+    projectDot(members),
     waiting ? h('span', { class: 'badge', title: `${waiting} session${waiting === 1 ? '' : 's'} waiting for you` }, String(waiting)) : null));
   });
   const allShown = groups.length > 0 && groups.every((g) => !state.hiddenProjects.has(g.id));
@@ -308,6 +309,7 @@ function renderProjectBar() {
     h('button', { class: 'tb-btn text project-add', title: 'New project', onclick: showNewProjectDialog }, iconEl('plus'),
       state.projects.length ? 'Project' : 'New project (group sessions)'),
   );
+  syncStatus(bar);
 }
 
 function projectMenu(p, x, y) {
@@ -483,7 +485,7 @@ function syncSessions(list, projects) {
 function createSession(info) {
   const s = {
     ...info, running: false, started: false, exitCode: null, title: '', git: null,
-    attention: false, act: { lastOut: 0, lastIn: 0, burstStart: 0, state: 'idle', workingSince: 0 },
+    attention: false, asking: false, act: { lastOut: 0, lastIn: 0, burstStart: 0, state: 'idle', workingSince: 0, drawnAt: 0, readAt: 0 },
     log: null, selectedCommit: null, commitInfo: null, commitDraft: '', info: null, collapsed: new Set(),
   };
 
@@ -590,6 +592,7 @@ function restartSession(s, { resume = false } = {}) {
   s.startsOnOpen = false;
   fitTerm(s);
   s.term.reset();
+  setAsking(s, false);   // the question went with the old screen (and a failed restart writes no output to clear it)
   s.startedTheme = themeName();
   request('restart', { id: s.id, cols: s.term.cols, rows: s.term.rows, theme: s.startedTheme, resume })
     .then(() => { s.running = true; s.exitCode = null; renderTileHeader(s); renderSessionTabs(); })
@@ -599,7 +602,8 @@ function restartSession(s, { resume = false } = {}) {
 function onOutput(id, data) {
   const s = state.byId.get(id);
   if (!s) return;
-  s.term.write(data);
+  // xterm draws written output later, in chunks; the screen is only read for "asking" once this output is on it.
+  s.term.write(data, () => { s.act.drawnAt = performance.now(); });
   noteActivity(s);
 }
 
@@ -609,6 +613,7 @@ function onExited(id, code) {
   s.running = false;
   s.exitCode = code;
   s.act.state = 'idle';
+  s.asking = false;
   const what = code == null ? 'Process stopped' : `Process exited with code ${code}`;   // null: stopped from the menu
   s.term.write(`\r\n\x1b[90m[${what} — press Enter to restart]\x1b[0m\r\n`);
   renderTileHeader(s);
@@ -626,10 +631,13 @@ function noteActivity(s) {
     if (now - a.burstStart > 1200) {
       a.state = 'working';
       a.workingSince = a.burstStart;
-      // Working again means it's no longer waiting for you, e.g. another session handed it a task. "Waiting" takes
-      // priority in statusClass, so without this the dot stayed yellow until the session was opened.
+      // Working again means it's no longer waiting for you, e.g. another session handed it a task or you answered its
+      // question. "Waiting" takes priority in statusClass, so without this the dot stayed yellow until the session was
+      // opened.
+      const asked = s.asking;
+      s.asking = false;
       if (s.attention) setAttention(s, false);
-      else renderTileState(s);
+      else { renderTileState(s); if (asked) renderDocTabs(); }
     }
   }
   a.lastOut = now;
@@ -644,6 +652,12 @@ setInterval(() => {
       if (now - a.workingSince > 4000 && state.expandedId !== s.id) setAttention(s, true);
       else renderTileState(s);
     }
+    // Once the screen has settled after new output has been drawn (mid-redraw it can be half drawn), see whether Claude
+    // is asking. Only Claude: a shell or a dev server can print text that looks like its menus.
+    if (s.running && a.drawnAt !== a.readAt && now - a.drawnAt > 250 && /^claude(\.exe)?(\s|$)/i.test(s.command.trim())) {
+      a.readAt = a.drawnAt;
+      setAsking(s, isAsking(s.term));
+    }
   }
 }, 500);
 
@@ -654,8 +668,37 @@ function setAttention(s, on) {
   renderDocTabs();
 }
 
+function setAsking(s, on) {
+  if (s.asking === on) return;
+  s.asking = on;
+  renderTileState(s);
+  renderDocTabs();
+}
+
+// Claude asks by putting a menu where its prompt box was: a permission prompt, a question (AskUserQuestion), a plan to
+// approve, the folder trust check. Each has a picked numbered choice ("> 1. Yes") or an "Esc to cancel" hint. While the
+// prompt box (a rule with "> " under it) is there, it wants a prompt instead, so text like that in the conversation
+// above doesn't count.
+function isAsking(term) {
+  const b = term.buffer.active;
+  let choice = false, prev = '';
+  for (let y = b.baseY; y < b.baseY + term.rows; y++) {
+    const line = b.getLine(y)?.translateToString(true) ?? '';
+    if (/^\s*─{8,}/.test(prev) && /^[>!❯](\s|$)/.test(line)) return false;
+    if (/^\s*[>❯›] ?\d+\. |\bEsc to cancel\b/.test(line)) choice = true;
+    prev = line;
+  }
+  return choice;
+}
+
+/** Whether a session counts in the "waiting for you" badges: done while you were away, or asking you something. */
+function waitingForYou(s) {
+  return s.attention || s.asking;
+}
+
 function statusClass(s) {
   if (!s.running) return 'exited';
+  if (s.asking) return 'asking';
   if (s.attention) return 'attention';
   if (s.act.state === 'working') return 'working';
   return 'running';
@@ -663,28 +706,73 @@ function statusClass(s) {
 
 function statusText(s) {
   if (s.startsOnOpen) return 'Starts when you open it';
-  return { exited: 'Not running', attention: 'Waiting for you', working: 'Working…', running: 'Idle' }[statusClass(s)];
+  return { exited: 'Not running', asking: 'Needs your answer', attention: 'Waiting for you', working: 'Working…', running: 'Idle' }[statusClass(s)];
+}
+
+/** The dot's state, the one before it and when it began, which its animations go by (see syncStatus). */
+function dotState(s) {
+  const cls = statusClass(s);
+  if (s.dotState?.cls !== cls) s.dotState = { cls, from: s.dotState?.cls ?? '', since: document.timeline.currentTime };
+  return s.dotState;
+}
+
+function statusDot(s) {
+  const d = dotState(s);
+  return h('span', { class: 'dot ' + d.cls, 'data-from': d.from, 'data-since': d.since });
+}
+
+// Dots and tabs are rebuilt often (a tile header on every title change) and a rebuilt one's animation started over,
+// which made it flicker. Endless animations run on the page's clock instead, so every dot of a state moves in step and
+// a rebuilt one carries on; one-offs (the settle when a session is done) run from when the state began, so they play
+// once.
+function syncStatus(root) {
+  const animated = '.dot, .tab-name';
+  for (const el of [...(root.matches(animated) ? [root] : []), ...root.querySelectorAll(animated)]) {
+    const since = Number(el.dataset.since) || 0;
+    for (const a of el.getAnimations({ subtree: true })) {
+      if (a.effect.target !== el) continue;   // an element inside it goes by its own
+      a.startTime = a.effect.getTiming().iterations === Infinity ? 0 : since;
+    }
+  }
 }
 
 function renderTileState(s) {
   s.tile.classList.toggle('attention', s.attention);
-  const dot = s.header.querySelector('.dot');
-  if (dot) { dot.className = 'dot ' + statusClass(s); dot.title = statusText(s); }
-  const tab = $(`.session-tab[data-id="${s.id}"] .dot`);
-  if (tab) { tab.className = 'dot ' + statusClass(s); tab.title = statusText(s); }
+  const d = dotState(s);
+  s.tile.classList.toggle('asking', d.cls === 'asking');
+  const tab = $(`.session-tab[data-id="${s.id}"]`);
+  tab?.classList.toggle('working', d.cls === 'working');   // its name shimmers
+  tab?.classList.toggle('asking', d.cls === 'asking');     // its name stands out
+  for (const dot of [s.header.querySelector('.dot'), tab?.querySelector('.dot')]) {
+    if (!dot) continue;
+    dot.className = 'dot ' + d.cls;
+    dot.dataset.from = d.from;
+    dot.dataset.since = d.since;
+    dot.title = statusText(s);
+  }
+  syncStatus(s.header);
+  if (tab) syncStatus(tab);
   updateProjectIndicators(groupOf(s));
 }
 
-/** Refreshes one project tab's working dot and waiting badge in place (rebuilding the bar would drop keyboard focus). */
+/** A project tab's dot: hopping while one of its sessions asks you something, else spinning while one works. */
+function projectDot(members) {
+  if (members.some((x) => x.running && x.asking)) return h('span', { class: 'dot asking', title: 'A session needs your answer' });
+  if (members.some((x) => x.running && x.act.state === 'working')) return h('span', { class: 'dot working', title: 'A session is working' });
+  return null;
+}
+
+/** Refreshes one project tab's dot and waiting badge in place (rebuilding the bar would drop keyboard focus). */
 function updateProjectIndicators(projectId) {
   const name = document.querySelector(`.project-tab[data-id="${projectId}"] .project-name`);
   if (!name) return;
   const members = state.sessions.filter((x) => groupOf(x) === projectId);
-  const waiting = members.filter((x) => x.attention).length;
-  const working = members.some((x) => x.running && x.act.state === 'working');
-  name.querySelector('.dot')?.remove();
+  const waiting = members.filter(waitingForYou).length;
+  // A dot in the same state stays, so its animation isn't restarted on every update.
+  const dot = name.querySelector('.dot'), want = projectDot(members);
+  if (!want) dot?.remove();
+  else if (dot?.className !== want.className) { dot?.remove(); name.append(want); syncStatus(name); }
   name.querySelector('.badge')?.remove();
-  if (working) name.append(h('span', { class: 'dot working', title: 'A session is working' }));
   if (waiting) name.append(h('span', { class: 'badge', title: `${waiting} session${waiting === 1 ? '' : 's'} waiting for you` }, String(waiting)));
 }
 
@@ -751,7 +839,7 @@ function renderSessionTabs() {
   // start, so the tabs themselves carry no project tag.
   const shown = visibleSessions();
   const tabs = shown.map((s, i) => h('div', {
-    class: 'session-tab' + (state.expandedId === s.id ? ' active' : ''),
+    class: 'session-tab' + (state.expandedId === s.id ? ' active' : '') + (['working', 'asking'].includes(statusClass(s)) ? ' ' + statusClass(s) : ''),
     'data-id': s.id,
     title: sessionTabTitle(s),
     onmouseenter: () => loadConversationInfo(s),
@@ -766,20 +854,30 @@ function renderSessionTabs() {
     onauxclick: (e) => { if (e.button === 1) confirmRemove(s); },
     oncontextmenu: (e) => { e.preventDefault(); sessionMenu(s, e.clientX, e.clientY); },
   }, h('button', { class: 'tab-label' },
-    h('span', { class: 'dot ' + statusClass(s) }), s.name, i < 9 ? h('span', { class: 'key' }, `Ctrl+${i + 1}`) : null),
+    statusDot(s), h('span', { class: 'tab-name' }, s.name), i < 9 ? h('span', { class: 'key' }, `Ctrl+${i + 1}`) : null),
   // Closing a session tab removes the session, after the same confirmation as "Remove session…".
   h('button', { class: 'icon-btn small tab-close', title: 'Close session…', onclick: () => confirmRemove(s) }, iconEl('close'))));
+  // A + at the end of each project's group (or of the row without projects): another session like one of that group's.
+  const plus = (sessions, where) => {
+    const like = sessions.find((s) => s.id === state.currentId) || sessions[0];
+    return h('button', {
+      class: 'icon-btn small session-add', 'aria-label': `New session ${where}`,
+      title: `New session ${where}: in the same folder as ${like.name}${like.git?.isRepo ? ", in a new worktree" : ""}, or in a different folder`,
+      onclick: (e) => quickAddMenu(like, e.currentTarget),
+    }, iconEl('plus'));
+  };
   if (!state.projects.length) {
-    host.replaceChildren(...tabs);   // nothing to group by
+    fill(host, ...tabs, shown.length ? plus(shown, 'like these') : null);   // nothing to group by
   } else {
     const groups = [];
     shown.forEach((s, i) => {
       const id = groupOf(s);
       if (!groups.length || groups[groups.length - 1].id !== id) {
         const p = projectOf(s);
-        groups.push({ id, name: p ? p.name : UNKNOWN_NAME, color: p ? projectColor(p) : null, tabs: [] });
+        groups.push({ id, name: p ? p.name : UNKNOWN_NAME, color: p ? projectColor(p) : null, tabs: [], sessions: [] });
       }
       groups[groups.length - 1].tabs.push(tabs[i]);
+      groups[groups.length - 1].sessions.push(s);
     });
     host.replaceChildren(...groups.map((g) => h('div', {
       class: 'session-group' + (g.color ? '' : ' unknown'),
@@ -790,8 +888,10 @@ function renderSessionTabs() {
       title: g.color ? `${g.name}: show only this project` : `${UNKNOWN_NAME}: sessions with no project. Click to show only these`,
       onclick: () => showOnlyProject(g.id),
     }, g.name),
-    g.tabs)));
+    g.tabs,
+    plus(g.sessions, g.color ? `in ${g.name}` : 'with no project'))));
   }
+  syncStatus(host);
   $('#btnGrid').classList.toggle('active', !state.expandedId);
   revealActive(host, '.session-tab.active');   // e.g. after Ctrl+N opens a tab scrolled out of view
   renderDocTabs();
@@ -979,6 +1079,7 @@ function terminalKey(s, e) {
 }
 
 document.addEventListener('keydown', (e) => {
+  if (menuKey(e)) { e.preventDefault(); e.stopPropagation(); return; }
   if (handleShortcut(e)) { e.preventDefault(); e.stopPropagation(); return; }
   if (e.key === 'Escape' && !e.shiftKey) {
     if (closeMenu()) return;
@@ -1008,7 +1109,10 @@ function showMenu(x, y, items) {
   // Items: '-' for a separator, { header } for a section title, or { label, action } with optional kbd, danger, and
   // checked (ticked when true). If any item can be ticked, all get the tick column so their labels line up.
   const ticks = items.some((it) => it && it.checked !== undefined);
-  const menu = h('div', { class: 'menu', onmousedown: (e) => e.preventDefault() }, items.filter(Boolean).map((it) => it === '-'
+  const menu = h('div', {
+    class: 'menu', onmousedown: (e) => e.preventDefault(),
+    onmousemove: (e) => e.currentTarget.querySelector('.menu-item.active')?.classList.remove('active'),   // the pointer takes over
+  }, items.filter(Boolean).map((it) => it === '-'
     ? h('div', { class: 'menu-sep' })
     : it.header
       ? h('div', { class: 'menu-header' }, it.header)
@@ -1019,10 +1123,32 @@ function showMenu(x, y, items) {
   const r = menu.getBoundingClientRect();
   menu.style.left = Math.min(x, innerWidth - r.width - 4) + 'px';
   menu.style.top = Math.min(y, innerHeight - r.height - 4) + 'px';
+  // Opened from the keyboard (a focused button's Enter or Space reports no click count): start on the first item.
+  if (window.event?.type === 'click' && window.event.detail === 0) menu.querySelector('.menu-item')?.classList.add('active');
   openMenuEl = menu;
 }
 
 document.addEventListener('mousedown', (e) => { if (openMenuEl && !openMenuEl.contains(e.target)) closeMenu(); }, true);
+
+/**
+ * The keyboard for an open menu: the arrow keys (and Home/End) move a highlight, Enter or Space picks the highlighted
+ * item, Escape closes it. Focus stays where it was (see showMenu), so these keys are taken here before the terminal or
+ * a field gets them. True if the key was the menu's.
+ */
+function menuKey(e) {
+  if (!openMenuEl || e.ctrlKey || e.altKey || e.metaKey) return false;
+  const items = [...openMenuEl.querySelectorAll('.menu-item')];
+  const at = items.findIndex((i) => i.classList.contains('active'));
+  const move = { ArrowDown: at + 1, ArrowUp: (at < 0 ? items.length : at) - 1, Home: 0, End: items.length - 1 }[e.key];
+  if (move !== undefined) {
+    items[at]?.classList.remove('active');
+    items[(move + items.length) % items.length]?.classList.add('active');
+    return true;
+  }
+  if ((e.key === 'Enter' || e.key === ' ') && at >= 0) { items[at].click(); return true; }
+  if (e.key === 'Escape' && !e.shiftKey) { closeMenu(); return true; }
+  return false;
+}
 
 function sessionMenu(s, x, y) {
   showMenu(x, y, [
@@ -1243,7 +1369,7 @@ function showAddDialog(mode = 'new', from = null) {
   const remembered = store.get('lastCommand', null);
   const lastCommand = !remembered || remembered === 'claude --continue' ? DEFAULT_COMMAND : remembered;
   const dir = h('input', { value: from?.directory ?? '', placeholder: 'D:\\Source\\MyRepo', spellcheck: 'false' });
-  const name = h('input', { value: from?.name ?? '', placeholder: '(folder name)', spellcheck: 'false' });
+  const name = h('input', { value: from?.name ?? '', placeholder: '(Session Name)', spellcheck: 'false' });
   const command = h('input', { value: lastCommand, spellcheck: 'false' });
   const wtHost = h('div', { class: 'field', hidden: true });
   const error = h('div', { class: 'form-error', hidden: true });
@@ -1374,7 +1500,7 @@ function showAddDialog(mode = 'new', from = null) {
     !firstPrompt && h('div', { class: 'seg' }, segNew, segResume),
     pickerHost,
     field('Folder (repository or worktree)', h('div', { class: 'inline' }, dir, browse)),
-    field('Name', name),
+    field('Name', name, 'Leave it empty to use the folder\'s name.'),
     firstPrompt && field('First prompt', firstPrompt, 'From the panel. Starts a new conversation in this session; edit it first if you like.'),
     field('Command', command, commandNote),
     project.el,
@@ -1383,6 +1509,105 @@ function showAddDialog(mode = 'new', from = null) {
   ], [h('button', { class: 'btn', onclick: closeModal }, 'Cancel'), h('button', { class: 'btn primary', onclick: add }, firstPrompt ? 'Start session' : 'Add')]);
   $('#modalHost .modal').classList.add('wide');
   setMode(mode);
+}
+
+// ------------------------------------------------------------------ quick new sessions, from the one you're on
+
+/**
+ * The + beside a project's name on the session tab row: another session in that project, like `s` (the group's
+ * current session, else its first): in the same folder, in a new worktree of its repository, or anywhere.
+ */
+function quickAddMenu(s, anchor) {
+  const r = anchor.getBoundingClientRect();
+  const p = projectOf(s);
+  showMenu(r.left, r.bottom + 2, [
+    { header: p ? `New session in ${p.name}` : 'New session with no project' },
+    { label: 'In the same folder', action: () => quickSession(s) },
+    s.git?.isRepo && { label: 'In a new worktree…', action: () => showWorktreeDialog(s) },   // worktrees need a Git repository
+    '-',
+    { label: 'A different folder…', action: () => showAddDialog('new', { directory: s.directory, project: s.project ?? null }) },
+  ]);
+}
+
+/** The session's command without anything that picks a conversation: a new session gets one of its own. */
+const ownOptionsOnly = (command) => (/^claude(\.exe)?(\s|$)/i.test(command)
+  ? command.replace(/\s+(-c|--continue)(?=\s|$)/gi, '').replace(/\s+(-r|--resume|--session-id|--fork-session)(=\S+|\s+[^-\s]\S*)?(?=\s|$)/gi, '').trim()
+  : command);
+
+/** "checkout-api", or "checkout-api 2" (3, …) when that's taken. */
+function freeName(base) {
+  const taken = new Set(state.sessions.map((x) => x.name.toLowerCase()));
+  if (!taken.has(base.toLowerCase())) return base;
+  for (let n = 2; ; n++) if (!taken.has(`${base} ${n}`.toLowerCase())) return `${base} ${n}`;
+}
+
+async function addAndOpen(item) {
+  const before = new Set(state.sessions.map((x) => x.id));
+  await request('addSessions', { sessions: [item] });
+  if (item.project && state.hiddenProjects.has(item.project)) toggleProject(item.project);
+  const added = state.sessions.find((x) => !before.has(x.id));
+  if (added) expand(added.id);
+}
+
+/** One click: another session in the same folder and project, with a conversation of its own. */
+function quickSession(s) {
+  addAndOpen({ directory: s.directory, name: freeName(s.name), command: ownOptionsOnly(s.command), project: s.project ?? '' })
+    .catch((e) => toast(e.message, true));
+}
+
+/** A new worktree of the session's repository on a new branch, with a session in it (same project and options). */
+function showWorktreeDialog(s) {
+  const root = (s.git?.root || s.directory).replace(/[\\/]+$/, '');
+  const parent = root.replace(/[\\/][^\\/]*$/, '');
+  const slug = (b) => b.trim().replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '');
+  const branch = h('input', { placeholder: 'feature/my-change', spellcheck: 'false' });
+  const base = h('input', { value: s.git?.branch && !s.git.branch.startsWith('(') ? s.git.branch : 'HEAD', spellcheck: 'false' });
+  const folder = h('input', { spellcheck: 'false' });
+  const name = h('input', { placeholder: '(the branch name)', spellcheck: 'false' });
+  const error = h('div', { class: 'form-error', hidden: true });
+  let folderEdited = false;
+  // The folder follows the branch (next to the repository) until you change it yourself.
+  const suggest = () => { if (!folderEdited) folder.value = slug(branch.value) ? `${parent}\\${leafName(root)}-${slug(branch.value)}` : ''; };
+  branch.addEventListener('input', suggest);
+  folder.addEventListener('input', () => { folderEdited = true; });
+  const create = h('button', { class: 'btn primary' }, 'Create worktree and session');
+  const go = async () => {
+    if (create.disabled) return;   // already creating (Enter in a field doesn't go through the button)
+    const b = branch.value.trim();
+    if (!b) { error.hidden = false; error.textContent = 'Name the new branch.'; return; }
+    if (!folder.value.trim()) { error.hidden = false; error.textContent = 'Choose a folder for the worktree.'; return; }
+    create.disabled = true;
+    create.textContent = 'Creating…';
+    error.hidden = true;
+    let path;
+    try {
+      path = await request('worktree.add', { id: s.id, branch: b, path: folder.value.trim(), base: base.value.trim() || null });
+    } catch (e) {
+      error.hidden = false;
+      error.textContent = e.message;
+      create.disabled = false;
+      create.textContent = 'Create worktree and session';
+      return;
+    }
+    closeModal();
+    // The worktree exists now, so the dialog can't be retried: a failure from here on is reported on its own.
+    try {
+      await addAndOpen({ directory: path, name: freeName(name.value.trim() || b), command: ownOptionsOnly(s.command), project: s.project ?? '' });
+    } catch (e) {
+      toast(`The worktree was created in ${path}, but no session could be added there: ${e.message}`, true);
+    }
+  };
+  create.addEventListener('click', go);
+  for (const i of [branch, base, folder, name]) i.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+  openModal('New session in a new worktree', [
+    h('div', { class: 'dim' }, `A new worktree of ${root}, with a session in it${projectOf(s) ? ` in ${projectOf(s).name}` : ''}.`),
+    field('New branch', branch),
+    field('Based on', base, 'A branch or commit; the new branch starts here.'),
+    field('Folder', folder, 'Created for the worktree, next to the repository unless you change it.'),
+    field('Session name', name),
+    error,
+  ], [h('button', { class: 'btn', onclick: closeModal }, 'Cancel'), create]);
+  $('#modalHost .modal').classList.add('wide');
 }
 
 /** Points an existing session at a different saved conversation of its folder (or a fresh one) and restarts it. */
@@ -1410,6 +1635,22 @@ function showResumeDialog(s) {
     resumeBtn,
   ]);
   $('#modalHost .modal').classList.add('wide');
+}
+
+/**
+ * Sessions saved before each had a conversation of its own: the app never knew which conversation they were in, so
+ * they now start a new one. Said once, so nobody types into one expecting the conversation it had.
+ */
+function showNewConversations(ids) {
+  const names = ids.map((id) => state.byId.get(id)?.name).filter(Boolean);
+  if (!names.length) return;
+  const one = names.length === 1;
+  openModal(one ? 'A session starts a new conversation' : 'Some sessions start a new conversation', [
+    h('div', {}, `Earlier versions of Claude Terminals didn't keep track of which conversation ${one ? 'this session was' : 'these sessions were'} in, ` +
+      `so ${one ? 'it starts' : 'each starts'} a new one, and reopens that one from now on:`),
+    h('ul', { class: 'name-list' }, names.map((n) => h('li', {}, n))),
+    h('div', { class: 'dim' }, 'To go back to an earlier conversation, pick it with Resume a different conversation… in the session’s menu.'),
+  ], [h('button', { class: 'btn primary', onclick: closeModal }, 'OK')]);
 }
 
 // ------------------------------------------------------------------ Git tool window
@@ -3056,7 +3297,7 @@ function cycleDoc(delta) {
 
 function renderDocTabs() {
   const ex = state.byId.get(state.expandedId);
-  const waiting = visibleSessions().filter((s) => s.attention).length;   // hidden projects show theirs on the project tabs
+  const waiting = visibleSessions().filter(waitingForYou).length;   // hidden projects show theirs on the project tabs
   const termTab = h('div', {
     class: 'doc-tab terminal' + (docs.active === 'terminal' ? ' active' : ''),
     title: 'Terminals (Shift+Esc from a diff, Ctrl+PgUp/PgDn to switch tabs)',

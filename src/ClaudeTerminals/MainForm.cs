@@ -56,8 +56,13 @@ internal sealed class MainForm : Form
             tidied |= TidyConversation(info);
             AddSessionRuntime(info);
         }
-        if (tidied) SaveSessions();
         ApplyResumeAfterUpdate();
+        foreach (var s in sessions.Values.Where(s => TerminalSession.NeedsOwnConversation(s.Info)))
+        {
+            tidied = true;
+            if (GiveOwnConversation(s)) newConversations.Add(s.Id);
+        }
+        if (tidied) SaveSessions();
         StartPanels();
 
         conversationTimer.Tick += (_, _) => FollowConversations();
@@ -78,6 +83,22 @@ internal sealed class MainForm : Form
         if (conversation == null) return false;
         (info.Command, info.Conversation) = (command, conversation);
         return true;
+    }
+
+    /// <summary>Sessions that just got a new conversation in place of one the app never knew (told to the page once).</summary>
+    private readonly List<string> newConversations = [];
+
+    /// <summary>
+    /// Gives a session saved before sessions had a conversation of its own (1.1.0) one now. Until then a plain claude
+    /// started yet another new conversation each time the app started, under the session's old name, and the app only
+    /// learned it once something was typed into it. An update from an older version noted the conversation it was in.
+    /// </summary>
+    /// <returns>True if it's a new conversation: the one the session was in isn't known.</returns>
+    internal static bool GiveOwnConversation(TerminalSession s)
+    {
+        var noted = TerminalSession.IsConversationId(s.ResumeOnce) ? s.ResumeOnce : null;
+        s.Info.Conversation = noted ?? Guid.NewGuid().ToString();
+        return noted == null;
     }
 
     private readonly System.Windows.Forms.Timer conversationTimer = new() { Interval = 10_000 };
@@ -476,6 +497,11 @@ internal sealed class MainForm : Form
                 PostAccent();   // first: with Windows' app mode the page knows its theme before sessions start
                 Post(SessionList());
                 Post(PanelsMessage());
+                if (newConversations.Count > 0)
+                {
+                    Post(new { type = "newConversations", ids = newConversations });
+                    newConversations.Clear();
+                }
                 foreach (var s in sessions.Values) _ = s.RefreshStatusAsync();
                 return null;
 
@@ -549,8 +575,7 @@ internal sealed class MainForm : Form
                     // A new Claude session gets a conversation of its own from the start, so it always reopens that one,
                     // even with other sessions in the same folder. One that should carry on the folder's latest
                     // (--continue) learns its conversation once Claude has picked it.
-                    if (info.Conversation == null && TerminalSession.CanTrackConversation(info.Command) && !TerminalSession.CarriesOnConversation(info.Command))
-                        info.Conversation = Guid.NewGuid().ToString();
+                    if (TerminalSession.NeedsOwnConversation(info)) info.Conversation = Guid.NewGuid().ToString();
                     var added = AddSessionRuntime(info);
                     added.FirstPromptOnce = item.Prompt;   // from a panel's button: its first start is a new conversation with this prompt
                 }
@@ -568,6 +593,11 @@ internal sealed class MainForm : Form
                     var (command, conversation) = TerminalSession.TakeConversation(c.GetString()!.Trim());
                     s.Info.Command = command;
                     if (conversation != null) s.Info.Conversation = conversation;
+                    // A command that is now a plain claude (e.g. --continue taken out) gets a conversation of its own
+                    // right away, rather than a new one at every start until the next time the app starts: the one it's
+                    // in if it's running, otherwise a new one.
+                    CatchUpConversation(s);
+                    if (TerminalSession.NeedsOwnConversation(s.Info)) s.Info.Conversation = Guid.NewGuid().ToString();
                 }
                 // The conversation to reopen: one picked from the saved ones, or "new" for a fresh one.
                 if (OptStr(msg, "conversation") is { } pick && TerminalSession.CanTrackConversation(s.Info.Command))
@@ -670,6 +700,15 @@ internal sealed class MainForm : Form
                 var initial = Str(msg, "initial");
                 if (Directory.Exists(initial)) dlg.InitialDirectory = initial;
                 return dlg.ShowDialog(this) == DialogResult.OK ? dlg.SelectedPath : null;
+            }
+            case "worktree.add":
+            {
+                // A new worktree of the session's repository, on a new branch; the page then adds a session there.
+                var root = GitDir(msg);
+                var path = Str(msg, "path").Trim();
+                var result = await GitService.AddWorktreeAsync(root, path, Str(msg, "branch").Trim(), OptStr(msg, "base")?.Trim());
+                if (!result.Ok) throw new InvalidOperationException(string.IsNullOrWhiteSpace(result.Error) ? "git couldn't create the worktree." : result.Error.Trim());
+                return Path.GetFullPath(path);
             }
             case "worktrees":
             {

@@ -61,6 +61,36 @@ public class SessionConversationTests
     public void The_app_looks_after_the_conversation_of_an_interactive_claude_that_doesnt_pick_its_own(string command, bool expected) =>
         Assert.Equal(expected, TerminalSession.CanTrackConversation(command));
 
+    [Theory]
+    [InlineData("claude", null, true)]
+    [InlineData("claude --model opus", null, true)]
+    [InlineData("claude", Id, false)]
+    [InlineData("claude --continue", null, false)]                             // learns the folder's latest once Claude has picked it
+    [InlineData("claude --resume " + Id, null, false)]                         // the command picks its own
+    [InlineData("claude -p hi", null, false)]
+    [InlineData("pwsh", null, false)]
+    public void A_claude_session_without_a_conversation_gets_one_of_its_own(string command, string? conversation, bool expected) =>
+        Assert.Equal(expected, TerminalSession.NeedsOwnConversation(new SessionInfo { Command = command, Conversation = conversation }));
+
+    [Fact]
+    public void A_session_saved_before_it_had_its_own_conversation_gets_a_new_one_and_keeps_it()
+    {
+        using var s = new TerminalSession(new SessionInfo { Name = "s", Directory = ".", Command = "claude" });
+        Assert.True(MainForm.GiveOwnConversation(s));   // new: the one it was in isn't known
+        Assert.True(TerminalSession.IsConversationId(s.Info.Conversation));
+        Assert.False(TerminalSession.NeedsOwnConversation(s.Info));
+        Assert.Equal("claude --session-id " + s.Info.Conversation,   // not a plain claude, so the next start reopens it
+            TerminalSession.PrepareCommand(s.Info.Command, null, () => true, conversation: s.Info.Conversation, isSaved: _ => false));
+    }
+
+    [Fact]
+    public void A_session_an_update_noted_keeps_the_conversation_it_was_in()
+    {
+        using var s = new TerminalSession(new SessionInfo { Name = "s", Directory = ".", Command = "claude" }) { ResumeOnce = Id };
+        Assert.False(MainForm.GiveOwnConversation(s));
+        Assert.Equal(Id, s.Info.Conversation);
+    }
+
     [Fact]
     public void A_session_with_its_own_conversation_carries_on_when_it_restarts()
     {

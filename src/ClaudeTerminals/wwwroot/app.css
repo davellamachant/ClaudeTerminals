@@ -20,6 +20,7 @@
   --ok: #4ec9b0;
   --working: #3794ff;
   --attention: #f0a030;
+  --asking: #f472b6;
   --danger: #f14c4c;
   --st-m: #d7ba7d;
   --st-a: #81b88b;
@@ -92,6 +93,7 @@
   --ok: #12805c;
   --working: #0066bf;
   --attention: #c27500;
+  --asking: #c2185b;
   --danger: #c42b1c;
   --st-m: #946200;
   --st-a: #2a7d34;
@@ -172,16 +174,118 @@ svg.ic { width: 16px; height: 16px; flex: none; display: block; }
 .session-tab .tab-label {
   display: inline-flex; align-items: center; gap: 7px; height: 100%; padding: 0; border: 0; background: none; cursor: pointer;
 }
+.session-tab .dot { margin: 0 2px; }   /* room for the rings round it, whatever the state, so the tab never changes width */
 .session-tab { padding-right: 4px; user-select: none; }
 .session-tab .tab-close { visibility: hidden; margin-left: -2px; }
 .session-tab:hover .tab-close, .session-tab.active .tab-close, .session-tab:focus-within .tab-close { visibility: visible; }
 
-.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); flex: none; }
+/* Session status dots. Each state has a shape and a motion of its own as well as a colour: idle is a dot in a slowly
+   breathing glow, working three dots bouncing in turn, waiting a dot that beats and glows, asking a glowing dot that
+   hops, not running a hollow ring that stays still. Glows and rings reach past the 8px dot without taking room, so a
+   tab keeps its width whatever the state, and syncStatus (app.js) keeps the animations going when a dot is rebuilt. */
+.dot { position: relative; width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); flex: none; }
+.dot::before, .dot::after { position: absolute; border-radius: 50%; pointer-events: none; }
+.dot.exited { background: none; box-shadow: inset 0 0 0 1.5px var(--text-faint); }
+
+/* Idle: resting, like a sleeping laptop's light. */
 .dot.running { background: var(--ok); }
-.dot.working { background: var(--working); animation: pulse 1s ease-in-out infinite; }
-.dot.attention { background: var(--attention); box-shadow: 0 0 0 3px color-mix(in srgb, var(--attention) 25%, transparent); }
-.dot.exited { background: var(--text-faint); }
+.dot.running::after {
+  content: ''; inset: -4px; background: radial-gradient(closest-side, var(--ok), transparent);
+  opacity: 0; animation: dot-rest 4s ease-in-out infinite;
+}
+
+/* Working: three small dots bouncing one after another, like a chat's "typing" indicator. One 3px speck in the
+   middle draws all three: the outer two are its shadows, and dot-typing lifts each in turn. 12px wide in all. */
+.dot.working { background: none; }
+.dot.working::before {
+  content: ''; left: 2.5px; top: 2.5px; width: 3px; height: 3px;
+  box-shadow: -4.5px 0 var(--working), 0 0 var(--working), 4.5px 0 var(--working);
+  animation: dot-typing 1.2s linear infinite;
+}
+
+/* Waiting for you: the dot itself beats every couple of seconds until you look, lighting up and glowing with each beat. */
+.dot.attention {
+  --glow: color-mix(in srgb, var(--attention) 85%, transparent);
+  background: var(--attention); animation: dot-beat 2.2s ease-out infinite, dot-shine 2.2s ease-out infinite;
+}
+/* On a light background a wide glow only blurs the dot, so it stays close. */
+:root[data-theme="light"] .dot.attention { --glow: color-mix(in srgb, var(--attention) 45%, transparent); }
+
+/* Needs your answer (a permission prompt, a question, a plan to approve): a pink ball that hops twice and rests, the
+   way a Dock icon calls you, landing with a squash and a ring each time, and glowing brightest as it leaps. Claude
+   is stuck until you answer, so this is the loudest state. */
+.dot.asking { --glow: color-mix(in srgb, var(--asking) 85%, transparent); background: none; }
+.dot.asking::after {
+  content: ''; inset: 0; background: var(--asking);
+  transform-origin: 50% 100%; animation: dot-hop 1.6s infinite, dot-glow 1.6s ease-in-out infinite;
+}
+.dot.asking::before { content: ''; inset: 0; box-shadow: inset 0 0 0 1.5px var(--asking); opacity: 0; animation: dot-land 1.6s ease-out infinite; }
+/* On a light background a wide glow only blurs the dot, so it stays close. */
+:root[data-theme="light"] .dot.asking { --glow: color-mix(in srgb, var(--asking) 45%, transparent); }
+.session-tab.asking { color: var(--text); }
+
+/* Done working: the dot settles in with a little overshoot and sends out one ring. */
+.dot.running[data-from="working"] { animation: dot-settle .45s cubic-bezier(.3, 1.7, .5, 1); }
+.dot.running[data-from="working"]::before {
+  content: ''; inset: 0; box-shadow: inset 0 0 0 1.5px var(--ok); opacity: 0;
+  animation: dot-ripple .8s cubic-bezier(0, 0, .2, 1);
+}
+
+/* A working session's name shimmers as well, the way Claude's own "thinking" text does: a light sweeping across it. */
+.session-tab.working .tab-name {
+  --shine: color-mix(in srgb, var(--working) 40%, #fff);
+  background: linear-gradient(90deg, currentColor 40%, var(--shine) 50%, currentColor 60%) 0 0 / 300% 100%;
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  animation: tab-shimmer 2.4s linear infinite;
+}
+:root[data-theme="light"] .session-tab.working .tab-name { --shine: var(--working); }
+
+@keyframes dot-typing {
+  0%, 48%, 100% { box-shadow: -4.5px 0 var(--working), 0 0 var(--working), 4.5px 0 var(--working); }
+  12% { box-shadow: -4.5px -2.5px var(--working), 0 0 var(--working), 4.5px 0 var(--working); }
+  24% { box-shadow: -4.5px 0 var(--working), 0 -2.5px var(--working), 4.5px 0 var(--working); }
+  36% { box-shadow: -4.5px 0 var(--working), 0 0 var(--working), 4.5px -2.5px var(--working); }
+}
+@keyframes dot-ripple { from { transform: scale(1); opacity: .7; } to { transform: scale(3); opacity: 0; } }
+/* With dot-beat: brightest, with its widest glow, at the beat (10%), fading back to a soft glow by 60%. */
+@keyframes dot-shine {
+  0%, 60%, 100% { background: var(--attention); box-shadow: 0 0 3px 0 var(--glow); }
+  10% { background: color-mix(in srgb, var(--attention) 55%, #fff); box-shadow: 0 0 9px 3px var(--glow); }
+}
+@keyframes dot-beat { 0%, 30%, 100% { transform: scale(1); } 10% { transform: scale(1.3); } }
+@keyframes dot-rest { 0%, 100% { transform: scale(.6); opacity: 0; } 50% { transform: scale(1); opacity: .55; } }
+@keyframes dot-settle { from { transform: scale(.4); } }
+/* Up fast and slowing, down slow and speeding up, like a bounce. */
+@keyframes dot-hop {
+  0% { transform: translateY(0) scale(1, 1); animation-timing-function: cubic-bezier(.2, .7, .4, 1); }
+  12% { transform: translateY(-6px) scale(.9, 1.1); animation-timing-function: cubic-bezier(.6, 0, .8, .3); }
+  24% { transform: translateY(0) scale(1.25, .75); animation-timing-function: cubic-bezier(.2, .7, .4, 1); }
+  33% { transform: translateY(-2.5px) scale(.95, 1.05); animation-timing-function: cubic-bezier(.6, 0, .8, .3); }
+  42% { transform: translateY(0) scale(1.15, .85); }
+  50%, 100% { transform: translateY(0) scale(1, 1); }
+}
+/* A ring where the ball lands, at 24% and (smaller) 42% of dot-hop. */
+@keyframes dot-land {
+  0%, 23.9% { transform: scale(1); opacity: 0; }
+  24% { transform: scale(1); opacity: .9; }
+  41.9% { transform: scale(2.6); opacity: 0; }
+  42% { transform: scale(1); opacity: .6; }
+  60%, 100% { transform: scale(2.1); opacity: 0; }
+}
+/* The ball itself lights up: whiter and with its widest glow at the top of the first hop (12% of dot-hop), dimming as it rests. */
+@keyframes dot-glow {
+  0%, 60%, 100% { background: var(--asking); box-shadow: 0 0 3px 0 var(--glow); }
+  12% { background: color-mix(in srgb, var(--asking) 55%, #fff); box-shadow: 0 0 9px 3px var(--glow); }
+  33% { background: color-mix(in srgb, var(--asking) 75%, #fff); box-shadow: 0 0 6px 2px var(--glow); }
+}
+@keyframes tab-shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
 @keyframes pulse { 50% { opacity: .35; } }
+/* Windows' "Animation effects" off: the shapes alone tell the states apart. Waiting then keeps a steady glow, since its
+   glow otherwise comes only from dot-shine and it would be a plain dot like idle. */
+@media (prefers-reduced-motion: reduce) {
+  .dot, .dot::before, .dot::after, .session-tab .tab-name { animation: none !important; }
+  .dot.attention { box-shadow: 0 0 6px 2px var(--glow); }
+}
 
 /* ---------------------------------------------------------------- layout */
 #main { flex: 1; display: flex; min-height: 0; }
@@ -209,6 +313,7 @@ body.git-hidden #splitter, body.git-hidden #gitPanel { display: none; }
 .tile:hover:not(.expanded) { border-color: var(--border-strong); }
 .tile.current:not(.expanded) { border-color: var(--accent-strong); }
 .tile.attention:not(.expanded) { border-color: var(--attention); box-shadow: 0 0 0 1px var(--attention); }
+.tile.asking:not(.expanded) { border-color: var(--asking); box-shadow: 0 0 0 1px var(--asking); }
 .tile.expanded { z-index: 5; border-radius: 4px; }
 .tile.concealed { opacity: 0; pointer-events: none; }
 body.no-anim .tile, body.no-anim .surface { transition: none !important; }
@@ -452,6 +557,7 @@ textarea.commit-msg { resize: vertical; min-height: 54px; height: 54px; user-sel
 .modal-title { padding: 14px 18px 4px; font-size: 15px; font-weight: 600; }
 .modal-body { padding: 10px 18px; overflow: auto; display: flex; flex-direction: column; gap: 12px; }
 .modal-footer { padding: 12px 18px 16px; display: flex; justify-content: flex-end; gap: 8px; }
+.name-list { margin: 0; padding-left: 22px; font-weight: 600; }
 .field { display: flex; flex-direction: column; gap: 4px; }
 .field label { color: var(--text-dim); }
 .field .inline { display: flex; gap: 6px; }
@@ -467,10 +573,10 @@ textarea.commit-msg { resize: vertical; min-height: 54px; height: 54px; user-sel
 
 .menu { position: fixed; z-index: 200; min-width: 200px; padding: 4px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 8px 24px rgba(0, 0, 0, .45); }
 .menu-item { display: flex; align-items: center; gap: 8px; height: 26px; padding: 0 10px; border-radius: 4px; cursor: pointer; white-space: nowrap; }
-.menu-item:hover { background: var(--accent-strong); color: #fff; }
-.menu-item.danger:hover { background: var(--danger-fill); }
+.menu-item:hover, .menu-item.active { background: var(--accent-strong); color: #fff; }
+.menu-item.danger:hover, .menu-item.danger.active { background: var(--danger-fill); }
 .menu-item .kbd { margin-left: auto; padding-left: 24px; color: var(--text-faint); }
-.menu-item:hover .kbd { color: #ddd; }
+.menu-item:hover .kbd, .menu-item.active .kbd { color: #ddd; }
 .menu-sep { height: 1px; background: var(--border); margin: 4px 2px; }
 .menu-header { padding: 6px 10px 3px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; color: var(--text-faint); cursor: default; }
 .menu-check { width: 12px; flex: none; text-align: center; }
@@ -540,7 +646,7 @@ textarea.commit-msg { resize: vertical; min-height: 54px; height: 54px; user-sel
 .project-tab.shown .project-check { color: var(--accent); }
 .project-check svg.ic { width: 14px; height: 14px; }
 .project-name { gap: 6px; padding: 0 10px 0 4px; font-weight: 600; }
-.project-name .dot { width: 7px; height: 7px; }
+.project-name .dot { width: 7px; height: 7px; margin-left: 3px; }   /* room for the working dots beside the name */
 .project-name .badge {
   min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--attention); color: #000;
   font-size: 10px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center;
@@ -629,6 +735,14 @@ textarea.commit-msg { resize: vertical; min-height: 54px; height: 54px; user-sel
 .session-group-label:focus-visible { outline: 1px solid var(--focus); outline-offset: -2px; }
 .session-group.unknown .session-group-label { font-style: italic; }
 .session-group .session-tab { height: 26px; }
+/* The + at the end of a project's group (or of an ungrouped row): another session in that project */
+.session-add {
+  flex: none; width: 22px; height: 22px; margin: 0 3px; color: var(--text-dim);
+  border: 1px solid var(--border); border-radius: 4px;   /* an outline sets it apart from the tabs beside it */
+}
+.session-group .session-add { color: var(--proj); border-color: color-mix(in srgb, var(--proj) 45%, transparent); }
+.session-add:hover { color: var(--text); border-color: var(--border-strong); }
+.session-group .session-add:hover { border-color: color-mix(in srgb, var(--proj) 75%, transparent); background: color-mix(in srgb, var(--proj) 16%, transparent); }
 
 /* Drag to reorder tabs: an accent bar on the side the dragged tab will land. */
 .session-tab.dragging, .project-tab.dragging, .doc-tab.dragging { opacity: .4; }

@@ -200,6 +200,13 @@ internal sealed partial class TerminalSession : IDisposable
     internal static bool CarriesOnConversation(SessionInfo info) =>
         (IsConversationId(info.Conversation) && CanTrackConversation(info.Command)) || CarriesOnConversation(info.Command);
 
+    /// <summary>
+    /// Whether the app should give this session a conversation of its own: an interactive claude without one that
+    /// doesn't carry on the folder's latest (--continue learns its conversation once Claude has picked it).
+    /// </summary>
+    internal static bool NeedsOwnConversation(SessionInfo info) =>
+        info.Conversation == null && CanTrackConversation(info.Command) && !CarriesOnConversation(info.Command);
+
     /// <summary>Whether starting this command again carries on a conversation (--continue or --resume) rather than starting a new one.</summary>
     internal static bool CarriesOnConversation(string command)
     {
