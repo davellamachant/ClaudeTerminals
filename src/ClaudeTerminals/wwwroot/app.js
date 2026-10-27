@@ -35,6 +35,7 @@ const PATHS = {
   close: 'M4 4l8 8M12 4l-8 8',
   refresh: 'M13 3v3.5H9.5M12.6 6.2A5 5 0 1 0 13 9',
   grid: 'M2.5 2.5h4.5v4.5H2.5zM9 2.5h4.5v4.5H9zM2.5 9h4.5v4.5H2.5zM9 9h4.5v4.5H9z',
+  list: 'M5.8 4h7.7M5.8 8h7.7M5.8 12h7.7M2.6 4h.1M2.6 8h.1M2.6 12h.1',   // the Project view: a list of the project's worktrees
   git: 'M5 3v10M5 11a2 2 0 1 0 0 .01M5 3a1.6 1.6 0 1 0 0 .01M11 3a1.6 1.6 0 1 0 0 .01M11 4.6C11 8 5 7 5 10',
   branch: 'M5 2.5v8M5 12a1.5 1.5 0 1 0 0 .01M11 4a1.5 1.5 0 1 0 0 .01M11 5.5c0 3-6 2.5-6 5',
   chevR: 'M6 4l4 4-4 4',
@@ -896,7 +897,7 @@ function renderSessionTabs() {
       class: 'session-group-label' + (projectViewShowing(g.id) ? ' active' : ''), 'data-project': g.id,
       title: `${g.color ? g.name : `${UNKNOWN_NAME}: sessions with no project`}\nClick for its Project view, its worktrees side by side (again to go back)`,
       onclick: () => toggleProjectView(g.id),
-    }, iconEl('grid'), g.name),   // the Project tab's icon, so it's clear the name opens something
+    }, iconEl('list'), g.name),   // the Project tab's icon, so it's clear the name opens something
     g.tabs,
     plus(g.sessions, g.color ? `in ${g.name}` : 'with no project'))));
   }
@@ -3364,7 +3365,7 @@ function renderDocTabs() {
         onclick: (e) => { if (!e.target.closest('button')) activateDoc(t.key); },
         onmousedown: (e) => { if (e.button === 1) e.preventDefault(); },
         onauxclick: (e) => { if (e.button === 1) closeDoc(t.key); },
-      }, iconEl('grid'), h('span', { class: 'doc-title' }, 'Project'),
+      }, iconEl('list'), h('span', { class: 'doc-title' }, 'Project'),
       h('span', { class: 'doc-sub' }, projectName(t.projectId)),
       h('button', { class: 'icon-btn small', title: 'Close (Ctrl+W)', onclick: () => closeDoc(t.key) }, iconEl('close')));
     }
