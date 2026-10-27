@@ -1161,6 +1161,7 @@ function sessionMenu(s, x, y) {
     state.expandedId === s.id ? { label: 'Back to all sessions', kbd: 'Shift+Esc', action: collapse } : { label: 'Expand', action: () => expand(s.id) },
     { label: 'Show Git changes', action: () => showGit(s.id) },
     { label: 'Show conversation', action: () => openConversation(s) },
+    { label: `Project view: ${projectName(groupOf(s))}'s worktrees side by side`, action: () => openProjectView(groupOf(s)) },
     '-',
     { label: 'Resume a different conversation…', action: () => showResumeDialog(s) },
     { label: 'Rename / edit command…', action: () => showEditDialog(s) },
@@ -3844,7 +3845,8 @@ attachRail($('#convRail'));
 
 const projectKey = (projectId) => 'project|' + projectId;
 const isProjectTab = (t) => t?.kind === 'project';
-const projectName = (id) => (id === UNKNOWN ? UNKNOWN_NAME : state.projects.find((p) => p.id === id)?.name ?? '');
+// With no projects every session is in Unknown, which is then simply all of them.
+const projectName = (id) => (id === UNKNOWN ? (state.projects.length ? UNKNOWN_NAME : 'All sessions') : state.projects.find((p) => p.id === id)?.name ?? '');
 const projectMembers = (id) => state.sessions.filter((s) => groupOf(s) === id);
 
 const PROJECT_REFRESH_MS = 30_000;
