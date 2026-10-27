@@ -36,6 +36,18 @@ internal sealed record CommitInfo(string Sha, string ShortSha, string Author, st
 /// <param name="Prunable">Git still lists the worktree but its folder is gone.</param>
 internal sealed record WorktreeInfo(string Path, string? Branch, bool Bare, bool Prunable = false);
 
+/// <summary>One worktree as the Project view shows it (see <see cref="GitService.GetWorktreeOverviewAsync"/>).</summary>
+/// <param name="Main">The repository's main worktree (git lists it first); it can't be removed.</param>
+/// <param name="Missing">Its folder is gone (git calls it prunable).</param>
+/// <param name="Ahead">Commits on its branch that aren't on the base branch; 0 when there's no base branch or HEAD is detached.</param>
+/// <param name="Behind">Commits on the base branch that aren't on its branch.</param>
+/// <param name="Changes">Files git status lists in it (staged, unstaged and untracked); -1 if that couldn't be read.</param>
+/// <param name="Merged">Everything on its branch is already on the base branch, so once it's clean it can go.</param>
+internal sealed record WorktreeOverview(string Path, string? Branch, bool Main, bool Bare, bool Missing, int Ahead, int Behind, int Changes, bool Merged);
+
+/// <param name="BaseBranch">What the worktrees are compared with (origin/main, say), or null if the repository has none.</param>
+internal sealed record RepoOverview(string Root, string? BaseBranch, List<WorktreeOverview> Worktrees);
+
 internal sealed record DiffContent(string Original, string Modified, string OriginalLabel, string ModifiedLabel, string? Notice);
 
 /// <summary>Thin wrapper over git.exe. All calls are read-only unless the method name says otherwise.</summary>
@@ -323,6 +335,80 @@ internal static class GitService
     }
 
     /// <summary>
+    /// The branch the Project view compares worktrees with: what origin/HEAD points at (origin/main, say), else a local
+    /// main or master; null when the repository has none of these.
+    /// </summary>
+    public static async Task<string?> GetBaseBranchAsync(string dir)
+    {
+        var head = await RunAsync(dir, ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]);
+        if (head.Ok && head.Text.Trim() is { Length: > 0 } remote) return remote;
+        foreach (var name in new[] { "main", "master" })
+            if ((await RunAsync(dir, ["rev-parse", "--verify", "--quiet", "refs/heads/" + name])).Ok) return name;
+        return null;
+    }
+
+    /// <summary>
+    /// Every worktree of the repository containing <paramref name="dir"/>, with what the Project view shows for each:
+    /// how far its branch is ahead of and behind <see cref="RepoOverview.BaseBranch"/>, and how many files are changed
+    /// in it. The main worktree comes first, as git lists it. Read-only.
+    /// </summary>
+    public static async Task<RepoOverview> GetWorktreeOverviewAsync(string dir)
+    {
+        var here = await GetTopLevelAsync(dir) ?? dir;
+        var baseBranch = await GetBaseBranchAsync(here);
+        var list = await GetWorktreesAsync(here);
+        var root = list.Count > 0 ? list[0].Path : here;   // the main worktree, whichever worktree this was asked from
+        var rows = await Task.WhenAll(list.Select(async (w, i) =>
+        {
+            var exists = Directory.Exists(w.Path) && !w.Prunable;
+            var onBranch = w.Branch != null && !w.Branch.StartsWith('(') && !w.Bare;
+            var changes = exists && !w.Bare ? await CountChangesAsync(w.Path) : 0;
+            var (ahead, behind) = baseBranch != null && onBranch ? await AheadBehindAsync(root, baseBranch, w.Branch!) : (0, 0);
+            return new WorktreeOverview(w.Path, w.Branch, Main: i == 0, w.Bare, Missing: !exists, ahead, behind, changes,
+                Merged: i > 0 && baseBranch != null && onBranch && ahead == 0);
+        }));
+        return new RepoOverview(root, baseBranch, rows.ToList());
+    }
+
+    /// <summary>Commits on <paramref name="branch"/> not on <paramref name="baseBranch"/>, and the other way round; (0, 0) if git couldn't say.</summary>
+    private static async Task<(int Ahead, int Behind)> AheadBehindAsync(string dir, string baseBranch, string branch)
+    {
+        var r = await RunAsync(dir, ["rev-list", "--left-right", "--count", baseBranch + "..." + branch]);
+        var parts = r.Ok ? r.Text.Trim().Split(['\t', ' '], StringSplitOptions.RemoveEmptyEntries) : [];
+        return parts.Length == 2 && int.TryParse(parts[0], out var behind) && int.TryParse(parts[1], out var ahead) ? (ahead, behind) : (0, 0);
+    }
+
+    /// <summary>How many files git status lists in the worktree (staged, unstaged and untracked), or -1 if it couldn't say.</summary>
+    private static async Task<int> CountChangesAsync(string worktree)
+    {
+        var r = await RunAsync(worktree, ["status", "--porcelain", "--untracked-files=normal"], maxOutputBytes: 1 << 20);
+        return r.Ok && !r.Truncated ? r.Text.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length : -1;
+    }
+
+    /// <summary>
+    /// Removes the worktree at <paramref name="path"/> from the repository at <paramref name="repoDir"/> (the Project
+    /// view's Remove worktree). Only a listed worktree other than the main one, and only when nothing in it is
+    /// uncommitted: git's own check stays (never forced), and ours runs first so the refusal says what's in the way.
+    /// A worktree whose folder is already gone is pruned from the list instead. The branch stays either way.
+    /// </summary>
+    public static async Task<GitResult> RemoveWorktreeAsync(string repoDir, string path)
+    {
+        if (!Path.IsPathFullyQualified(path)) return Failed("The worktree must be given as a full path.");
+        var list = await GetWorktreesAsync(repoDir);
+        var full = Path.GetFullPath(path).TrimEnd('\\');
+        var i = list.FindIndex(w => string.Equals(Path.GetFullPath(w.Path).TrimEnd('\\'), full, StringComparison.OrdinalIgnoreCase));
+        if (i < 0) return Failed($"{path} isn't a worktree of this repository.");
+        if (i == 0) return Failed("This is the repository's main worktree; it can't be removed.");
+        if (!Directory.Exists(list[i].Path)) return await RunAsync(repoDir, ["worktree", "prune"]);
+        var changes = await CountChangesAsync(list[i].Path);
+        if (changes != 0)
+            return Failed(changes < 0
+                ? "Couldn't check the worktree for uncommitted changes, so it was left alone."
+                : $"{changes} file{(changes == 1 ? " is" : "s are")} changed or new in this worktree and would be lost. Commit or undo {(changes == 1 ? "it" : "them")} first.");
+        return await RunAsync(repoDir, ["worktree", "remove", list[i].Path], timeout: TimeSpan.FromMinutes(2));
+    }
+
+    /// <summary>
     /// Creates a worktree of the repository at <paramref name="repoDir"/> in the new folder <paramref name="path"/>, on a
     /// new branch <paramref name="branch"/> started from <paramref name="startPoint"/> (the current commit when null).
     /// Changes the repository. The branch name, start point and folder are checked first, so git's options can't be
@@ -338,7 +424,9 @@ internal static class GitService
         if (!Path.IsPathFullyQualified(path)) return Fail("The folder must be a full path, such as D:\\Source\\repo-feature.");
         if (Directory.Exists(path) && Directory.EnumerateFileSystemEntries(path).Any()) return Fail($"{path} already exists and isn't empty.");
         if (File.Exists(path)) return Fail($"{path} is a file.");
-        var args = new List<string> { "worktree", "add", "-b", branch, path };
+        // --no-track: started from a remote branch (origin/main, say), git would make that the new branch's upstream, and
+        // Push would then fail on the names not matching. With none, the first Push publishes it under its own name.
+        var args = new List<string> { "worktree", "add", "--no-track", "-b", branch, path };
         if (!string.IsNullOrWhiteSpace(startPoint))
         {
             if (startPoint.StartsWith('-') || !(await RunAsync(repoDir, ["rev-parse", "--verify", "--quiet", startPoint + "^{commit}"])).Ok)

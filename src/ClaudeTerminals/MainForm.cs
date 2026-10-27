@@ -716,6 +716,27 @@ internal sealed class MainForm : Form
                 var dir = Str(msg, "directory");
                 return Directory.Exists(dir) ? await GitService.GetWorktreesAsync(dir) : new List<WorktreeInfo>();
             }
+            case "worktree.overview":
+                // The Project view's rows for the session's repository: every worktree, how far each is from the base
+                // branch, and what's changed in it.
+                return await GitService.GetWorktreeOverviewAsync(GitDir(msg));
+            case "worktree.remove":
+            {
+                // The repository is named rather than a session: the page has already removed the sessions in the
+                // worktree (a process with its folder as working directory would keep it), and it may have been the
+                // only one. Their processes can take a moment to let go of the folder, hence the retries.
+                var root = Str(msg, "root").Trim();
+                if (!Directory.Exists(root)) throw new InvalidOperationException("The repository folder is gone.");
+                GitResult result = null!;
+                for (var attempt = 0; attempt < 6; attempt++)
+                {
+                    result = await GitService.RemoveWorktreeAsync(root, Str(msg, "path").Trim());
+                    if (result.Ok || !result.Error.Contains("failed to delete", StringComparison.OrdinalIgnoreCase) && !result.Error.Contains("Permission denied", StringComparison.OrdinalIgnoreCase)) break;
+                    await Task.Delay(500);
+                }
+                if (!result.Ok) throw new InvalidOperationException(string.IsNullOrWhiteSpace(result.Error) ? "git couldn't remove the worktree." : result.Error.Trim());
+                return null;
+            }
             case "conversation":
             {
                 // The conversation the session's Claude is in: a light outline for the rail, or everything for the
