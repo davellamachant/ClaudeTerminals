@@ -1161,7 +1161,7 @@ function sessionMenu(s, x, y) {
     state.expandedId === s.id ? { label: 'Back to all sessions', kbd: 'Shift+Esc', action: collapse } : { label: 'Expand', action: () => expand(s.id) },
     { label: 'Show Git changes', action: () => showGit(s.id) },
     { label: 'Show conversation', action: () => openConversation(s) },
-    { label: `Project view: ${projectName(groupOf(s))}'s worktrees side by side`, action: () => openProjectView(groupOf(s)) },
+    { label: `Project view: ${projectName(groupOf(s))}${projectName(groupOf(s)).endsWith('s') ? '’' : '’s'} worktrees side by side`, action: () => openProjectView(groupOf(s)) },
     '-',
     { label: 'Resume a different conversation…', action: () => showResumeDialog(s) },
     { label: 'Rename / edit command…', action: () => showEditDialog(s) },
@@ -4008,6 +4008,10 @@ function renderProjectView() {
     const touched = files?.some((f) => overlapOf(row, f.path));
     const pr = lead && lead.prInfo?.branch === lead.git?.branch ? lead.prInfo.data : null;
     const changes = files ? files.length : row.changes;
+    // The main worktree reads "base" only while it's on the base branch; on a feature branch it's compared like the rest.
+    const base = row.repo?.baseBranch;
+    const onBase = row.main && base && (row.branch === base || base === 'origin/' + row.branch);
+    const detached = !row.branch || row.branch.startsWith('(');
     const el = h('div', {
       class: 'pv-row' + (open ? ' open' : '') + (projectView.hl?.includes(row) ? ' hl' : ''), 'data-path': normPath(row.path),
       tabindex: 0, role: 'button', 'aria-expanded': String(open),
@@ -4027,7 +4031,7 @@ function renderProjectView() {
     h('div', { class: 'pv-changes' }, row.pending || row.noRepo ? '—' : changes > 0
       ? [h('span', { class: 'n' }, String(changes)), ` file${changes === 1 ? '' : 's'}`, touched && h('span', { class: 'pv-also', title: 'A file here is also changed in another worktree' }, ' ⚠')]
       : changes < 0 ? '?' : '—'),
-    h('div', { class: 'pv-vs' }, row.main || !row.repo?.baseBranch || row.pending || row.noRepo ? h('span', { class: 'even' }, row.main ? 'base' : '—')
+    h('div', { class: 'pv-vs' }, onBase || !base || row.pending || row.noRepo || detached ? h('span', { class: 'even', title: detached && base ? 'Not on a branch, so there\'s nothing to compare' : '' }, onBase ? 'base' : '—')
       : row.ahead || row.behind ? [row.ahead ? h('span', { class: 'ahead' }, `↑${row.ahead}`) : null, row.ahead && row.behind ? ' ' : null, row.behind ? h('span', { class: 'behind' }, `↓${row.behind}`) : null]
       : h('span', { class: 'even' }, 'even')),
     h('div', { class: 'pv-pr' }, pr?.pr
