@@ -419,6 +419,17 @@ const isLight = () => theme.pref === 'light' ||
 const themeName = () => (isLight() ? 'light' : 'dark');
 document.documentElement.dataset.theme = themeName();
 
+// How the status dots move (see app.css): picked in Status dots… from the theme menu, and kept per person.
+const DOT_STYLES = [
+  { id: 'glow', name: 'Glow', about: 'The dots themselves light up: three dots bounce while working, waiting beats and glows, asking hops and glows.' },
+  { id: 'classic', name: 'Classic', about: 'Rings round the dots: a comet spins while working, waiting pings in a ring, and an asking session’s tab lights up pink.' },
+  { id: 'calm', name: 'Calm', about: 'A different shape for each state, with only slow, small motion: a ring turning, a dot fading in a ring, a pink diamond.' },
+  { id: 'signal', name: 'Signal', about: 'Bold, like a device’s status light: a ring filling while working, a blinking square, a dot that shakes for your answer.' },
+];
+const dotStyle = { id: DOT_STYLES.some((d) => d.id === store.get('dotStyle')) ? store.get('dotStyle') : 'glow' };
+const applyDotStyle = () => { $('#app').dataset.dots = dotStyle.id; };
+applyDotStyle();
+
 const TERM_THEME_DARK = {
   background: '#181818', foreground: '#cccccc', cursor: '#d4d4d4', cursorAccent: '#181818',
   selectionBackground: '#264f78', selectionInactiveBackground: '#3a3d41',
@@ -726,7 +737,7 @@ function statusDot(s) {
 // a rebuilt one carries on; one-offs (the settle when a session is done) run from when the state began, so they play
 // once.
 function syncStatus(root) {
-  const animated = '.dot, .tab-name';
+  const animated = '.dot, .tab-name, .session-tab';   // the tab for Classic's lit-up asking tab
   for (const el of [...(root.matches(animated) ? [root] : []), ...root.querySelectorAll(animated)]) {
     const since = Number(el.dataset.since) || 0;
     for (const a of el.getAnimations({ subtree: true })) {
@@ -4109,7 +4120,41 @@ function themeMenu(x, y) {
     { header: 'Accent colour' },
     { label: [h('span', { class: 'accent-dot', style: `background:${colour}` }), c === 'windows' ? 'Windows accent' : c === 'purple' ? 'Original purple' : 'Custom'],
       kbd: 'Change…', action: showAccentDialog },
+    '-',
+    { header: 'Status dots' },
+    { label: DOT_STYLES.find((d) => d.id === dotStyle.id).name, kbd: 'Change…', action: showDotStyleDialog },
   ]);
+}
+
+/**
+ * Status dots: each style as a card showing every state moving, picked like the accent colour: each click previews it
+ * on the whole app, and Cancel puts back what was there. The cards sit outside #app, so each shows its own style.
+ */
+function showDotStyleDialog() {
+  const before = dotStyle.id;
+  const states = [['running', 'Idle'], ['working', 'Working'], ['attention', 'Waiting for you'], ['asking', 'Needs your answer'], ['exited', 'Not running']];
+  const cards = DOT_STYLES.map((d) => h('button', { class: 'dot-style', 'data-dots': d.id, onclick: () => pick(d.id) },
+    h('span', { class: 'dot-style-name' }, d.name),
+    h('span', { class: 'dot-style-states' }, states.map(([cls, label]) => h('span', { class: 'dot-style-state' }, h('span', { class: 'dot ' + cls }), label))),
+    h('span', { class: 'dot-style-about' }, d.about)));
+
+  function pick(id) {
+    dotStyle.id = id;
+    applyDotStyle();   // preview on the whole app
+    for (const c of cards) c.classList.toggle('selected', c.dataset.dots === id);
+  }
+  let saved = false;
+  openModal('Status dots', [
+    h('div', { class: 'dot-style-grid' }, cards),
+    h('div', { class: 'field help' }, 'With Windows’ animation effects turned off, the dots stand still and their shapes tell the states apart.'),
+  ], [
+    h('button', { class: 'btn', onclick: closeModal }, 'Cancel'),
+    h('button', { class: 'btn primary', onclick: () => { saved = true; store.set('dotStyle', dotStyle.id); closeModal(); } }, 'OK'),
+  ]);
+  $('#modalHost .modal').classList.add('wide');
+  // Cancel, Esc or a click outside: put back the style from before.
+  onModalClose = () => { if (!saved) { dotStyle.id = before; applyDotStyle(); } };
+  pick(before);
 }
 
 /**
