@@ -1566,22 +1566,32 @@ function quickSession(s) {
     .catch((e) => toast(e.message, true));
 }
 
-/** A new worktree of the session's repository on a new branch, with a session in it (same project and options). */
-function showWorktreeDialog(s) {
+/**
+ * A new worktree of the session's repository on a new branch and, unless unticked, a session in it (same project and
+ * options). From the Project view the branch starts from the repository's base branch (startFrom); from the + menu,
+ * from the session's own branch.
+ */
+function showWorktreeDialog(s, { startFrom = null } = {}) {
   const root = (s.git?.root || s.directory).replace(/[\\/]+$/, '');
   const parent = root.replace(/[\\/][^\\/]*$/, '');
   const slug = (b) => b.trim().replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '');
   const branch = h('input', { placeholder: 'feature/my-change', spellcheck: 'false' });
-  const base = h('input', { value: s.git?.branch && !s.git.branch.startsWith('(') ? s.git.branch : 'HEAD', spellcheck: 'false' });
+  const base = h('input', { value: startFrom ?? (s.git?.branch && !s.git.branch.startsWith('(') ? s.git.branch : 'HEAD'), spellcheck: 'false' });
   const folder = h('input', { spellcheck: 'false' });
   const name = h('input', { placeholder: '(the branch name)', spellcheck: 'false' });
+  const withSession = h('input', { type: 'checkbox', checked: true });
+  const nameField = field('Session name', name);
   const error = h('div', { class: 'form-error', hidden: true });
   let folderEdited = false;
   // The folder follows the branch (next to the repository) until you change it yourself.
   const suggest = () => { if (!folderEdited) folder.value = slug(branch.value) ? `${parent}\\${leafName(root)}-${slug(branch.value)}` : ''; };
   branch.addEventListener('input', suggest);
   folder.addEventListener('input', () => { folderEdited = true; });
-  const create = h('button', { class: 'btn primary' }, 'Create worktree and session');
+  const create = h('button', { class: 'btn primary' });
+  const createLabel = () => (withSession.checked ? 'Create worktree and session' : 'Create worktree');
+  const syncSession = () => { create.textContent = createLabel(); nameField.hidden = !withSession.checked; };
+  withSession.addEventListener('change', syncSession);
+  syncSession();
   const go = async () => {
     if (create.disabled) return;   // already creating (Enter in a field doesn't go through the button)
     const b = branch.value.trim();
@@ -1597,10 +1607,15 @@ function showWorktreeDialog(s) {
       error.hidden = false;
       error.textContent = e.message;
       create.disabled = false;
-      create.textContent = 'Create worktree and session';
+      create.textContent = createLabel();
       return;
     }
     closeModal();
+    if (!withSession.checked) {
+      if (state.projectViewOf != null) loadProjectView(true);
+      toast(`Created the worktree at ${path}, on ${b}.`);
+      return;
+    }
     // The worktree exists now, so the dialog can't be retried: a failure from here on is reported on its own.
     try {
       await addAndOpen({ directory: path, name: freeName(name.value.trim() || b), command: ownOptionsOnly(s.command), project: s.project ?? '' });
@@ -1610,12 +1625,13 @@ function showWorktreeDialog(s) {
   };
   create.addEventListener('click', go);
   for (const i of [branch, base, folder, name]) i.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
-  openModal('New session in a new worktree', [
-    h('div', { class: 'dim' }, `A new worktree of ${root}, with a session in it${projectOf(s) ? ` in ${projectOf(s).name}` : ''}.`),
+  openModal('New worktree', [
+    h('div', { class: 'dim' }, `A new worktree of ${root}, on a new branch.`),
     field('New branch', branch),
     field('Based on', base, 'A branch or commit; the new branch starts here.'),
     field('Folder', folder, 'Created for the worktree, next to the repository unless you change it.'),
-    field('Session name', name),
+    h('label', { class: 'check-field' }, withSession, `Start a session in it${projectOf(s) ? `, in ${projectOf(s).name}` : ''}`),
+    nameField,
     error,
   ], [h('button', { class: 'btn', onclick: closeModal }, 'Cancel'), create]);
   $('#modalHost .modal').classList.add('wide');
@@ -3865,7 +3881,7 @@ const PROJECT_REFRESH_MS = 30_000;
 // repos: overview per repository root (lower-cased), from the host. open: the paths of the rows opened to their detail.
 const projectView = { repos: new Map(), open: new Set(), loading: 0, lastLoad: 0, hl: null, renderTimer: null };
 
-/** Opens (or switches to) the project's tab. Its tabs show with its sessions, so one of them is made current first. */
+/** Switches to the project's Project view, a place of its own (see activateDoc). */
 function openProjectView(projectId) {
   const members = projectMembers(projectId);
   if (!members.length) { toast(`${projectName(projectId)} has no sessions yet.`); return; }
@@ -3934,6 +3950,28 @@ async function loadProjectView(force = false) {
 
 $('#projectRefresh').replaceChildren(iconEl('refresh'));
 $('#projectRefresh').addEventListener('click', () => loadProjectView(true));
+$('#projectNewWorktree').replaceChildren(iconEl('plus'), 'New worktree…');
+$('#projectNewWorktree').addEventListener('click', (e) => newProjectWorktree(e.currentTarget));
+
+/**
+ * New worktree… on the Project view: a new worktree of the project's repository, starting from its base branch (main,
+ * say) rather than whatever a session is on. A project with sessions in several repositories asks which first.
+ */
+function newProjectWorktree(anchor) {
+  const members = projectMembers(state.projectViewOf);
+  const byRoot = new Map();   // repository root → the session it's asked through (a Claude one, for its options)
+  for (const s of members) {
+    if (!s.git?.isRepo || !s.git.root) continue;
+    const key = s.git.root.toLowerCase(), had = byRoot.get(key);
+    if (!had || (!isClaudeCommand(had.command) && isClaudeCommand(s.command))) byRoot.set(key, s);
+  }
+  const open = (s) => showWorktreeDialog(s, { startFrom: projectView.repos.get(s.git.root.toLowerCase())?.baseBranch ?? null });
+  const choices = [...byRoot.values()];
+  if (!choices.length) { toast(`None of ${projectName(state.projectViewOf)}'s sessions is in a Git repository.`, true); return; }
+  if (choices.length === 1) { open(choices[0]); return; }
+  const r = anchor.getBoundingClientRect();
+  showMenu(r.left, r.bottom + 2, [{ header: 'New worktree of' }, ...choices.map((s) => ({ label: leafName(s.git.root), kbd: s.git.root, action: () => open(s) }))]);
+}
 setInterval(() => { if (!document.hidden && isProjectTab(activeTab())) loadProjectView(); }, PROJECT_REFRESH_MS);
 
 const normPath = (p) => (p || '').replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();

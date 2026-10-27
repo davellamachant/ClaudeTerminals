@@ -563,6 +563,7 @@ textarea.commit-msg { resize: vertical; min-height: 54px; height: 54px; user-sel
 .modal-footer { padding: 12px 18px 16px; display: flex; justify-content: flex-end; gap: 8px; }
 .name-list { margin: 0; padding-left: 22px; font-weight: 600; }
 .field { display: flex; flex-direction: column; gap: 4px; }
+.check-field { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
 .field label { color: var(--text-dim); }
 .field .inline { display: flex; gap: 6px; }
 .field input { height: 28px; user-select: text; }

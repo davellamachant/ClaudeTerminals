@@ -61,7 +61,7 @@ Releases are signed by **Llamachant Technology Ltd**. If SmartScreen still warns
 | Next / previous session | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
 | Toggle Git panel | `Ctrl+Shift+G` |
 | New session | `Ctrl+Shift+N`: start a new conversation (optionally one session per worktree) or **resume an existing conversation** |
-| Another session in a project | The **+** at the end of the project's group on the session tab row (at the end of the row when there are no projects). It works from that project's current session (or its first): *In the same folder* adds a session there in one click, with a conversation of its own; *In a new worktree…* (only in a Git repository) creates a worktree of it on a new branch (next to the repository by default) and opens a session there; *A different folder…* opens New session with the project chosen |
+| Another session in a project | The **+** at the end of the project's group on the session tab row (at the end of the row when there are no projects). It works from that project's current session (or its first): *In the same folder* adds a session there in one click, with a conversation of its own; *In a new worktree…* (only in a Git repository) creates a worktree of it on a new branch (next to the repository by default) and opens a session there, unless you untick *Start a session in it*; *A different folder…* opens New session with the project chosen |
 | Switch a session to another conversation | Session menu (⋯) › *Resume a different conversation…* |
 | Close a session | The × on its tab in the title bar, or middle-click the tab. After you confirm, the session is removed and its process stopped; the folder isn't touched |
 | See a project's worktrees side by side | Click the project's name at the start of its group in the session tab row (again to go back), or Session menu (⋯, or right-click a session tab) › *Project view*, or right-click the project in the Projects row: one row per worktree with its session, what it's on, its changes, how far its branch is from `main`, and its pull request. Click a row for the detail and the actions |
@@ -129,6 +129,8 @@ The summary line counts the worktrees, how many need you, how many are behind th
 - **Open session** (or **Conversation**), and **Start a session here** for a worktree that has none, with the options of the project's other sessions;
 - **View PR** or **New pull request** in the browser;
 - **Remove worktree…** for a worktree other than the main one: its sessions are removed first, then git removes the folder, never forced, so one with uncommitted changes is refused and left as it is. The branch stays.
+
+**New worktree…** on the view's toolbar adds a worktree of the project's repository on a new branch, started from its base branch (`origin/main`, say), with a session in it unless you untick *Start a session in it*; a project with sessions in several repositories asks which. Its row then shows with the others, and *Start a session here* adds a session to it later. The new branch has no upstream until its first Push, which publishes it under its own name.
 
 The view follows the sessions as they work and re-reads the repositories every half minute (or on Refresh).
 

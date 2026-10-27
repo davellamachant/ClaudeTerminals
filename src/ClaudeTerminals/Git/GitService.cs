@@ -424,7 +424,9 @@ internal static class GitService
         if (!Path.IsPathFullyQualified(path)) return Fail("The folder must be a full path, such as D:\\Source\\repo-feature.");
         if (Directory.Exists(path) && Directory.EnumerateFileSystemEntries(path).Any()) return Fail($"{path} already exists and isn't empty.");
         if (File.Exists(path)) return Fail($"{path} is a file.");
-        var args = new List<string> { "worktree", "add", "-b", branch, path };
+        // --no-track: started from a remote branch (origin/main, say), git would make that the new branch's upstream, and
+        // Push would then fail on the names not matching. With none, the first Push publishes it under its own name.
+        var args = new List<string> { "worktree", "add", "--no-track", "-b", branch, path };
         if (!string.IsNullOrWhiteSpace(startPoint))
         {
             if (startPoint.StartsWith('-') || !(await RunAsync(repoDir, ["rev-parse", "--verify", "--quiet", startPoint + "^{commit}"])).Ok)

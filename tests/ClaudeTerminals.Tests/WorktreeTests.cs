@@ -43,6 +43,18 @@ public class WorktreeTests : IDisposable
         Assert.Equal(repo.Git("rev-parse", "main").Trim(), repo.Git("rev-parse", "next").Trim());
     }
 
+    [Fact]
+    public async Task A_branch_started_from_a_remote_branch_has_no_upstream_until_pushed()
+    {
+        // As the Project view's New worktree does, from origin/main: without --no-track git would make origin/main the
+        // new branch's upstream, and Push would then fail on the names not matching.
+        repo.Git("remote", "add", "origin", repo.Root + "-origin");
+        repo.Git("update-ref", "refs/remotes/origin/main", "HEAD");
+        var path = NewFolder();
+        Assert.True((await GitService.AddWorktreeAsync(repo.Root, path, "feature/from-origin", "origin/main")).Ok);
+        Assert.Null((await GitService.GetStatusAsync(path)).Upstream);
+    }
+
     [Theory]
     [InlineData("bad name", "isn't a valid branch name")]
     [InlineData("--force", "isn't a valid branch name")]          // never an option
