@@ -480,7 +480,12 @@ function syncSessions(list, projects) {
     if (!seen.has(s.id)) disposeSession(s);
   }
   state.sessions = list.map((i) => state.byId.get(i.id));
-  for (const s of state.sessions) $('#grid').append(s.tile);
+  // Move only the tiles that are out of order: moving a tile takes the keyboard focus from its terminal, and the list
+  // comes again whenever a session changes (the conversation Claude is in, say). If one has to move, focus goes back.
+  const grid = $('#grid');
+  const focused = document.activeElement;
+  state.sessions.forEach((s, i) => { if (grid.children[i] !== s.tile) grid.insertBefore(s.tile, grid.children[i] ?? null); });
+  if (focused && focused !== document.activeElement && focused.isConnected) focused.focus({ preventScroll: true });
 
   if (!state.byId.has(state.currentId)) state.currentId = state.sessions[0]?.id ?? null;
   if (state.expandedId && !state.byId.has(state.expandedId)) state.expandedId = null;
