@@ -315,6 +315,8 @@ function renderProjectBar() {
 function projectMenu(p, x, y) {
   if (p.unknown) {   // a group, not a project: nothing to rename, move or delete
     showMenu(x, y, [
+      { label: 'Project view: its worktrees side by side', action: () => openProjectView(UNKNOWN) },
+      '-',
       { label: 'Show only sessions with no project', action: () => showOnlyProject(UNKNOWN) },
       { label: state.hiddenProjects.has(UNKNOWN) ? 'Show alongside the others' : 'Hide', action: () => toggleProject(UNKNOWN) },
     ]);
@@ -322,6 +324,8 @@ function projectMenu(p, x, y) {
   }
   const i = state.projects.indexOf(p);
   showMenu(x, y, [
+    { label: 'Project view: its worktrees side by side', action: () => openProjectView(p.id) },
+    '-',
     { label: 'Show only this project', action: () => showOnlyProject(p.id) },
     { label: state.hiddenProjects.has(p.id) ? 'Show alongside the others' : 'Hide', action: () => toggleProject(p.id) },
     '-',
@@ -480,6 +484,7 @@ function syncSessions(list, projects) {
     else startSession(s);
   }
   applyProjectFilter(true);
+  projectViewChanged();
 }
 
 function createSession(info) {
@@ -753,6 +758,7 @@ function renderTileState(s) {
   syncStatus(s.header);
   if (tab) syncStatus(tab);
   updateProjectIndicators(groupOf(s));
+  projectViewChanged(s);
 }
 
 /** A project tab's dot: hopping while one of its sessions asks you something, else spinning while one works. */
@@ -1715,6 +1721,7 @@ function onGitStatus(m) {
   s.git = m;
   renderTileHeader(s);
   refreshOpenDiff(s);   // the visible diff follows its own session, whichever one the Git panel shows
+  projectViewChanged(s);
   const historyPending = !s.log && !logFailed(s);
   if (s.id === state.currentId && (isTabShown('changes') || historyPending)) renderGit();
 }
@@ -3247,6 +3254,7 @@ const activeTab = () => docs.tabs.find((t) => t.key === docs.active) || null;
  */
 function tabShown(t) {
   const cur = currentSession();
+  if (isProjectTab(t)) return !cur || groupOf(cur) === t.projectId;
   const s = state.byId.get(t.sessionId);
   return !cur || !s || groupOf(s) === groupOf(cur);
 }
@@ -3278,18 +3286,21 @@ function activateDoc(key) {
   const prev = activeTab();
   if (prev && prev.key !== key) {
     if (isConvTab(prev)) prev.scrollTop = $('#convBody').scrollTop;
+    else if (isProjectTab(prev)) prev.scrollTop = $('#projectBody').scrollTop;
     else if (diffEditor) prev.viewState = diffEditor.saveViewState();
   }
   docs.active = docs.tabs.some((t) => t.key === key && tabShown(t)) ? key : 'terminal';
   const tab = activeTab();
-  $('#diffDoc').hidden = !tab || isConvTab(tab);
+  $('#diffDoc').hidden = !tab || isConvTab(tab) || isProjectTab(tab);
   $('#convDoc').hidden = !isConvTab(tab);
+  $('#projectDoc').hidden = !isProjectTab(tab);
   $('#termPane').classList.toggle('behind', !!tab);
   hideRailCard();
   renderDocTabs();
   if (tab) {
     if (prev !== tab) {
       if (isConvTab(tab)) showConversation(tab);
+      else if (isProjectTab(tab)) showProjectView(tab);
       else loadDiff(tab);
     }
   } else {
@@ -3314,7 +3325,7 @@ function closeDoc(key) {
   } else {
     renderDocTabs();
   }
-  if (!docs.tabs.some((t) => !isConvTab(t))) disposeDiffModels();
+  if (!docs.tabs.some((t) => !isConvTab(t) && !isProjectTab(t))) disposeDiffModels();
 }
 
 function cycleDoc(delta) {
@@ -3335,6 +3346,18 @@ function renderDocTabs() {
 
   const tabs = shownTabs().map((t) => {
     const s = state.byId.get(t.sessionId);
+    if (isProjectTab(t)) {
+      return h('div', {
+        class: 'doc-tab' + (docs.active === t.key ? ' active' : ''),
+        'data-id': t.key,
+        title: `${projectName(t.projectId)}: every worktree of the project, with its session, changes and pull request`,
+        onclick: (e) => { if (!e.target.closest('button')) activateDoc(t.key); },
+        onmousedown: (e) => { if (e.button === 1) e.preventDefault(); },
+        onauxclick: (e) => { if (e.button === 1) closeDoc(t.key); },
+      }, iconEl('grid'), h('span', { class: 'doc-title' }, 'Project'),
+      h('span', { class: 'doc-sub' }, projectName(t.projectId)),
+      h('button', { class: 'icon-btn small', title: 'Close (Ctrl+W)', onclick: () => closeDoc(t.key) }, iconEl('close')));
+    }
     if (isConvTab(t)) {
       return h('div', {
         class: 'doc-tab' + (docs.active === t.key ? ' active' : ''),
@@ -3811,6 +3834,345 @@ $('#convBody').addEventListener('scroll', debounce(() => {
   if (isConvTab(activeTab())) markRailActive($('#convRail'), turnInView());
 }, 50));
 attachRail($('#convRail'));
+
+// ------------------------------------------------------------------ Project view: a project's worktrees side by side
+// One row per worktree of each repository the project's sessions are in (from git's own worktree list, so worktrees
+// made outside the app and ones whose session was closed show too), with the session in it, what it's doing, what's
+// changed, how far its branch is from the base branch, and its pull request. A row opens to the latest prompt, the
+// changed files (marked when another worktree changes the same file) and the actions: open or start a session,
+// the pull request, and removing a worktree that's merged and clean.
+
+const projectKey = (projectId) => 'project|' + projectId;
+const isProjectTab = (t) => t?.kind === 'project';
+const projectName = (id) => (id === UNKNOWN ? UNKNOWN_NAME : state.projects.find((p) => p.id === id)?.name ?? '');
+const projectMembers = (id) => state.sessions.filter((s) => groupOf(s) === id);
+
+const PROJECT_REFRESH_MS = 30_000;
+// repos: overview per repository root (lower-cased), from the host. open: the paths of the rows opened to their detail.
+const projectView = { repos: new Map(), open: new Set(), loading: 0, lastLoad: 0, hl: null, renderTimer: null };
+
+/** Opens (or switches to) the project's tab. Its tabs show with its sessions, so one of them is made current first. */
+function openProjectView(projectId) {
+  const members = projectMembers(projectId);
+  if (!members.length) { toast(`${projectName(projectId)} has no sessions yet.`); return; }
+  const cur = currentSession();
+  if (!cur || groupOf(cur) !== projectId) expand(members[0].id);
+  const key = projectKey(projectId);
+  if (!docs.tabs.some((t) => t.key === key)) docs.tabs.push({ key, kind: 'project', projectId, preview: false, scrollTop: null });
+  activateDoc(key);
+}
+
+function showProjectView(tab) {
+  $('#projectTitle').textContent = projectName(tab.projectId);
+  projectView.hl = null;
+  renderProjectView();
+  if (tab.scrollTop != null) $('#projectBody').scrollTop = tab.scrollTop;
+  loadProjectView(true);
+  $('#projectBody').focus({ preventScroll: true });
+}
+
+/** Something about a session changed (its status, git state or the list): redraw the view if it's showing. */
+function projectViewChanged(s = null) {
+  const tab = activeTab();
+  if (!isProjectTab(tab) || (s && groupOf(s) !== tab.projectId)) return;
+  clearTimeout(projectView.renderTimer);
+  projectView.renderTimer = setTimeout(renderProjectView, 150);
+}
+
+/** Reads every repository's worktrees again, with the latest prompt and pull request of each session. */
+async function loadProjectView(force = false) {
+  const tab = activeTab();
+  if (!isProjectTab(tab) || projectView.loading) return;
+  if (!force && Date.now() - projectView.lastLoad < 5000) return;
+  projectView.lastLoad = Date.now();
+  const members = projectMembers(tab.projectId);
+  const firstIn = new Map();   // one overview per repository: asked through the first session in it
+  for (const s of members) if (s.git?.isRepo && s.git.root && !firstIn.has(s.git.root.toLowerCase())) firstIn.set(s.git.root.toLowerCase(), s);
+  projectView.loading++;
+  $('#projectRefresh').classList.add('busy');
+  try {
+    await Promise.all([
+      ...[...firstIn].map(async ([root, s]) => {
+        try { projectView.repos.set(root, { ...await request('worktree.overview', { id: s.id }), error: null }); }
+        catch (e) { projectView.repos.set(root, { root: s.git.root, baseBranch: null, worktrees: [], error: e.message }); }
+      }),
+      ...members.filter((s) => s.running).map((s) => loadConversation(s, false)),
+      ...members.filter((s) => !s.running && !s.convInfo).map((s) => loadConversationInfo(s)),
+    ]);
+    for (const s of members) if (s.git?.isRepo) ensurePullRequest(s);
+  } finally {
+    projectView.loading--;
+    $('#projectRefresh').classList.remove('busy');
+  }
+  if (docs.active === tab.key) renderProjectView();
+}
+
+$('#projectRefresh').replaceChildren(iconEl('refresh'));
+$('#projectRefresh').addEventListener('click', () => loadProjectView(true));
+setInterval(() => { if (!document.hidden && isProjectTab(activeTab())) loadProjectView(); }, PROJECT_REFRESH_MS);
+
+const normPath = (p) => (p || '').replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+const underPath = (dir, path) => normPath(dir) === normPath(path) || normPath(dir).startsWith(normPath(path) + '\\');
+
+/**
+ * The rows: every worktree of every repository the project's sessions are in, each with the sessions whose folder is
+ * in it (the deepest worktree wins), then any session whose repository isn't known yet or isn't a repository at all.
+ */
+function projectRows(projectId) {
+  const members = projectMembers(projectId);
+  const repos = [];   // in the order the sessions are in, each once
+  for (const s of members) {
+    const o = s.git?.root && projectView.repos.get(s.git.root.toLowerCase());
+    if (o && !o.error && !repos.some((r) => normPath(r.root) === normPath(o.root))) repos.push(o);
+  }
+  const rows = repos.flatMap((o) => o.worktrees.filter((w) => !w.bare).map((w) => ({ ...w, repo: o, sessions: [] })));
+  const placed = new Set();
+  for (const s of members) {
+    let best = null;
+    for (const r of rows) if (underPath(s.directory, r.path) && (!best || normPath(r.path).length > normPath(best.path).length)) best = r;
+    if (best) { best.sessions.push(s); placed.add(s.id); }
+  }
+  for (const s of members) {
+    if (placed.has(s.id)) continue;
+    const o = s.git?.root && projectView.repos.get(s.git.root.toLowerCase());
+    rows.push({
+      path: s.directory, branch: s.git?.branch ?? null, main: false, missing: false, ahead: 0, behind: 0, changes: 0, merged: false,
+      repo: null, sessions: [s], noRepo: s.git ? !s.git.isRepo : false, pending: !s.git || (s.git.isRepo && !o), error: o?.error ?? null,
+    });
+  }
+  return rows;
+}
+
+const STATUS_RANK = { asking: 0, attention: 1, working: 2, running: 3, exited: 4 };
+/** The session a row speaks for: the one most in need of you, else the first. */
+const leadSession = (row) => [...row.sessions].sort((a, b) => STATUS_RANK[statusClass(a)] - STATUS_RANK[statusClass(b)])[0] ?? null;
+
+/** The row's changed files as { path, status }, from the first session that has git in it; null for a row with none. */
+function rowFiles(row) {
+  const s = row.sessions.find((x) => x.git?.isRepo);
+  if (!s) return null;
+  const files = new Map();
+  for (const f of [...s.git.staged, ...s.git.unstaged]) if (!files.has(f.path)) files.set(f.path, { path: f.path, status: f.status });
+  return [...files.values()];
+}
+
+/** What a session is on: its latest prompt while it runs, else its conversation's title. */
+function latestPrompt(s) {
+  if (s.running) return s.conv?.turns?.at(-1)?.prompt ?? '';
+  return s.convInfo?.title ?? '';
+}
+
+/** Files changed in more than one worktree of the same repository: { key: repo|path, path, rows }. */
+function projectOverlaps(rows) {
+  const byFile = new Map();
+  for (const r of rows) {
+    if (!r.repo) continue;
+    for (const f of rowFiles(r) || []) {
+      const key = normPath(r.repo.root) + '|' + f.path;
+      if (!byFile.has(key)) byFile.set(key, { key, path: f.path, rows: [] });
+      byFile.get(key).rows.push(r);
+    }
+  }
+  return [...byFile.values()].filter((o) => o.rows.length > 1);
+}
+
+function renderProjectView() {
+  const tab = activeTab();
+  if (!isProjectTab(tab)) return;
+  const body = $('#projectBody');
+  const rows = projectRows(tab.projectId);
+  const overlaps = projectOverlaps(rows);
+  const overlapOf = (row, path) => overlaps.find((o) => o.rows.includes(row) && o.path === path);
+  const repos = [...new Set(rows.map((r) => r.repo).filter(Boolean))];
+  const bases = [...new Set(repos.map((r) => r.baseBranch).filter(Boolean))];
+  const errors = [...new Set(projectMembers(tab.projectId).map((s) => s.git?.root && projectView.repos.get(s.git.root.toLowerCase())?.error).filter(Boolean))];
+
+  const needs = rows.filter((r) => r.sessions.some(waitingForYou)).length;
+  const behind = rows.filter((r) => r.behind > 0).length;
+  const removable = rows.filter((r) => r.merged && r.changes === 0 && !r.main).length;
+  const n = (k, one, many = one + 's') => `${k} ${k === 1 ? one : many}`;
+  $('#projectSummary').textContent = [n(rows.length, 'worktree'), needs && `${needs} need${needs === 1 ? 's' : ''} you`,
+    behind && `${behind} behind ${bases.length === 1 ? bases[0] : 'the base branch'}`, removable && `${removable} can be removed`].filter(Boolean).join(' · ');
+
+  const head = h('div', { class: 'pv-head' },
+    h('span'), h('span', {}, 'Worktree · branch'), h('span', {}, 'Session'), h('span', {}, 'What it\'s on'), h('span', {}, 'Changes'),
+    h('span', { title: 'Commits on its branch that aren\'t on the base branch (↑), and the other way round (↓)' }, bases.length === 1 ? `vs ${bases[0]}` : 'vs base'),
+    h('span', {}, 'Pull request'), h('span'));
+
+  const rowEls = rows.flatMap((row) => {
+    const lead = leadSession(row);
+    const open = projectView.open.has(normPath(row.path));
+    const files = rowFiles(row);
+    const touched = files?.some((f) => overlapOf(row, f.path));
+    const pr = lead && lead.prInfo?.branch === lead.git?.branch ? lead.prInfo.data : null;
+    const changes = files ? files.length : row.changes;
+    const el = h('div', {
+      class: 'pv-row' + (open ? ' open' : '') + (projectView.hl?.includes(row) ? ' hl' : ''), 'data-path': normPath(row.path),
+      tabindex: 0, role: 'button', 'aria-expanded': String(open),
+      onclick: () => toggleProjectRow(row),
+      onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleProjectRow(row); } },
+    },
+    h('span', { class: 'dot ' + (lead ? statusClass(lead) : 'exited'), title: lead ? statusText(lead) : 'No session in this worktree' }),
+    h('div', { class: 'pv-branch' },
+      h('b', { title: row.branch ?? '' }, row.branch ?? (row.noRepo ? 'not a Git repository' : row.pending ? '…' : '(detached)')),
+      h('span', { title: row.path }, row.path, row.main ? ' · main worktree' : '', row.missing ? ' · folder missing' : '')),
+    h('div', { class: 'pv-session' }, row.sessions.length
+      ? row.sessions.map((s, i) => [i > 0 && ', ', h('span', { class: 'pv-name', title: s.name }, s.name)])
+      : h('span', { class: 'pv-none' }, 'no session')),
+    h('div', { class: 'pv-doing', title: lead ? latestPrompt(lead) : '' }, lead
+      ? [h('span', { class: 'st' }, statusText(lead)), latestPrompt(lead) && ' · ', latestPrompt(lead)]
+      : row.missing ? 'Its folder is gone; git still lists it' : 'Made outside the app, or its session was closed'),
+    h('div', { class: 'pv-changes' }, row.pending || row.noRepo ? '—' : changes > 0
+      ? [h('span', { class: 'n' }, String(changes)), ` file${changes === 1 ? '' : 's'}`, touched && h('span', { class: 'pv-also', title: 'A file here is also changed in another worktree' }, ' ⚠')]
+      : changes < 0 ? '?' : '—'),
+    h('div', { class: 'pv-vs' }, row.main || !row.repo?.baseBranch || row.pending || row.noRepo ? h('span', { class: 'even' }, row.main ? 'base' : '—')
+      : row.ahead || row.behind ? [row.ahead ? h('span', { class: 'ahead' }, `↑${row.ahead}`) : null, row.ahead && row.behind ? ' ' : null, row.behind ? h('span', { class: 'behind' }, `↓${row.behind}`) : null]
+      : h('span', { class: 'even' }, 'even')),
+    h('div', { class: 'pv-pr' }, pr?.pr
+      ? [h('a', { href: '#', title: `${pr.pr.draft ? 'Draft pull request' : 'Pull request'} #${pr.pr.number}: ${pr.pr.title}`, onclick: (e) => { e.preventDefault(); e.stopPropagation(); request('openUrl', { uri: pr.pr.url }); } }, `#${pr.pr.number}`),
+         pr.pr.draft && h('span', { class: 'pv-state' }, ' draft')]
+      : h('span', { class: 'even', title: lead ? '' : 'Open a session here to look up its pull request' }, '—')),
+    h('span', { class: 'pv-chev' }, iconEl('chevR')));
+    return open ? [el, projectRowDetail(row, files, overlapOf, pr)] : [el];
+  });
+
+  const overlapEls = overlaps.length
+    ? overlaps.map((o) => h('div', {
+        class: 'pv-overlap',
+        onmouseenter: () => { projectView.hl = o.rows; paintProjectHighlight(); },
+        onmouseleave: () => { projectView.hl = null; paintProjectHighlight(); },
+      }, h('span', { class: 'pv-tri' }, '⚠'), h('code', {}, o.path.split('/').pop()), ' is changed in ',
+      o.rows.map((r) => r.sessions[0]?.name ?? r.branch ?? r.path).join(' and '), ': they will conflict when the second merges.'))
+    : [h('div', { class: 'pv-overlap none' }, repos.length ? 'No file is changed in more than one worktree.' : '')];
+
+  const atTop = body.scrollTop;
+  fill(body,
+    errors.map((e) => h('div', { class: 'pv-error' }, e)),
+    h('div', { class: 'pv-table' }, head, rowEls, h('div', { class: 'pv-overlaps' }, overlapEls)),
+    h('div', { class: 'pv-legend' },
+      h('span', {}, h('i', { class: 'dot running' }), 'idle'), h('span', {}, h('i', { class: 'dot working' }), 'working'),
+      h('span', {}, h('i', { class: 'dot attention' }), 'finished while you were away'), h('span', {}, h('i', { class: 'dot asking' }), 'needs your answer'),
+      h('span', {}, h('i', { class: 'dot exited' }), 'not running, or no session')));
+  body.scrollTop = atTop;
+}
+
+function paintProjectHighlight() {
+  const keys = new Set((projectView.hl || []).map((r) => normPath(r.path)));
+  for (const el of $('#projectBody').querySelectorAll('.pv-row')) el.classList.toggle('hl', keys.has(el.dataset.path));
+}
+
+function toggleProjectRow(row) {
+  const key = normPath(row.path);
+  projectView.open.has(key) ? projectView.open.delete(key) : projectView.open.add(key);
+  renderProjectView();
+}
+
+function projectRowDetail(row, files, overlapOf, pr) {
+  const base = row.repo?.baseBranch;
+  const left = h('div', { class: 'pv-block' });
+  const right = h('div', { class: 'pv-block' });
+
+  // Each session in the worktree: its latest prompt and the start of Claude's answer, or its conversation when it isn't running.
+  for (const s of row.sessions) {
+    const last = s.running ? s.conv?.turns?.at(-1) : null;
+    left.append(h('div', {}, h('h3', {}, row.sessions.length > 1 ? `${s.name} · ${statusText(s)}` : statusText(s)),
+      h('div', { class: 'pv-conv' }, last
+        ? [h('div', { class: 'pv-turn' }, h('span', { class: 't' }, last.time ? relTime(last.time) : ''), h('span', { class: 'you' }, last.prompt)),
+           last.reply && h('div', { class: 'pv-turn' }, h('span', { class: 't' }, 'Claude'), h('span', { class: 'cl' }, plainText(last.reply).slice(0, 400)))]
+        : !isClaudeCommand(s.command) ? `Runs ${s.command}.`
+        : s.running ? 'No prompts in this conversation yet.'
+        : s.convInfo?.title ? `Conversation: ${s.convInfo.title}${s.convInfo.modified ? ` · last used ${relTime(s.convInfo.modified)}` : ''}`
+        : conversationLine(s) ?? 'Not running.')));
+  }
+  if (!row.sessions.length) left.append(h('div', {}, h('h3', {}, 'No session'),
+    h('div', { class: 'pv-conv' }, row.missing ? `Git lists this worktree at ${row.path}, but the folder is gone.`
+      : `This worktree exists at ${row.path} but no session is open in it.`)));
+
+  if (!row.noRepo && !row.pending) left.append(h('div', {}, h('h3', {}, files ? `Changed files (${files.length})` : row.changes > 0 ? `Changed files (${row.changes})` : 'Working tree'),
+    files?.length ? h('ul', { class: 'pv-files' }, files.map((f) => {
+      const o = overlapOf(row, f.path);
+      return h('li', {}, h('span', { class: 's ' + f.status[0] }, f.status[0]), f.path,
+        o && h('span', { class: 'pv-also' }, `also in ${o.rows.filter((r) => r !== row).map((r) => r.sessions[0]?.name ?? r.branch).join(', ')}`));
+    }))
+    : h('div', { class: 'pv-conv' }, files ? 'Clean.' : row.changes > 0 ? 'Open a session here to see them in Git Changes.' : row.changes < 0 ? 'Couldn\'t be read.' : 'Clean.')));
+
+  // Worth knowing
+  const hints = [];
+  if (row.noRepo) hints.push({ text: 'This folder isn\'t in a Git repository, so there\'s nothing to compare.' });
+  if (row.pending) hints.push({ text: 'Reading the repository…' });
+  if (row.error) hints.push({ text: row.error, warn: true });
+  if (row.behind && base) hints.push({ text: `${row.behind} commit${row.behind === 1 ? '' : 's'} behind ${base}: bring ${base} in before opening or updating a pull request.` });
+  if (row.merged && !row.main && row.changes === 0) hints.push({ text: `Everything on ${row.branch} is already on ${base}, and the tree is clean: the worktree can be removed.` });
+  if (row.merged && !row.main && row.changes > 0) hints.push({ text: `Everything on ${row.branch} is already on ${base}, but there are uncommitted changes here.`, warn: true });
+  if (!row.main && row.ahead && !pr?.pr && pr) hints.push({ text: `${row.ahead} commit${row.ahead === 1 ? '' : 's'} not in any pull request yet.` });
+  if (files?.some((f) => overlapOf(row, f.path))) hints.push({ text: 'A file here is also changed in another worktree of this repository.', warn: true });
+  if (!row.sessions.length && !row.missing) hints.push({ text: 'No session: start one here to carry on, or remove the worktree.' });
+  right.append(h('div', {}, h('h3', {}, 'Worth knowing'),
+    hints.length ? h('div', { class: 'pv-hints' }, hints.map((x) => h('div', { class: x.warn ? 'pv-warn' : 'pv-conv' }, x.text))) : h('div', { class: 'pv-conv' }, 'Nothing outstanding.')));
+
+  // Actions
+  const stop = (fn) => (e) => { e.stopPropagation(); fn(); };
+  const actions = h('div', { class: 'pv-actions' });
+  for (const s of row.sessions) {
+    actions.append(h('button', { class: 'btn primary', onclick: stop(() => expand(s.id)) }, row.sessions.length > 1 ? `Open ${s.name}` : s.startsOnOpen ? 'Open and start' : 'Open session'));
+    if (s.running && isClaudeCommand(s.command)) actions.append(h('button', { class: 'btn', onclick: stop(() => openConversation(s)) }, row.sessions.length > 1 ? `Conversation of ${s.name}` : 'Conversation'));
+  }
+  if (!row.sessions.length && !row.missing) actions.append(h('button', { class: 'btn primary', onclick: stop(() => startSessionIn(row)) }, 'Start a session here'));
+  if (pr?.pr) actions.append(h('button', { class: 'btn', onclick: stop(() => request('openUrl', { uri: pr.pr.url })) }, `View PR #${pr.pr.number}`));
+  else if (pr && !row.main && row.ahead) actions.append(h('button', { class: 'btn', onclick: stop(() => request('openUrl', { uri: pr.newUrl })) }, 'New pull request'));
+  if (row.repo && !row.main) actions.append(h('button', { class: 'btn', onclick: stop(() => confirmRemoveWorktree(row)) }, 'Remove worktree…'));
+  right.append(h('div', {}, h('h3', {}, 'Actions'), actions));
+
+  return h('div', { class: 'pv-detail', onclick: (e) => e.stopPropagation() }, left, right);
+}
+
+/** A session in a worktree that has none, with the options of the project's other sessions (the first Claude one). */
+function startSessionIn(row) {
+  const tab = activeTab();
+  const members = projectMembers(tab.projectId);
+  const like = members.find((s) => isClaudeCommand(s.command)) ?? members[0];
+  const name = freeName(leafName(row.branch && !row.branch.startsWith('(') ? row.branch : row.path));
+  addAndOpen({ directory: row.path, name, command: like ? ownOptionsOnly(like.command) : 'claude', project: tab.projectId === UNKNOWN ? '' : tab.projectId })
+    .catch((e) => toast(e.message, true));
+}
+
+/**
+ * Removing a worktree: its sessions go first (a process with the folder as its working directory would keep it), then
+ * git removes it, never forced, so one with uncommitted changes is refused and left as it is. The branch stays.
+ */
+function confirmRemoveWorktree(row) {
+  const tab = activeTab();
+  const projectId = tab.projectId;
+  const repo = row.repo;
+  const busy = row.changes > 0;
+  const error = h('div', { class: 'form-error', hidden: true });
+  const remove = h('button', { class: 'btn danger primary', disabled: busy }, 'Remove worktree');
+  remove.addEventListener('click', async () => {
+    remove.disabled = true;
+    remove.textContent = 'Removing…';
+    try {
+      for (const s of row.sessions) await request('removeSession', { id: s.id });
+      await request('worktree.remove', { root: repo.root, path: row.path });
+      closeModal();
+      toast(`Removed the worktree at ${row.path}. The branch ${row.branch ?? ''} stays.`);
+    } catch (e) {
+      error.hidden = false;
+      error.textContent = e.message;
+      remove.disabled = false;
+      remove.textContent = 'Remove worktree';
+    }
+    projectView.open.delete(normPath(row.path));
+    const t = activeTab();
+    if (isProjectTab(t) && t.projectId === projectId) loadProjectView(true);
+  });
+  openModal('Remove worktree', [
+    h('div', {}, `Remove the worktree at ${row.path}?`),
+    h('div', { class: 'dim' }, `The branch ${row.branch ?? ''} stays in the repository; only the folder goes.`),
+    row.sessions.length > 0 && h('div', {}, `${row.sessions.length === 1 ? 'This session is' : 'These sessions are'} in it and will be removed first: ${row.sessions.map((s) => `"${s.name}"`).join(', ')}.`),
+    busy && h('div', { class: 'form-error' }, `${row.changes} file${row.changes === 1 ? ' is' : 's are'} changed or new in this worktree and would be lost. Commit or undo ${row.changes === 1 ? 'it' : 'them'} first.`),
+    error,
+  ], [h('button', { class: 'btn', onclick: closeModal, 'data-autofocus': true }, 'Cancel'), remove]);
+}
 
 // ---- Markdown: enough for Claude's answers, built as DOM nodes (never HTML strings)
 

@@ -37,6 +37,8 @@
   --info-border: #264f78;
   --error-bg: #3a1d1d;
   --error-border: #6c2a2a;
+  --pv-warn-bg: #3a2e14;
+  --pv-warn-border: #6b5520;
   --ico-folder: #dcb67a;
   --ico-file: #9da5b4;
   --graph: #5d8ac4;
@@ -106,6 +108,8 @@
   --info-border: #9cc5ea;
   --error-bg: #fdeceb;
   --error-border: #e8a7a1;
+  --pv-warn-bg: #fff4d6;
+  --pv-warn-border: #e6c56a;
   --ico-folder: #b07d1f;
   --ico-file: #6a7280;
   --graph: #3d6fb5;
@@ -822,6 +826,68 @@ body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; user-selec
 .md hr { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
 .md a { color: var(--link); text-decoration: none; }
 .md a:hover { text-decoration: underline; }
+
+/* ---------------------------------------------------------------- Project view */
+#projectDoc { position: absolute; inset: 0; z-index: 20; display: flex; flex-direction: column; background: var(--editor-bg); }
+#projectRefresh.busy svg.ic { animation: pv-spin 1s linear infinite; }
+@keyframes pv-spin { to { transform: rotate(360deg); } }
+#projectBody { flex: 1; min-height: 0; overflow: auto; padding: 12px 16px 32px; outline: none; user-select: text; }
+.pv-error { background: var(--error-bg); border: 1px solid var(--error-border); border-radius: 4px; padding: 6px 10px; margin-bottom: 10px; }
+.pv-table { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; min-width: 760px; }
+.pv-head, .pv-row {
+  display: grid; grid-template-columns: 24px minmax(180px, 1.5fr) minmax(120px, 1fr) minmax(180px, 2fr) 76px 92px 96px 24px;
+  gap: 10px; align-items: center; padding: 0 10px;
+}
+.pv-head { height: 28px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-faint); border-bottom: 1px solid var(--border); background: var(--panel-2); border-radius: 4px 4px 0 0; }
+.pv-row { min-height: 40px; border-bottom: 1px solid var(--border-soft); cursor: pointer; }
+.pv-row:hover { background: var(--hover); }
+.pv-row.open { background: var(--hover-strong); }
+.pv-row.hl { box-shadow: inset 3px 0 0 var(--attention); }
+.pv-row:focus-visible { outline: 1px solid var(--focus); outline-offset: -1px; }
+.pv-row .dot { justify-self: center; }
+.pv-branch { min-width: 0; display: grid; gap: 1px; }
+.pv-branch b { font-weight: 500; font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pv-branch span { color: var(--text-faint); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pv-session { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pv-none { color: var(--text-faint); font-style: italic; }
+.pv-doing { min-width: 0; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pv-doing .st { color: var(--text); }
+.pv-changes { color: var(--text-dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.pv-changes .n { color: var(--st-m); font-weight: 600; }
+.pv-also { color: var(--attention); font-size: 11px; }
+.pv-vs { color: var(--text-dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.pv-vs .ahead { color: var(--ok); }
+.pv-vs .behind { color: var(--attention); }
+.pv-vs .even, .pv-pr .even { color: var(--text-faint); }
+.pv-pr a { color: var(--link); text-decoration: none; }
+.pv-pr a:hover { text-decoration: underline; }
+.pv-state { font-size: 11px; color: var(--text-faint); }
+.pv-chev { color: var(--text-faint); display: inline-flex; transition: transform .15s; }
+.pv-row.open .pv-chev { transform: rotate(90deg); }
+.pv-detail { background: var(--chrome-2); border-bottom: 1px solid var(--border); padding: 12px 14px 14px 44px; display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 18px; cursor: default; }
+.pv-detail h3 { margin: 0 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-faint); font-weight: 600; }
+.pv-block { min-width: 0; display: grid; gap: 12px; align-content: start; }
+.pv-conv { color: var(--text-dim); word-break: break-word; }
+.pv-turn { display: grid; grid-template-columns: 56px 1fr; gap: 8px; margin-bottom: 4px; }
+.pv-turn .t { color: var(--text-faint); font-size: 11px; padding-top: 2px; white-space: nowrap; }
+.pv-turn .you { color: var(--text); font-weight: 500; white-space: pre-wrap; }
+.pv-turn .cl { color: var(--text-dim); }
+.pv-files { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; }
+.pv-files li { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.pv-files .s { width: 12px; text-align: center; font-weight: 600; flex: none; }
+.pv-files .s.M { color: var(--st-m); } .pv-files .s.A, .pv-files .s.\? { color: var(--st-a); } .pv-files .s.D { color: var(--st-d); } .pv-files .s.R { color: var(--st-r); }
+.pv-files .pv-also { font-family: "Segoe UI", system-ui, sans-serif; white-space: nowrap; }
+.pv-hints { display: grid; gap: 6px; }
+.pv-warn { background: var(--pv-warn-bg); border: 1px solid var(--pv-warn-border); border-radius: 3px; padding: 5px 9px; }
+.pv-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.pv-overlaps { padding: 8px 12px; background: var(--panel-2); border-radius: 0 0 4px 4px; display: grid; gap: 4px; }
+.pv-overlap { display: flex; gap: 8px; align-items: center; color: var(--text-dim); }
+.pv-overlap:hover { color: var(--text); }
+.pv-overlap.none:empty { display: none; }
+.pv-overlap .pv-tri { color: var(--attention); }
+.pv-overlap code { color: var(--text); font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; }
+.pv-legend { color: var(--text-faint); font-size: 12px; display: flex; gap: 14px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+.pv-legend span { display: inline-flex; align-items: center; gap: 5px; }
 
 /* ---------------------------------------------------------------- panels (shown by Claude) */
 .panel-head { display: flex; align-items: center; gap: 6px; padding: 8px 8px 8px 10px; border-bottom: 1px solid var(--border-soft); }

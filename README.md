@@ -64,6 +64,7 @@ Releases are signed by **Llamachant Technology Ltd**. If SmartScreen still warns
 | Another session in a project | The **+** at the end of the project's group on the session tab row (at the end of the row when there are no projects). It works from that project's current session (or its first): *In the same folder* adds a session there in one click, with a conversation of its own; *In a new worktree…* (only in a Git repository) creates a worktree of it on a new branch (next to the repository by default) and opens a session there; *A different folder…* opens New session with the project chosen |
 | Switch a session to another conversation | Session menu (⋯) › *Resume a different conversation…* |
 | Close a session | The × on its tab in the title bar, or middle-click the tab. After you confirm, the session is removed and its process stopped; the folder isn't touched |
+| See a project's worktrees side by side | Right-click the project in the Projects row › *Project view*: one row per worktree with its session, what it's on, its changes, how far its branch is from `main`, and its pull request. Click a row for the detail and the actions |
 | Show one project | Ctrl+click its name in the Projects row, or right-click it › *Show only this project* |
 | Show several projects | Click a project's name or checkbox to show or hide it; **All** shows every project, **None** hides them all |
 | Put a session in a project | Pick the project when adding the session, drag its tab into the project's group, or right-click its tab › *Move to project…* |
@@ -112,6 +113,24 @@ Sessions are saved in `%APPDATA%\ClaudeTerminals\sessions.json`. Set `CLAUDE_TER
 ### Projects
 
 Projects group sessions, for example everything for one product across its worktrees. Only the ticked projects' sessions are shown. Sessions with no project are grouped under **Unknown**, which you tick and untick like a project. Each session's tab and tile carry a tag in its project's colour, so two sessions with the same name in different projects can be told apart. Hidden sessions keep running, and each project tab counts its sessions waiting for you, so a hidden project still gets noticed.
+
+### Project view
+
+Right-click a project › *Project view* opens a tab, next to the Terminal tab, with every worktree of the project in a table: one row per worktree of each repository the project's sessions are in, taken from git's own worktree list, so worktrees made outside the app, or whose session was closed, show too. Each row has:
+
+- its branch and folder, and the session in it (or *no session*), with the session's status dot;
+- what the session is on: its status and latest prompt, or its conversation's title while it isn't running;
+- how many files are changed in it, with a ⚠ when a file is also changed in another worktree of the same repository (a line under the table names the file and both worktrees, and lights their rows when hovered);
+- how far its branch is ahead of (↑) and behind (↓) the base branch (what `origin/HEAD` points at, else a local `main` or `master`);
+- its open pull request, as the Git panel's chip finds it.
+
+The summary line counts the worktrees, how many need you, how many are behind the base branch and how many can be removed. Click a row for the detail: the latest prompt and the start of Claude's answer, the changed files, what's worth knowing (behind the base branch, merged, not in a pull request yet), and the actions:
+
+- **Open session** (or **Conversation**), and **Start a session here** for a worktree that has none, with the options of the project's other sessions;
+- **View PR** or **New pull request** in the browser;
+- **Remove worktree…** for a worktree other than the main one: its sessions are removed first, then git removes the folder, never forced, so one with uncommitted changes is refused and left as it is. The branch stays.
+
+The view follows the sessions as they work and re-reads the repositories every half minute (or on Refresh). Like the Conversation tab, it shows with its project's sessions.
 
 ### Git
 
