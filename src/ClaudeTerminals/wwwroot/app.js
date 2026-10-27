@@ -147,6 +147,7 @@ const state = {
   sessions: [],              // ordered session objects
   byId: new Map(),
   expandedId: null,
+  projectViewOf: null,       // the project whose Project view is showing: a place of its own, with no session open
   currentId: store.get('currentId', null),   // session shown in the Git panel
   gitVisible: store.get('gitVisible', true),
   gitWidth: store.get('gitWidth', 400),
@@ -484,6 +485,8 @@ function syncSessions(list, projects) {
     else startSession(s);
   }
   applyProjectFilter(true);
+  // A Project view whose project has just been deleted goes back to all sessions.
+  if (state.projectViewOf != null && !allGroups().includes(state.projectViewOf)) showTerminalDoc();
   projectViewChanged();
 }
 
@@ -3254,8 +3257,10 @@ const activeTab = () => docs.tabs.find((t) => t.key === docs.active) || null;
  * shown (the session the Git panel is on, which expanding a session also makes current). Others wait until you're back.
  */
 function tabShown(t) {
+  // A Project view is shown on its own: neither a session's tabs with it, nor it with a session's.
+  if (isProjectTab(t)) return state.projectViewOf === t.projectId;
+  if (state.projectViewOf != null) return false;
   const cur = currentSession();
-  if (isProjectTab(t)) return !cur || groupOf(cur) === t.projectId;
   const s = state.byId.get(t.sessionId);
   return !cur || !s || groupOf(s) === groupOf(cur);
 }
@@ -3290,6 +3295,10 @@ function activateDoc(key) {
     else if (isProjectTab(prev)) prev.scrollTop = $('#projectBody').scrollTop;
     else if (diffEditor) prev.viewState = diffEditor.saveViewState();
   }
+  // A Project tab is a place of its own, like a session: opening it closes the open session, and anything else leaves it.
+  const target = docs.tabs.find((t) => t.key === key);
+  state.projectViewOf = isProjectTab(target) ? target.projectId : null;
+  if (state.projectViewOf != null) collapse();
   docs.active = docs.tabs.some((t) => t.key === key && tabShown(t)) ? key : 'terminal';
   const tab = activeTab();
   $('#diffDoc').hidden = !tab || isConvTab(tab) || isProjectTab(tab);
@@ -3384,7 +3393,7 @@ function renderDocTabs() {
     h('span', { class: 'doc-sub' }, `${s?.name ?? ''} · ${sub}`),
     h('button', { class: 'icon-btn small', title: 'Close (Ctrl+W)', onclick: () => closeDoc(t.key) }, iconEl('close')));
   });
-  fill($('#docTabs'), termTab, tabs);
+  fill($('#docTabs'), state.projectViewOf != null ? null : termTab, tabs);   // a Project view stands alone
   revealActive($('#docTabs'), '.doc-tab.active');
   // The project label in the session tab row looks selected while its Project view is showing.
   for (const label of document.querySelectorAll('.session-group-label')) label.classList.toggle('active', projectViewShowing(label.dataset.project));
@@ -3859,21 +3868,18 @@ const projectView = { repos: new Map(), open: new Set(), loading: 0, lastLoad: 0
 function openProjectView(projectId) {
   const members = projectMembers(projectId);
   if (!members.length) { toast(`${projectName(projectId)} has no sessions yet.`); return; }
-  const cur = currentSession();
-  if (!cur || groupOf(cur) !== projectId) expand(members[0].id);
   const key = projectKey(projectId);
   if (!docs.tabs.some((t) => t.key === key)) docs.tabs.push({ key, kind: 'project', projectId, preview: false, scrollTop: null });
   activateDoc(key);
 }
 
 function projectViewShowing(projectId) {
-  const t = activeTab();
-  return isProjectTab(t) && t.projectId === projectId;
+  return state.projectViewOf === projectId;
 }
 
 /**
- * A project's label at the start of its group in the session tab row: opens its Project view, or, while that's
- * showing, goes back to the terminal (as clicking the open session's tab goes back to all sessions).
+ * A project's label at the start of its group in the session tab row: switches to its Project view, as a session's
+ * tab switches to that session, or, while that's showing, goes back to all sessions (as the open session's tab does).
  */
 function toggleProjectView(projectId) {
   if (projectViewShowing(projectId)) showTerminalDoc();
