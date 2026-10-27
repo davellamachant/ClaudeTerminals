@@ -86,14 +86,23 @@ Plain `Esc` always goes to the terminal, because Claude Code uses it to interrup
 
 ### Sessions
 
-**Status dots:** each state has its own shape and motion as well as its colour.
-- **Working:** three small blue dots bounce in turn, and the session's name on its tab shimmers.
-- **Needs your answer:** a pink dot that hops, landing with a small ring, and glows brightest with each hop. Claude is asking you something (a permission, a question, a plan to approve, whether to trust the folder) and can't carry on until you answer; it goes back to normal once you have.
-- **Waiting for you:** an orange dot that beats every couple of seconds, glowing brightly with each beat; it means the session finished working while you weren't watching (or rang the bell).
+**Status dots:** each state has its own colour, and its own shape and motion.
+- **Working** (blue): the session's name on its tab shimmers too.
+- **Needs your answer** (pink): Claude is asking you something (a permission, a question, a plan to approve, whether to trust the folder) and can't carry on until you answer; it goes back to normal once you have.
+- **Waiting for you** (orange): the session finished working while you weren't watching (or rang the bell).
 - **Idle:** a green dot with a slowly breathing glow. When a session finishes working while you watch it, the dot pops in with one ring.
 - **Not running:** a hollow grey ring that stays still.
 
-With Windows' animation effects turned off the dots stay still, and their shapes (and the pink tab outline) still tell the states apart.
+How working, waiting and asking move is up to you: the palette button › **Status dots** shows four styles side by side, each moving, and previews the one you click on the whole app.
+
+| Style | Working | Waiting for you | Needs your answer |
+|---|---|---|---|
+| **Glow** (default) | three dots bounce in turn | the dot beats and glows | the dot hops, landing with a small ring, and glows as it leaps |
+| **Classic** | a comet spins round a breathing core | a dot in a ring, sending out a ping | the dot hops, and the session's tab lights up with a pink outline |
+| **Calm** | a ring with a gap turns slowly | a dot in a ring, fading gently | a pink diamond that slowly swells |
+| **Signal** | a ring fills round a small core | a square light blinking | a dot in a ring that shakes |
+
+With Windows' animation effects turned off the dots stay still, and in every style their shapes still tell the states apart.
 
 **Each session has its own conversation:** a new session's command is just `claude` (plus any options you add), and the app gives it a conversation id of its own.
 - **Starting:** it starts Claude with `--session-id <id>` until there's something saved, then with `--resume <id>`. Restarting the app or the session always reopens that conversation, even with several sessions in the same folder.
