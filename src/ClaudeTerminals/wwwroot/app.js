@@ -890,9 +890,9 @@ function renderSessionTabs() {
       style: g.color ? `--proj:${g.color}` : null,
     },
     h('button', {
-      class: 'session-group-label',
-      title: g.color ? `${g.name}: show only this project` : `${UNKNOWN_NAME}: sessions with no project. Click to show only these`,
-      onclick: () => showOnlyProject(g.id),
+      class: 'session-group-label' + (projectViewShowing(g.id) ? ' active' : ''), 'data-project': g.id,
+      title: `${g.color ? g.name : `${UNKNOWN_NAME}: sessions with no project`}\nClick for its Project view, its worktrees side by side (again to go back)`,
+      onclick: () => toggleProjectView(g.id),
     }, g.name),
     g.tabs,
     plus(g.sessions, g.color ? `in ${g.name}` : 'with no project'))));
@@ -3386,6 +3386,8 @@ function renderDocTabs() {
   });
   fill($('#docTabs'), termTab, tabs);
   revealActive($('#docTabs'), '.doc-tab.active');
+  // The project label in the session tab row looks selected while its Project view is showing.
+  for (const label of document.querySelectorAll('.session-group-label')) label.classList.toggle('active', projectViewShowing(label.dataset.project));
 }
 
 async function loadDiff(tab, keepView = false) {
@@ -3862,6 +3864,20 @@ function openProjectView(projectId) {
   const key = projectKey(projectId);
   if (!docs.tabs.some((t) => t.key === key)) docs.tabs.push({ key, kind: 'project', projectId, preview: false, scrollTop: null });
   activateDoc(key);
+}
+
+function projectViewShowing(projectId) {
+  const t = activeTab();
+  return isProjectTab(t) && t.projectId === projectId;
+}
+
+/**
+ * A project's label at the start of its group in the session tab row: opens its Project view, or, while that's
+ * showing, goes back to the terminal (as clicking the open session's tab goes back to all sessions).
+ */
+function toggleProjectView(projectId) {
+  if (projectViewShowing(projectId)) showTerminalDoc();
+  else openProjectView(projectId);
 }
 
 function showProjectView(tab) {

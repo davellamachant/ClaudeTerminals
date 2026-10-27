@@ -736,6 +736,7 @@ textarea.commit-msg { resize: vertical; min-height: 54px; height: 54px; user-sel
   border-right: 1px solid color-mix(in srgb, var(--proj) 35%, transparent);
 }
 .session-group-label:hover { background: color-mix(in srgb, var(--proj) 26%, transparent); }
+.session-group-label.active { background: color-mix(in srgb, var(--proj) 34%, transparent); box-shadow: inset 0 -2px 0 var(--proj); }   /* its Project view is showing */
 .session-group-label:focus-visible { outline: 1px solid var(--focus); outline-offset: -2px; }
 .session-group.unknown .session-group-label { font-style: italic; }
 .session-group .session-tab { height: 26px; }

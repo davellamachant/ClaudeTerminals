@@ -64,7 +64,7 @@ Releases are signed by **Llamachant Technology Ltd**. If SmartScreen still warns
 | Another session in a project | The **+** at the end of the project's group on the session tab row (at the end of the row when there are no projects). It works from that project's current session (or its first): *In the same folder* adds a session there in one click, with a conversation of its own; *In a new worktree…* (only in a Git repository) creates a worktree of it on a new branch (next to the repository by default) and opens a session there; *A different folder…* opens New session with the project chosen |
 | Switch a session to another conversation | Session menu (⋯) › *Resume a different conversation…* |
 | Close a session | The × on its tab in the title bar, or middle-click the tab. After you confirm, the session is removed and its process stopped; the folder isn't touched |
-| See a project's worktrees side by side | Session menu (⋯, or right-click a session tab) › *Project view*, or right-click the project in the Projects row: one row per worktree with its session, what it's on, its changes, how far its branch is from `main`, and its pull request. Click a row for the detail and the actions |
+| See a project's worktrees side by side | Click the project's name at the start of its group in the session tab row (again to go back), or Session menu (⋯, or right-click a session tab) › *Project view*, or right-click the project in the Projects row: one row per worktree with its session, what it's on, its changes, how far its branch is from `main`, and its pull request. Click a row for the detail and the actions |
 | Show one project | Ctrl+click its name in the Projects row, or right-click it › *Show only this project* |
 | Show several projects | Click a project's name or checkbox to show or hide it; **All** shows every project, **None** hides them all |
 | Put a session in a project | Pick the project when adding the session, drag its tab into the project's group, or right-click its tab › *Move to project…* |
@@ -116,7 +116,7 @@ Projects group sessions, for example everything for one product across its workt
 
 ### Project view
 
-*Project view* (on a session's ⋯ menu, a session tab's right-click menu, or a project's right-click menu in the Projects row) opens a tab, next to the Terminal tab, with every worktree of the project in a table (with no projects, of every session): one row per worktree of each repository the project's sessions are in, taken from git's own worktree list, so worktrees made outside the app, or whose session was closed, show too. Each row has:
+*Project view* (click a project's name at the start of its group in the session tab row, or find it on a session's ⋯ menu, a session tab's right-click menu, or a project's right-click menu in the Projects row) opens a tab, next to the Terminal tab, with every worktree of the project in a table (with no projects, of every session): one row per worktree of each repository the project's sessions are in, taken from git's own worktree list, so worktrees made outside the app, or whose session was closed, show too. Each row has:
 
 - its branch and folder, and the session in it (or *no session*), with the session's status dot;
 - what the session is on: its status and latest prompt, or its conversation's title while it isn't running;
