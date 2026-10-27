@@ -896,7 +896,7 @@ function renderSessionTabs() {
       class: 'session-group-label' + (projectViewShowing(g.id) ? ' active' : ''), 'data-project': g.id,
       title: `${g.color ? g.name : `${UNKNOWN_NAME}: sessions with no project`}\nClick for its Project view, its worktrees side by side (again to go back)`,
       onclick: () => toggleProjectView(g.id),
-    }, g.name),
+    }, iconEl('grid'), g.name),   // the Project tab's icon, so it's clear the name opens something
     g.tabs,
     plus(g.sessions, g.color ? `in ${g.name}` : 'with no project'))));
   }
