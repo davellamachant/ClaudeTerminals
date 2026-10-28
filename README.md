@@ -179,6 +179,75 @@ Claude can put things beside the terminal for you to keep in view: your task lis
 - **Panels stay** until you close them (middle-click the tab, or ⋯ › *Close panel*; both ask first) or remove their session, including across restarts. A panel closed by mistake can be brought back while the app runs: right-click any tab › *Reopen a closed panel*. Panels are kept in `panels.json` next to `sessions.json`. *Copy as Markdown* copies a panel's content.
 - **Getting started:** right-click any tab › *Example panel skill…* shows a ready-made `/my-tasks` skill (groups by status, ticks, Start session / Ask here / Copy branch buttons, Refresh) to save as `.claude/skills/my-tasks/SKILL.md` and point at your tracker's MCP tools.
 
+### Plugins
+
+A plugin is a web page of your own, shown in a document tab (like a diff or the Project view) or in the side panel (beside Git Changes). The palette button lists your plugins under **Plugins**, each with the menu items it adds there; pick one to open it. Plugins can add items to a project's or a session's menu too, and a button to the title bar. **Open the plugins folder** opens the folder they live in: `plugins` in the app's data folder (`%APPDATA%\ClaudeTerminals\plugins`). The folder is read each time the menu opens, so a plugin you add shows without restarting.
+
+Each plugin is a folder holding a `plugin.json` and its page:
+
+```
+plugins\
+  counter\
+    plugin.json
+    index.html
+```
+
+```json
+{
+  "title": "Counter",
+  "description": "Shown when you hover its tab",
+  "entry": "index.html",
+  "placement": "panel",
+  "menu": [
+    { "label": "Start again", "command": "reset" },
+    { "label": "Count this session", "command": "count", "where": ["session", "sessionTab"] }
+  ],
+  "toolbar": { "icon": "counter.svg", "tooltip": "open the counter", "command": "open" }
+}
+```
+
+- **The folder's name** is the plugin's id and its address: `https://counter.plugin.local/index.html`. Use letters, digits and hyphens.
+- **`title`** is its name on the menu and its tab (the folder's name if left out). **`entry`** is its page, a file inside the folder (`index.html` if left out). Its scripts, styles and images load from the same folder with relative paths.
+- **`placement`:** `"tab"` (the default) opens it as a document tab; `"panel"` as a tab in the side panel, which you can drag to another group like the others. Close it with a middle-click or its right-click menu.
+- **`menu`:** up to 8 items. Picking one opens the plugin and sends it the item's `command`, with what was clicked. **`where`** names the menus it's on, one or a list (the palette menu if left out):
+  - `"palette"`: under the plugin's name in the palette menu;
+  - `"project"`: a project's right-click menu in the Projects row;
+  - `"session"`: a session's ⋯ menu on its tile (or a right-click on the tile's header);
+  - `"sessionTab"`: a session tab's right-click menu.
+
+  In the project and session menus, plugins' items are under a **Plugins** heading at the end, each with its plugin's name beside it.
+- **`toolbar`:** a button in the title bar, after New Session and Git Changes, set apart from them. **`icon`** is an image file in the plugin's folder (SVG, PNG, ICO, GIF, JPEG or WebP, up to 64 KB); the button shows only the icon, never text, so it can't pass for one of the app's own buttons. Its tooltip is the plugin's name, then **`tooltip`** if given. Clicking it opens the plugin and sends **`command`**, if given, with the open session as context. The plugin's badge shows on its button too. Right-click the button › **Hide this button** to hide it; the plugin's **Show its title bar button** in the palette menu brings it back.
+
+**Talking to the app.** A plugin and the app exchange a few messages, each `{ type: 'claude-terminals:<name>', … }`. Listen with `addEventListener('message', …)`; send with `parent.postMessage(…, '*')`.
+
+| Message | Direction | What it does |
+|---|---|---|
+| `theme` `{ theme: 'light' \| 'dark' }` | To the plugin | Sent when its page loads and whenever the theme changes. The page is also opened with `?theme=light` or `?theme=dark`. |
+| `command` `{ command, context }` | To the plugin | One of its menu items, or its title bar button, was picked; sent once its page has loaded. `context` says what was clicked (below). |
+| `badge` `{ count }` or `{ dot: true }` | From the plugin | Puts a count (99+ above 99) or a dot on its own tab; `{ count: 0 }` clears it. |
+| `title` `{ title }` | From the plugin | Changes its own tab's caption (up to 60 characters); `{ title: null }` puts its name back. |
+
+The badge and caption last until its tab is closed. A plugin can only change its own tab; anything else it sends is ignored.
+
+**What a command's `context` holds**, by the menu it came from:
+
+| Menu | `context` |
+|---|---|
+| `palette` | `{ menu: 'palette' }` |
+| `toolbar` (its title bar button) | `{ menu: 'toolbar' }`, plus the session fields below for the session that's open, if one is |
+| `project` | `{ menu: 'project', project }`: the project's name (`null` for the sessions with no project) |
+| `session`, `sessionTab` | `{ menu, sessionId, session, directory, project }`: the session's id and name, its working folder, and its project's name (`null` if none) |
+
+That's all a plugin learns. The session id tells clicks on different sessions apart and stays the same while the session exists; it isn't a way into the session, and the app has nothing a plugin can ask with it. The folder is the one the session runs in; the plugin still can't read it.
+
+**What a plugin can't do.** A plugin is only a page. It's given no sessions, terminals, files or Git, and it can't reach the app:
+- it runs in a sandboxed frame with an origin of its own, so it can't read or change the app's page, or another plugin's;
+- the app listens to it for those two messages about its own tab only, and never through the bridge the app's own page uses; what it's told about a project or session is only what's in a command's `context`, when you pick its menu item;
+- it can't navigate the app, open windows, or use storage, the clipboard, the camera or notifications;
+- other origins can't read a plugin's files, and its frame can't leave plugin addresses.
+
+It can still run scripts, show forms and dialogs, and load files from its own folder. Its page reloads when its tab is closed, or dragged to another group. Install only plugins you trust, as you would any page you open.
+
 ### Theme and colours
 
 **Theme:** *System*, *Light* or *Dark*, from the palette button at the top right. *System* (the default) follows Windows' app mode (Settings › Personalisation › Colours), and changes with it. The terminals go light too, and each Claude is started in its matching theme (`--settings` with `{"theme":"light"}` or `"dark"`): Claude can't detect the terminal's colours itself, because the Windows console layer doesn't pass the question through. Sessions whose command passes its own `--settings` are left alone. Claude reads its theme when it starts, so after switching, the app offers to restart running Claude sessions; each carries on in its conversation.

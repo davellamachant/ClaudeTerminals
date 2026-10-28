@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using ClaudeTerminals.Git;
 using ClaudeTerminals.Panels;
+using ClaudeTerminals.Plugins;
 using ClaudeTerminals.Sessions;
 using ClaudeTerminals.Terminal;
 using ClaudeTerminals.Updates;
@@ -151,6 +152,31 @@ internal sealed class MainForm : Form
 
     private static string PanelConfigFolder => Path.Combine(SessionStore.AppDataFolder, "panels");
 
+    private static string PluginFolder => Path.Combine(SessionStore.AppDataFolder, "plugins");
+    private readonly Dictionary<string, PluginInfo> plugins = [];
+
+    /// <summary>
+    /// Reads the plugins folder and gives each plugin its address: its folder, served as https://&lt;id&gt;.plugin.local/.
+    /// Reads from other origins are refused (DenyCors), so neither another plugin nor a page elsewhere can fetch its files.
+    /// </summary>
+    private (List<PluginInfo> Found, List<string> Problems) LoadPlugins()
+    {
+        var core = webView.CoreWebView2;
+        var (found, problems) = PluginCatalog.Load(PluginFolder);
+        foreach (var gone in plugins.Keys.Except(found.Select(p => p.Id)).ToList())
+        {
+            core.ClearVirtualHostNameToFolderMapping(PluginCatalog.HostFor(gone));
+            plugins.Remove(gone);
+        }
+        foreach (var p in found)
+        {
+            if (!plugins.TryGetValue(p.Id, out var had) || had.Folder != p.Folder)
+                core.SetVirtualHostNameToFolderMapping(p.Host, p.Folder, CoreWebView2HostResourceAccessKind.DenyCors);
+            plugins[p.Id] = p;
+        }
+        return (found, problems);
+    }
+
     private void StartPanels()
     {
         panelStore.KeepOwners(sessions.Keys);
@@ -294,6 +320,8 @@ internal sealed class MainForm : Form
             core.SetVirtualHostNameToFolderMapping("app.local", root, CoreWebView2HostResourceAccessKind.Allow);
             core.WebMessageReceived += OnWebMessage;
             core.NewWindowRequested += (_, args) => args.Handled = true;
+            // Plugins are pages in frames of their own (see PluginCatalog): a plugin's frame stays on plugin addresses.
+            core.FrameNavigationStarting += (_, args) => { if (!PluginCatalog.IsPluginUri(args.Uri) && args.Uri != "about:blank") args.Cancel = true; };
             // The terminal's Paste menu item reads the clipboard; without this WebView2 asks "Allow clipboard access?"
             // the first time, a prompt that also takes focus away from the terminal. Only the app's own origin gets it
             // (requests name the origin, not the page; navigation never leaves the app page anyway).
@@ -303,6 +331,9 @@ internal sealed class MainForm : Form
                     Uri.TryCreate(args.Uri, UriKind.Absolute, out var origin) &&
                     origin.Scheme == Uri.UriSchemeHttps && string.Equals(origin.Host, "app.local", StringComparison.OrdinalIgnoreCase))
                     args.State = CoreWebView2PermissionState.Allow;
+                // A plugin gets nothing: no clipboard, camera, location or notifications, and no prompt asking for them.
+                else if (PluginCatalog.IsPluginUri(args.Uri))
+                    args.State = CoreWebView2PermissionState.Deny;
             };
             // The page's files come from the install folder and only change when the app is updated, but the browser
             // caches them heuristically from their timestamps; after an upgrade it could keep running the previous
@@ -790,6 +821,20 @@ internal sealed class MainForm : Form
             }
             case "openFolder":
                 OpenExternal(Get(msg).Info.Directory);
+                return null;
+
+            // ---- plugins
+            case "plugins.list":
+            {
+                // Read the plugins folder again, so a plugin added or changed shows without restarting.
+                var (found, problems) = LoadPlugins();
+                return new { folder = PluginFolder, plugins = found.Select(p => new { id = p.Id, title = p.Title, description = p.Description, url = p.Url, placement = p.Placement,
+                    menu = p.Menu.Select(i => new { label = i.Label, command = i.Command, where = i.Where }),
+                    toolbar = p.Toolbar is { } t ? new { icon = t.Icon, tooltip = t.Tooltip, command = t.Command } : null }), problems };
+            }
+            case "plugins.openFolder":
+                Directory.CreateDirectory(PluginFolder);
+                OpenExternal(PluginFolder);
                 return null;
 
             // ---- git
