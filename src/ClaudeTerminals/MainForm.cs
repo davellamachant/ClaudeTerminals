@@ -322,6 +322,18 @@ internal sealed class MainForm : Form
             core.NewWindowRequested += (_, args) => args.Handled = true;
             // Plugins are pages in frames of their own (see PluginCatalog): a plugin's frame stays on plugin addresses.
             core.FrameNavigationStarting += (_, args) => { if (!PluginCatalog.IsPluginUri(args.Uri) && args.Uri != "about:blank") args.Cancel = true; };
+            // And on its own plugin's address: the page answers a plugin's frame with what that plugin was allowed to see,
+            // so another plugin's page mustn't get into it.
+            core.FrameCreated += (_, created) =>
+            {
+                string? host = null;
+                created.Frame.NavigationStarting += (_, args) =>
+                {
+                    if (!Uri.TryCreate(args.Uri, UriKind.Absolute, out var u) || u.Scheme != Uri.UriSchemeHttps) return;
+                    host ??= u.Host;
+                    if (!string.Equals(host, u.Host, StringComparison.OrdinalIgnoreCase)) args.Cancel = true;
+                };
+            };
             // The terminal's Paste menu item reads the clipboard; without this WebView2 asks "Allow clipboard access?"
             // the first time, a prompt that also takes focus away from the terminal. Only the app's own origin gets it
             // (requests name the origin, not the page; navigation never leaves the app page anyway).
@@ -829,13 +841,29 @@ internal sealed class MainForm : Form
                 // Read the plugins folder again, so a plugin added or changed shows without restarting.
                 var (found, problems) = LoadPlugins();
                 return new { folder = PluginFolder, plugins = found.Select(p => new { id = p.Id, title = p.Title, description = p.Description, url = p.Url, placement = p.Placement,
-                    menu = p.Menu.Select(i => new { label = i.Label, command = i.Command, where = i.Where }),
+                    menu = p.Menu.Select(i => new { label = i.Label, command = i.Command, where = i.Where }), access = p.Access,
                     toolbar = p.Toolbar is { } t ? new { icon = t.Icon, tooltip = t.Tooltip, command = t.Command } : null }), problems };
             }
             case "plugins.openFolder":
                 Directory.CreateDirectory(PluginFolder);
                 OpenExternal(PluginFolder);
                 return null;
+            // What a plugin allowed to see sessions asks for. Only the app's page asks (as for everything here); it checks
+            // the plugin was allowed before it does.
+            case "plugins.folders":
+                // The top-level folders of the session's repository, with their file counts.
+                return await GitService.GetTopFoldersAsync(GitDir(msg));
+            case "plugins.activity":
+            {
+                // What each session has done: the events of its conversation (the one its Claude is in, or the saved one it
+                // would resume). The page says which version of each it has, and gets only what's new since; a different
+                // conversation starts it over.
+                var ids = msg.TryGetProperty("ids", out var list) && list.ValueKind == JsonValueKind.Array
+                    ? list.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!).ToList() : [];
+                var have = msg.TryGetProperty("have", out var h) && h.ValueKind == JsonValueKind.Object ? h.Clone() : default;
+                var asked = ids.Select(id => (id, s: sessions.GetValueOrDefault(id))).ToList();
+                return await Task.Run(() => asked.Select(a => ActivityOf(a.id, a.s, have)).ToList());
+            }
 
             // ---- git
             case "git.refresh":
@@ -1007,6 +1035,35 @@ internal sealed class MainForm : Form
 
     private TerminalSession Get(JsonElement msg) =>
         sessions.TryGetValue(Str(msg, "id"), out var s) ? s : throw new KeyNotFoundException("Unknown session");
+
+    /// <summary>
+    /// One session's part of a plugins.activity answer: the events of the conversation its Claude is in (or the saved one
+    /// it would resume), from the version the page has (<paramref name="have"/>: id → { conversation, version }) on.
+    /// </summary>
+    private static object ActivityOf(string id, TerminalSession? s, JsonElement have)
+    {
+        string? conversation = null, path = null;
+        if (s != null)
+        {
+            if (s.IsRunning && ConversationReader.FindLiveSession(s.ProcessIds()) is { } live)
+            {
+                conversation = live.SessionId;
+                path = ConversationReader.FindTranscript(live.SessionId, live.Cwd);
+            }
+            if (path == null && s.Info.Conversation is { } saved)
+            {
+                conversation = saved;
+                path = ConversationReader.FindTranscript(saved, s.Info.Directory);
+            }
+        }
+        if (path == null) return new { id, found = false, conversation, version = 0L, from = 0, events = Array.Empty<ActivityEvent>() };
+        var data = ActivityReader.Read(path);
+        var from = 0;
+        if (have.ValueKind == JsonValueKind.Object && have.TryGetProperty(id, out var mine) && OptStr(mine, "conversation") == conversation &&
+            mine.TryGetProperty("version", out var v) && v.ValueKind == JsonValueKind.Number)
+            from = (int)Math.Clamp(v.GetInt64(), 0, data.Events.Count);
+        return new { id, found = true, conversation, version = data.Version, from, events = data.Events.Skip(from).ToArray() };
+    }
 
     private string GitDir(JsonElement msg)
     {

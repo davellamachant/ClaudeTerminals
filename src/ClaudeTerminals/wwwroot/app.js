@@ -4606,6 +4606,8 @@ function themeMenu(x, y) {
       { label: p.title, kbd: p.placement === 'panel' ? 'Side panel' : '', action: () => openPlugin(p.id) },
       ...p.menu.filter((m) => m.where.includes('palette')).map((m) => ({ label: [h('span', { class: 'menu-indent' }), m.label], action: () => openPlugin(p.id, m.command, { menu: 'palette' }) })),
       p.toolbar && hiddenPluginButtons.has(p.id) && { label: [h('span', { class: 'menu-indent' }), 'Show its title bar button'], action: () => setPluginButton(p.id, true) },
+      p.access.includes('sessions') && { label: [h('span', { class: 'menu-indent' }), pluginMayHave(p, 'sessions') ? 'Stop it seeing your sessions' : 'Let it see your sessions'],
+        action: () => setPluginAccess(p, 'sessions', !pluginMayHave(p, 'sessions')) },
     ]),
     plugins.problems.length > 0 && { label: `${plugins.problems.length} couldn't be loaded`, kbd: 'Why?', action: () => toast(plugins.problems.join('\n'), true) },
     { label: plugins.list.length ? 'Open the plugins folder' : 'Add a plugin: open the plugins folder', action: () => request('plugins.openFolder') },
@@ -4850,14 +4852,16 @@ function revealActive(row, selector) {
 /**
  * Plugins: web pages of their own (see PluginCatalog), opened from the palette menu, each in a document tab or, with
  * "placement": "panel" in its plugin.json, a tab in the side panel. A plugin runs in a sandboxed frame on its own origin
- * (https://<id>.plugin.local/), so it can't reach the app, its sessions, files or terminals, or another plugin.
+ * (https://<id>.plugin.local/), so it can't reach the app, its files or terminals, or another plugin, and sees sessions only if
+ * you allowed it (see pluginRequest).
  *
  * Messages, each { type: 'claude-terminals:<name>', … }. To a plugin: theme { theme: 'light' | 'dark' } (also ?theme= on
  * its address) whenever it changes, and command { command, context } when one of its menu items (or its title bar
  * button, see renderPluginButtons) is picked, context
  * saying what was clicked (see pluginMenuItems): a name and folder to go on, not a way into the session. From a plugin, about
  * its own tab and nothing else: badge { count } or { dot: true } ({ count: 0 } clears it), and title { title } (null
- * puts its name back). Anything else it sends is ignored.
+ * puts its name back); and request, for what its "access" lets it see (see pluginRequest). Anything else it sends is
+ * ignored.
  */
 const plugins = { list: [], problems: [], folder: null, loaded: false };
 const pluginById = (id) => plugins.list.find((p) => p.id === id);
@@ -5023,12 +5027,120 @@ function renderPluginButtons() {
   }));
 }
 
-// What a plugin asks for its own tab. Only its own frame is listened to, so it can't speak for another plugin.
+// ---- access: what a plugin can see beyond its own page
+
+/**
+ * The access you allowed each plugin, by plugin id (["sessions"]), kept; access you refused is only until the app
+ * restarts, so the plugin asks again then. A plugin is asked about only for what its plugin.json's "access" names.
+ */
+const pluginAccess = store.get('pluginAccess', {});
+const pluginRefused = new Set();   // 'id|kind'
+const pluginAsking = new Map();    // 'id|kind' → the answer, while you're being asked
+const pluginMayHave = (p, kind) => p.access.includes(kind) && !!pluginAccess[p.id]?.includes(kind);
+
+function setPluginAccess(p, kind, allowed) {
+  const kinds = new Set(pluginAccess[p.id] ?? []);
+  if (allowed) { kinds.add(kind); pluginRefused.delete(p.id + '|' + kind); } else { kinds.delete(kind); pluginRefused.add(p.id + '|' + kind); }
+  if (kinds.size) pluginAccess[p.id] = [...kinds]; else delete pluginAccess[p.id];
+  store.set('pluginAccess', pluginAccess);
+  // Stopped: the page starts over, so it no longer holds what it was shown.
+  const f = pluginFrames.get(p.id);
+  if (!allowed && f) { f.ready = false; f.frame.src = f.frame.src; }
+}
+
+/** Whether the plugin may see kind: allowed before, or you allow it now (asked once at a time, and not again once refused). */
+function pluginAllowed(p, kind) {
+  if (!p.access.includes(kind)) return Promise.resolve(false);
+  if (pluginMayHave(p, kind)) return Promise.resolve(true);
+  const key = p.id + '|' + kind;
+  if (pluginRefused.has(key)) return Promise.resolve(false);
+  if (!pluginAsking.has(key)) pluginAsking.set(key, askPluginAccess(p, kind).finally(() => pluginAsking.delete(key)));
+  return pluginAsking.get(key);
+}
+
+function askPluginAccess(p, kind) {
+  return new Promise((resolve) => {
+    let answered = false;
+    const answer = (yes) => {
+      if (answered) return;
+      answered = true;
+      setPluginAccess(p, kind, yes);
+      resolve(yes);
+    };
+    openModal(`Let ${p.title} see your sessions?`, h('div', {},
+      h('p', {}, `${p.title} is a plugin, from ${plugins.folder}\\${p.id}. It asks to see:`),
+      h('ul', {},
+        h('li', {}, 'your sessions: their names, projects and folders, and whether each is working or waiting for you;'),
+        h('li', {}, 'what Claude did in each: your prompts, the files it read and edited, the commands it ran and the questions it asked;'),
+        h('li', {}, 'how many files each top-level folder of their repositories holds.')),
+      h('p', {}, 'It can’t type into a session or change a file. But like any web page it could send what it sees to a website, so allow only a plugin you trust. The palette menu can stop it seeing them later.')), [
+      h('button', { class: 'btn', 'data-autofocus': true, onclick: () => { answer(false); closeModal(); } }, 'Don’t allow'),
+      h('button', { class: 'btn primary', onclick: () => { answer(true); closeModal(); } }, 'Allow'),
+    ]);
+    onModalClose = () => answer(false);   // closed any other way
+  });
+}
+
+/** A session as plugins allowed to see sessions are told it. status is statusClass's: exited, asking (needs your answer), attention (finished, waiting for you), working or running (idle). */
+const pluginSessionInfo = (s) => ({
+  id: s.id, name: s.name, project: groupOf(s) === UNKNOWN ? null : projectName(groupOf(s)), directory: s.directory,
+  worktree: s.git?.isRepo ? s.git.root : null, status: statusClass(s), open: s.id === state.expandedId,
+});
+
+/**
+ * A plugin's request { requestId, name, … }; the answer is response { requestId, result } or { requestId, error }.
+ * With "sessions" access:
+ *   sessions            → every session (see pluginSessionInfo)
+ *   activity { ids, have } → what Claude did in each: [{ id, found, conversation, version, from, events }], events
+ *                          from `from` on ({ t, k, file, text, ok, q }; see ActivityReader). have: id → { conversation,
+ *                          version } that the plugin already has, so only what's new comes back
+ *   folders { sessionId } → { root, folders: [{ name, files }] }, the session's repository's top-level folders, or null
+ *   showSession { sessionId } → opens the session, as clicking its tab would
+ */
+async function pluginRequest(p, m) {
+  const sessionArg = () => {
+    const s = state.byId.get(m.sessionId);
+    if (!s) throw new Error('There is no such session.');
+    return s;
+  };
+  const NEEDS = { sessions: 'sessions', activity: 'sessions', folders: 'sessions', showSession: 'sessions' };
+  const kind = NEEDS[m.name];
+  if (!kind) throw new Error(`There is no request "${m.name}".`);
+  if (!p.access.includes(kind)) throw new Error(`Its plugin.json doesn't ask for "${kind}" access.`);
+  if (!await pluginAllowed(p, kind)) throw new Error(`It isn't allowed to see your ${kind}.`);
+  switch (m.name) {
+    case 'sessions': return state.sessions.map(pluginSessionInfo);
+    case 'activity': {
+      const ids = (Array.isArray(m.ids) ? m.ids : []).filter((id) => typeof id === 'string' && state.byId.has(id)).slice(0, 100);
+      const have = m.have && typeof m.have === 'object' ? m.have : {};
+      return request('plugins.activity', { ids, have: Object.fromEntries(ids.filter((id) => have[id]).map((id) => [id, { conversation: String(have[id].conversation ?? ''), version: Number(have[id].version) || 0 }])) });
+    }
+    case 'folders': {
+      const s = sessionArg();
+      return s.git?.isRepo ? request('plugins.folders', { id: s.id }) : null;
+    }
+    case 'showSession': {
+      const s = sessionArg();
+      showTerminalDoc();
+      expand(s.id);
+      return null;
+    }
+  }
+}
+
+// What a plugin asks for its own tab, and its requests. Only its own frame is listened to, so it can't speak for
+// another plugin (and the host keeps each plugin's frame on its own address).
 addEventListener('message', (e) => {
   const id = [...pluginFrames].find(([, f]) => f.frame.contentWindow === e.source)?.[0];
   const m = e.data;
   if (!id || typeof m?.type !== 'string') return;
   const f = pluginFrames.get(id);
+  if (m.type === 'claude-terminals:request') {
+    const p = pluginById(id), frame = f.frame;
+    const reply = (answer) => frame.contentWindow?.postMessage({ type: 'claude-terminals:response', requestId: m.requestId, ...answer }, '*');
+    pluginRequest(p, m).then((result) => reply({ result: result ?? null }), (err) => reply({ error: err.message }));
+    return;
+  }
   if (m.type === 'claude-terminals:badge') {
     const n = Math.floor(Number(m.count));
     f.badge = n > 0 ? { count: Math.min(n, 999) } : m.dot === true ? { dot: true } : null;

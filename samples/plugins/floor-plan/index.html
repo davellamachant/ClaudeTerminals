@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Floor plan</title>
+  <link rel="stylesheet" href="floor.css">
+</head>
+<body>
+  <header class="bar">
+    <select id="project" aria-label="Project"></select>
+    <span id="summary" class="summary"></span>
+    <button id="play" class="btn" title="Replay what happened, from the start (Space)">▶ Replay</button>
+    <button id="live" class="btn" title="Follow what's happening now (End)">● Live</button>
+    <span class="legend"><span><i class="read"></i>read</span><span><i class="edit"></i>edited</span><span><i class="two"></i>two sessions</span></span>
+  </header>
+  <main id="body" tabindex="-1">
+    <div id="message" class="message" hidden></div>
+    <div id="attn" class="attn"></div>
+    <div class="main">
+      <div id="stage" class="floor"></div>
+      <div id="rail" class="rail"></div>
+    </div>
+    <div class="time">
+      <span class="lab">Rewind</span>
+      <div class="lanes"><canvas id="lanes"></canvas><div id="playhead" class="playhead"></div><input type="range" id="range" min="0" value="0" step="1" aria-label="Rewind"></div>
+      <span id="pos" class="lab"></span>
+      <div id="days" class="days"></div>
+    </div>
+  </main>
+  <div id="tip" class="tip" hidden></div>
+  <script src="floor.js"></script>
+</body>
+</html>

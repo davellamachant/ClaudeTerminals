@@ -1,0 +1,9 @@
+{
+  "title": "Floor plan",
+  "description": "A project's sessions on a map of its code: each top-level folder a room, each session where it's working",
+  "entry": "index.html",
+  "access": ["sessions"],
+  "menu": [
+    { "label": "Floor plan", "command": "show", "where": ["project", "session", "sessionTab"] }
+  ]
+}

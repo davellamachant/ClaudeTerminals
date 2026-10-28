@@ -216,6 +216,7 @@ plugins\
   - `"sessionTab"`: a session tab's right-click menu.
 
   In the project and session menus, plugins' items are under a **Plugins** heading at the end, each with its plugin's name beside it.
+- **`access`:** what it asks to see beyond its own page, one or a list. There's one kind, `"sessions"` (see **Seeing your sessions** below). Leave it out and it sees nothing.
 - **`toolbar`:** a button in the title bar, after New Session and Git Changes, set apart from them. **`icon`** is an image file in the plugin's folder (SVG, PNG, ICO, GIF, JPEG or WebP, up to 64 KB); the button shows only the icon, never text, so it can't pass for one of the app's own buttons. Its tooltip is the plugin's name, then **`tooltip`** if given. Clicking it opens the plugin and sends **`command`**, if given, with the open session as context. The plugin's badge shows on its button too. Right-click the button › **Hide this button** to hide it; the plugin's **Show its title bar button** in the palette menu brings it back.
 
 **Talking to the app.** A plugin and the app exchange a few messages, each `{ type: 'claude-terminals:<name>', … }`. Listen with `addEventListener('message', …)`; send with `parent.postMessage(…, '*')`.
@@ -226,6 +227,8 @@ plugins\
 | `command` `{ command, context }` | To the plugin | One of its menu items, or its title bar button, was picked; sent once its page has loaded. `context` says what was clicked (below). |
 | `badge` `{ count }` or `{ dot: true }` | From the plugin | Puts a count (99+ above 99) or a dot on its own tab; `{ count: 0 }` clears it. |
 | `title` `{ title }` | From the plugin | Changes its own tab's caption (up to 60 characters); `{ title: null }` puts its name back. |
+| `request` `{ requestId, name, … }` | From the plugin | Asks for something its `access` lets it see (below). |
+| `response` `{ requestId, result }` or `{ requestId, error }` | To the plugin | The answer to a request. |
 
 The badge and caption last until its tab is closed. A plugin can only change its own tab; anything else it sends is ignored.
 
@@ -238,15 +241,26 @@ The badge and caption last until its tab is closed. A plugin can only change its
 | `project` | `{ menu: 'project', project }`: the project's name (`null` for the sessions with no project) |
 | `session`, `sessionTab` | `{ menu, sessionId, session, directory, project }`: the session's id and name, its working folder, and its project's name (`null` if none) |
 
-That's all a plugin learns. The session id tells clicks on different sessions apart and stays the same while the session exists; it isn't a way into the session, and the app has nothing a plugin can ask with it. The folder is the one the session runs in; the plugin still can't read it.
+Without `access`, that's all a plugin learns. The session id tells clicks on different sessions apart and stays the same while the session exists; it isn't a way into the session. The folder is the one the session runs in; the plugin still can't read it.
 
-**What a plugin can't do.** A plugin is only a page. It's given no sessions, terminals, files or Git, and it can't reach the app:
+**Seeing your sessions.** A plugin whose `plugin.json` has `"access": ["sessions"]` can ask about your sessions. The first time it asks, the app asks you whether to let it, saying what it would see; your answer is kept (a refusal only until the app restarts). The plugin's entry in the palette menu has **Let it see your sessions** or **Stop it seeing your sessions**; stopping reloads its page, so it no longer holds what it was shown. It's read only: nothing here types into a session or changes a file.
+
+| Request | Answer |
+|---|---|
+| `sessions` | Every session: `{ id, name, project, directory, worktree, status, open }`. `worktree` is the top of its Git working tree (`null` outside Git). `status` is its status dot: `working`, `running` (idle), `asking` (needs your answer), `attention` (finished, waiting for you) or `exited`. `open` is true for the session that's open. |
+| `activity` `{ ids, have }` | What Claude did in each session, read from its conversation: `[{ id, found, conversation, version, from, events }]`. Each event is `{ t, k, file, text, ok, q }`: its time; its kind (`prompt`, `read`, `search`, `edit`, `run`, `build`, `test`, `ask`, `say`, `agent`, `compact` or `other`); the file read or edited; the prompt, question, command or first sentence of an answer; whether a test, build or edit succeeded, once known; and whether an answer ends in a question. `have` maps a session id to the `{ conversation, version }` you already have, so only newer events come back, from index `from`. |
+| `folders` `{ sessionId }` | The top-level folders of the session's repository with how many tracked files each holds: `{ root, folders: [{ name, files }] }`, `root` being the repository's main worktree. `null` outside Git. |
+| `showSession` `{ sessionId }` | Opens the session, as clicking its tab would. |
+
+[`samples/plugins/floor-plan`](samples/plugins/floor-plan) is a plugin that uses them: a project's sessions on a map of its code, each top-level folder a room and each session standing at the file it's working on, with a slider to rewind. To try it, copy the folder into your plugins folder.
+
+**What a plugin can't do.** A plugin is only a page. It's given no terminals, files or Git, no sessions unless you allowed it to see them, and it can't reach the app:
 - it runs in a sandboxed frame with an origin of its own, so it can't read or change the app's page, or another plugin's;
-- the app listens to it for those two messages about its own tab only, and never through the bridge the app's own page uses; what it's told about a project or session is only what's in a command's `context`, when you pick its menu item;
+- the app listens to it only for the messages above, never through the bridge the app's own page uses, and answers a request only with what that plugin was allowed to see;
 - it can't navigate the app, open windows, or use storage, the clipboard, the camera or notifications;
-- other origins can't read a plugin's files, and its frame can't leave plugin addresses.
+- other origins can't read a plugin's files, and its frame can't leave its own plugin's address.
 
-It can still run scripts, show forms and dialogs, and load files from its own folder. Its page reloads when its tab is closed, or dragged to another group. Install only plugins you trust, as you would any page you open.
+It can still run scripts, show forms and dialogs, load files from its own folder, and reach websites as any page can, so a plugin you let see your sessions could send what it sees elsewhere. Its page reloads when its tab is closed, or dragged to another group. Install only plugins you trust, as you would any page you open.
 
 ### Theme and colours
 
