@@ -77,6 +77,31 @@
           </div>
           <div id="projectBody" tabindex="-1"></div>
         </section>
+
+        <section id="floorDoc" hidden>
+          <div class="diff-toolbar">
+            <span id="floorSummary" class="diff-summary"></span>
+            <button id="floorRefresh" class="icon-btn" title="Refresh: read every conversation again"></button>
+            <button id="floorPlay" class="tb-btn text" title="Replay what happened, from the start (Space)"></button>
+            <button id="floorLive" class="tb-btn text" title="Follow what's happening now (End)"></button>
+            <span id="floorLegend" class="fl-legend"></span>
+            <div class="spacer"></div>
+            <span id="floorTitle" class="dim"></span>
+          </div>
+          <div id="floorBody" tabindex="-1">
+            <div id="floorAttn" class="fl-attn"></div>
+            <div class="fl-main">
+              <div id="floorStage" class="fl-floor"></div>
+              <div id="floorRail" class="fl-rail"></div>
+            </div>
+            <div class="fl-time">
+              <span class="fl-lab">Rewind</span>
+              <div class="fl-lanes"><canvas id="floorLanes"></canvas><div id="floorPlayhead" class="fl-playhead"></div><input type="range" id="floorRange" min="0" value="0" step="1" aria-label="Rewind"></div>
+              <span id="floorPos" class="fl-lab"></span>
+              <div id="floorDays" class="fl-days"></div>
+            </div>
+          </div>
+        </section>
         </div>
       </div>
 

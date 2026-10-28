@@ -36,6 +36,9 @@ const PATHS = {
   refresh: 'M13 3v3.5H9.5M12.6 6.2A5 5 0 1 0 13 9',
   grid: 'M2.5 2.5h4.5v4.5H2.5zM9 2.5h4.5v4.5H9zM2.5 9h4.5v4.5H2.5zM9 9h4.5v4.5H9z',
   list: 'M5.8 4h7.7M5.8 8h7.7M5.8 12h7.7M2.6 4h.1M2.6 8h.1M2.6 12h.1',   // the Project view: a list of the project's worktrees
+  map: 'M2.5 2.5h11v11h-11zM2.5 7.5h5.5M8 2.5v5M8 7.5h5.5M5.5 7.5v6',   // the Floor plan: rooms with walls between them
+  play: 'M5 3l8 5-8 5z',
+  pause: 'M5.5 3v10M10.5 3v10',
   git: 'M5 3v10M5 11a2 2 0 1 0 0 .01M5 3a1.6 1.6 0 1 0 0 .01M11 3a1.6 1.6 0 1 0 0 .01M11 4.6C11 8 5 7 5 10',
   branch: 'M5 2.5v8M5 12a1.5 1.5 0 1 0 0 .01M11 4a1.5 1.5 0 1 0 0 .01M11 5.5c0 3-6 2.5-6 5',
   chevR: 'M6 4l4 4-4 4',
@@ -318,6 +321,7 @@ function projectMenu(p, x, y) {
   if (p.unknown) {   // a group, not a project: nothing to rename, move or delete
     showMenu(x, y, [
       { label: 'Project view: its worktrees side by side', action: () => openProjectView(UNKNOWN) },
+      { label: 'Floor plan: its sessions on a map of the code', action: () => openFloorPlan(UNKNOWN) },
       '-',
       { label: 'Show only sessions with no project', action: () => showOnlyProject(UNKNOWN) },
       { label: state.hiddenProjects.has(UNKNOWN) ? 'Show alongside the others' : 'Hide', action: () => toggleProject(UNKNOWN) },
@@ -327,6 +331,7 @@ function projectMenu(p, x, y) {
   const i = state.projects.indexOf(p);
   showMenu(x, y, [
     { label: 'Project view: its worktrees side by side', action: () => openProjectView(p.id) },
+    { label: 'Floor plan: its sessions on a map of the code', action: () => openFloorPlan(p.id) },
     '-',
     { label: 'Show only this project', action: () => showOnlyProject(p.id) },
     { label: state.hiddenProjects.has(p.id) ? 'Show alongside the others' : 'Hide', action: () => toggleProject(p.id) },
@@ -1182,6 +1187,7 @@ function sessionMenu(s, x, y) {
     { label: 'Show Git changes', action: () => showGit(s.id) },
     { label: 'Show conversation', action: () => openConversation(s) },
     { label: `Project view: ${projectName(groupOf(s))}${projectName(groupOf(s)).endsWith('s') ? '’' : '’s'} worktrees side by side`, action: () => openProjectView(groupOf(s)) },
+    { label: `Floor plan: ${projectName(groupOf(s))}${projectName(groupOf(s)).endsWith('s') ? '’' : '’s'} sessions on a map of the code`, action: () => openFloorPlan(groupOf(s)) },
     '-',
     { label: 'Resume a different conversation…', action: () => showResumeDialog(s) },
     { label: 'Rename / edit command…', action: () => showEditDialog(s) },
@@ -3290,8 +3296,8 @@ const activeTab = () => docs.tabs.find((t) => t.key === docs.active) || null;
  * shown (the session the Git panel is on, which expanding a session also makes current). Others wait until you're back.
  */
 function tabShown(t) {
-  // A Project view is shown on its own: neither a session's tabs with it, nor it with a session's.
-  if (isProjectTab(t)) return state.projectViewOf === t.projectId;
+  // A Project view or Floor plan is shown on its own: neither a session's tabs with it, nor it with a session's.
+  if (isProjectTab(t) || isFloorTab(t)) return state.projectViewOf === t.projectId;
   if (state.projectViewOf != null) return false;
   const cur = currentSession();
   const s = state.byId.get(t.sessionId);
@@ -3328,15 +3334,17 @@ function activateDoc(key) {
     else if (isProjectTab(prev)) prev.scrollTop = $('#projectBody').scrollTop;
     else if (diffEditor) prev.viewState = diffEditor.saveViewState();
   }
-  // A Project tab is a place of its own, like a session: opening it closes the open session, and anything else leaves it.
+  // A Project or Floor plan tab is a place of its own, like a session: opening it closes the open session, and anything
+  // else leaves it.
   const target = docs.tabs.find((t) => t.key === key);
-  state.projectViewOf = isProjectTab(target) ? target.projectId : null;
+  state.projectViewOf = isProjectTab(target) || isFloorTab(target) ? target.projectId : null;
   if (state.projectViewOf != null) collapse();
   docs.active = docs.tabs.some((t) => t.key === key && tabShown(t)) ? key : 'terminal';
   const tab = activeTab();
-  $('#diffDoc').hidden = !tab || isConvTab(tab) || isProjectTab(tab);
+  $('#diffDoc').hidden = !tab || isConvTab(tab) || isProjectTab(tab) || isFloorTab(tab);
   $('#convDoc').hidden = !isConvTab(tab);
   $('#projectDoc').hidden = !isProjectTab(tab);
+  $('#floorDoc').hidden = !isFloorTab(tab);
   $('#termPane').classList.toggle('behind', !!tab);
   hideRailCard();
   renderDocTabs();
@@ -3344,6 +3352,7 @@ function activateDoc(key) {
     if (prev !== tab) {
       if (isConvTab(tab)) showConversation(tab);
       else if (isProjectTab(tab)) showProjectView(tab);
+      else if (isFloorTab(tab)) showFloorPlan(tab);
       else loadDiff(tab);
     }
   } else {
@@ -3368,7 +3377,7 @@ function closeDoc(key) {
   } else {
     renderDocTabs();
   }
-  if (!docs.tabs.some((t) => !isConvTab(t) && !isProjectTab(t))) disposeDiffModels();
+  if (!docs.tabs.some((t) => !isConvTab(t) && !isProjectTab(t) && !isFloorTab(t))) disposeDiffModels();
 }
 
 function cycleDoc(delta) {
@@ -3398,6 +3407,18 @@ function renderDocTabs() {
         onmousedown: (e) => { if (e.button === 1) e.preventDefault(); },
         onauxclick: (e) => { if (e.button === 1) closeDoc(t.key); },
       }, iconEl('list'), h('span', { class: 'doc-title' }, 'Project'),
+      h('span', { class: 'doc-sub' }, projectName(t.projectId)),
+      h('button', { class: 'icon-btn small', title: 'Close (Ctrl+W)', onclick: () => closeDoc(t.key) }, iconEl('close')));
+    }
+    if (isFloorTab(t)) {
+      return h('div', {
+        class: 'doc-tab' + (docs.active === t.key ? ' active' : ''),
+        'data-id': t.key,
+        title: `${projectName(t.projectId)}: its sessions on a map of the code, each at the file it is working on`,
+        onclick: (e) => { if (!e.target.closest('button')) activateDoc(t.key); },
+        onmousedown: (e) => { if (e.button === 1) e.preventDefault(); },
+        onauxclick: (e) => { if (e.button === 1) closeDoc(t.key); },
+      }, iconEl('map'), h('span', { class: 'doc-title' }, 'Floor plan'),
       h('span', { class: 'doc-sub' }, projectName(t.projectId)),
       h('button', { class: 'icon-btn small', title: 'Close (Ctrl+W)', onclick: () => closeDoc(t.key) }, iconEl('close')));
     }
@@ -4862,3 +4883,485 @@ enableTabDrag($('#docTabs'), {
 applyGitVisibility();
 applyDiffOptions();
 document.fonts.ready.then(() => post({ type: 'ready' }));
+
+
+// ------------------------------------------------------------------ Floor plan: a project's sessions on a map of the code
+// The repository's top-level folders are rooms, sized by how many files they hold; every file a session has read or
+// edited is a cell in its room (blue read, amber edited, outlined when two sessions touched it); each session is a
+// person standing at the file it is on, with a bubble saying what it's doing in plain words, and a card beside the
+// floor telling its story turn by turn. Whoever needs an answer is asked for at the top. The slider at the bottom
+// rewinds through everything that happened; Live follows what's happening now. The events come from the sessions'
+// conversation files (floor.events), read again every few seconds while the floor is showing.
+
+const floorKey = (projectId) => 'floor|' + projectId;
+const isFloorTab = (t) => t?.kind === 'floor';
+const FLOOR_REFRESH_MS = 2500, FLOOR_ROOMS_MS = 60_000, FLOOR_MAX_EVENTS = 6000;
+const FL_W = 1000, FL_H = 600, FL_HALL = 50, FL_PAD = 6, FL_CELL = 9, FL_GAP = 3, FL_BREAK = 14;
+const FL_COLORS = [1, 2, 3, 4, 5, 6, 7, 8].map((i) => `var(--fl-s${i})`);
+const sv = (tag, attrs = {}, ...kids) => { const e = document.createElementNS("http://www.w3.org/2000/svg", tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); for (const k of kids.flat()) if (k != null) e.append(k instanceof Node ? k : String(k)); return e; };
+
+const floorPlan = {
+  projectId: null, members: [], data: new Map(),   // session id → { conversation, version, events }
+  rooms: null, roomsRoot: null, roomsAt: 0, geometry: null, cells: new Map(), counts: new Map(), shared: new Set(),
+  merged: [], idx: null, focus: null, playing: false, timer: null, playTimer: null, loading: 0, world: null,
+  stageKey: null, stage: null, svg: null, cellEls: new Map(), roomEls: new Map(), trailEls: [], people: [], lanesLen: -1,
+};
+
+/** Switches to the project's Floor plan, a place of its own like its Project view (see activateDoc). */
+function openFloorPlan(projectId) {
+  const members = projectMembers(projectId);
+  if (!members.length) { toast(`${projectName(projectId)} has no sessions yet.`); return; }
+  const key = floorKey(projectId);
+  if (!docs.tabs.some((t) => t.key === key)) docs.tabs.push({ key, kind: 'floor', projectId, preview: false });
+  activateDoc(key);
+}
+
+function showFloorPlan(tab) {
+  if (floorPlan.projectId !== tab.projectId) {
+    Object.assign(floorPlan, { projectId: tab.projectId, members: [], data: new Map(), rooms: null, roomsRoot: null, roomsAt: 0, geometry: null, cells: new Map(), counts: new Map(), shared: new Set(), merged: [], idx: null, focus: null, stageKey: null });
+    floorStop();
+  }
+  $('#floorTitle').textContent = projectName(tab.projectId);
+  renderFloor();
+  loadFloor(true);
+  $('#floorBody').focus({ preventScroll: true });
+  floorTick();
+}
+
+/** Reads again every few seconds while the floor is showing; the next read is scheduled only after this one. */
+function floorTick() {
+  clearTimeout(floorPlan.timer);
+  floorPlan.timer = setTimeout(async () => {
+    if (!isFloorTab(activeTab())) return;
+    await loadFloor();
+    floorTick();
+  }, FLOOR_REFRESH_MS);
+}
+
+/** The rooms (now and then) and what's new in every session's conversation; then the floor is drawn again. */
+async function loadFloor(force = false) {
+  const tab = activeTab();
+  if (!isFloorTab(tab) || floorPlan.loading) return;
+  floorPlan.loading++;
+  $('#floorRefresh').classList.add('busy');
+  try {
+    const members = projectMembers(tab.projectId);
+    floorPlan.members = members;
+    // The floor is the repository most of the project's sessions are in; sessions elsewhere stand in the hallway.
+    const byRoot = new Map();
+    for (const s of members) if (s.git?.isRepo && s.git.root) { const k = s.git.root.toLowerCase(); byRoot.set(k, [...(byRoot.get(k) ?? []), s]); }
+    const main = [...byRoot.values()].sort((a, b) => b.length - a.length)[0]?.[0] ?? null;
+    if (main && (force || Date.now() - floorPlan.roomsAt > FLOOR_ROOMS_MS)) {
+      try {
+        const rooms = await request('floor.rooms', { id: main.id });
+        floorPlan.roomsAt = Date.now();
+        if (rooms && rooms.root.toLowerCase() !== (floorPlan.roomsRoot ?? '').toLowerCase()) {
+          Object.assign(floorPlan, { rooms, roomsRoot: rooms.root, geometry: null, cells: new Map(), counts: new Map(), stageKey: null });
+        } else if (rooms) floorPlan.rooms = rooms;
+      } catch (e) { if (!floorPlan.rooms) toast(e.message, true); }
+    }
+    const have = {};
+    for (const [id, d] of floorPlan.data) have[id] = { conversation: d.conversation, version: d.version };
+    const results = await request('floor.events', { ids: members.map((s) => s.id), have });
+    for (const r of results) {
+      const d = floorPlan.data.get(r.id) ?? { conversation: null, version: 0, events: [] };
+      const fresh = r.events.map((e) => ({ ...e, t: Date.parse(e.t) }));
+      if (!r.found) d.events = [];
+      else if (d.conversation !== r.conversation || r.from > d.events.length) d.events = fresh;
+      else d.events = d.events.slice(0, r.from).concat(fresh);
+      d.conversation = r.conversation; d.version = r.version; d.found = r.found;
+      floorPlan.data.set(r.id, d);
+    }
+    mergeFloor();
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    floorPlan.loading--;
+    $('#floorRefresh').classList.remove('busy');
+  }
+  if (isFloorTab(activeTab())) renderFloor();
+}
+
+/** Where a file is on the floor: its room (top-level folder of the repository) and its path in it, or outside. */
+function floorPlace(file, s) {
+  if (!file) return null;
+  const norm = (p) => p.replace(/\\/g, '/');
+  const f = norm(file), lower = f.toLowerCase();
+  const name = f.split('/').pop();
+  const roots = [s.git?.root, floorPlan.roomsRoot].filter(Boolean).map((r) => norm(r).toLowerCase().replace(/\/$/, ''));
+  for (const root of roots) {
+    if (!lower.startsWith(root + '/')) continue;
+    const rel = f.slice(root.length + 1);
+    const top = rel.includes('/') ? rel.split('/')[0] : '(root)';
+    const rooms = floorPlan.geometry?.roomSet;
+    const room = !rooms ? null : rooms.has(top) ? top : rooms.has('(other)') ? '(other)' : null;
+    return { key: rel.toLowerCase(), rel, name, room };
+  }
+  return { key: 'outside:' + lower, rel: f, name, room: null };
+}
+
+/** All sessions' events in time order, with a cell for every file as it first appears, and which files two sessions share. */
+function mergeFloor() {
+  if (!floorPlan.geometry) floorGeometry();
+  const g = floorPlan.geometry;
+  const merged = [];
+  floorPlan.members.forEach((s, si) => { for (const e of floorPlan.data.get(s.id)?.events ?? []) merged.push({ ...e, si, s }); });
+  merged.sort((a, b) => a.t - b.t);
+  floorPlan.merged = merged.length > FLOOR_MAX_EVENTS ? merged.slice(-FLOOR_MAX_EVENTS) : merged;
+  const who = new Map();
+  for (const e of floorPlan.merged) {
+    if (!e.file) continue;
+    const place = floorPlace(e.file, e.s);
+    e.key = place.key; e.name = place.name;
+    if (!floorPlan.cells.has(place.key)) {
+      const room = place.room ? g.rooms.find((r) => r.name === place.room) : g.hall;
+      const i = floorPlan.counts.get(room.name) ?? 0;
+      floorPlan.counts.set(room.name, i + 1);
+      const cols = Math.max(1, Math.floor((room.w - 10) / (FL_CELL + FL_GAP)));
+      // A room holds as many rows of cells as fit; the hallway, two. Files past that share the last slot, which then
+      // says how many more there are, rather than spilling over the room's edge.
+      const rows = Math.max(1, Math.floor((room.h - (room.hall ? 18 : 22)) / (FL_CELL + FL_GAP)));
+      const slot = Math.min(i, cols * rows - 1), overflow = i > cols * rows - 1;
+      floorPlan.cells.set(place.key, { key: place.key, col: slot % cols, x: room.x + 6 + (slot % cols) * (FL_CELL + FL_GAP), y: room.y + (room.hall ? 16 : 20) + Math.floor(slot / cols) * (FL_CELL + FL_GAP), room, name: place.name, path: place.rel, overflow });
+    }
+    (who.get(place.key) ?? who.set(place.key, new Set()).get(place.key)).add(e.si);
+  }
+  floorPlan.shared = new Set([...who].filter(([, set]) => set.size > 1).map(([k]) => k));
+}
+
+/** The rooms laid out as a squarified treemap (biggest first, top left), with a hallway along the bottom. */
+function floorGeometry() {
+  const list = floorPlan.rooms?.rooms ?? [];
+  const kept = list.slice(0, 13).map((r) => ({ name: r.name, n: r.files }));
+  const rest = list.slice(13).reduce((n, r) => n + r.files, 0);
+  if (rest) kept.push({ name: '(other)', n: rest });
+  const rooms = kept.length ? floorSquarify(kept.map((r) => ({ ...r, n: Math.max(r.n, 60) })), FL_PAD, FL_PAD, FL_W - 2 * FL_PAD, FL_H - FL_HALL - 2 * FL_PAD).map((r) => ({ ...r, x: r.x + 2, y: r.y + 2, w: r.w - 4, h: r.h - 4 })) : [];
+  const hall = { name: 'Outside the repository', x: FL_PAD + 2, y: FL_H - FL_HALL + 2, w: FL_W - 2 * FL_PAD - 4, h: FL_HALL - FL_PAD - 2, hall: true };
+  floorPlan.geometry = { rooms, hall, roomSet: new Set(rooms.map((r) => r.name)) };
+}
+
+function floorSquarify(items, x, y, w, h) {
+  const total = items.reduce((n, i) => n + i.n, 0); const out = []; let rest = items.slice(); let rx = x, ry = y, rw = w, rh = h; const scale = (w * h) / total;
+  while (rest.length) {
+    const horiz = rw >= rh; const side = horiz ? rh : rw; let row = [], best = Infinity;
+    for (const it of rest) {
+      const cand = [...row, it]; const area = cand.reduce((n, i) => n + i.n * scale, 0); const len = area / side;
+      const worst = Math.max(...cand.map((i) => { const s = (i.n * scale) / len; return Math.max(len / s, s / len); }));
+      if (worst <= best) { row = cand; best = worst; } else break;
+    }
+    const area = row.reduce((n, i) => n + i.n * scale, 0); const len = area / side; let off = 0;
+    for (const it of row) { const s = (it.n * scale) / len; out.push(horiz ? { ...it, x: rx, y: ry + off, w: len, h: s } : { ...it, x: rx + off, y: ry, w: s, h: len }); off += s; }
+    if (horiz) { rx += len; rw -= len; } else { ry += len; rh -= len; }
+    rest = rest.slice(row.length);
+  }
+  return out;
+}
+
+// ---- narration: one plain sentence per event, and the state it leaves the session in
+
+const flEsc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const flPlural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+const flTime = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+const flDay = (t) => new Date(t).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+function flAgo(t, now) {
+  const m = Math.round((now - t) / 60e3);
+  return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.floor(m / 60)} h ago` : `${Math.floor(m / 1440)} d ago`;
+}
+
+function floorNarrate(e, ctx) {
+  const f = e.name ? `<span class="fl-f">${flEsc(e.name)}</span>` : '';
+  const out = (text, state = 'busy', short = null) => ({ text, state, short: short ?? text.replace(/<[^>]+>/g, '') });
+  switch (e.k) {
+    case 'prompt': ctx.edits = {}; return out(`You: “${flEsc(e.text)}”`, 'busy', 'Reading your message');
+    case 'read': return out(e.key?.startsWith('outside:') ? `Reading ${f}, outside the repository` : `Reading ${f}`);
+    case 'search': return out(`Searching the code for “${flEsc(e.text)}”`, 'busy', 'Searching the code');
+    case 'edit': {
+      if (e.ok === false) return out(`An edit of ${f} didn’t apply, trying again`);
+      const n = ctx.edits[e.key] = (ctx.edits[e.key] ?? 0) + 1;
+      return out(n > 2 ? `Editing ${f} again, ${n} edits with no test run` : n === 2 ? `Editing ${f} again` : `Editing ${f}`);
+    }
+    case 'test': ctx.edits = {}; return e.ok === true ? out('Tests passed') : e.ok === false ? out('Tests failed, looking at why') : out('Running the tests');
+    case 'build': return e.ok === false ? out('Build failed, fixing it') : out('Building');
+    case 'run': return out(`Running: ${flEsc(e.text)}`, 'busy', 'Running a command');
+    case 'ask': return out(`Asking you: “${flEsc(e.text)}”`, 'needs', 'Needs your answer');
+    case 'say': return e.q ? out(`Asking you: “${flEsc(e.text)}”`, 'needs', 'Needs your answer') : out(`Done: ${flEsc(e.text)}`, 'done', 'Finished, waiting for you');
+    case 'agent': return out(`Sent a helper to ${flEsc(e.text)}`, 'busy', 'Sent a helper');
+    case 'compact': return out('Summarising the conversation to make room', 'busy', 'Making room');
+    default: return out('Working');
+  }
+}
+
+/** A turn is everything between two of your prompts, in one line: read 3 files, edited 2, tests passed. */
+function floorTurnSummary(tn) {
+  const parts = [];
+  if (tn.reads.size) parts.push(`read ${flPlural(tn.reads.size, 'file')}`);
+  if (tn.edits.size) { const names = [...tn.edits]; parts.push(`edited ${names.slice(0, 2).map((n) => `<span class="fl-f">${flEsc(n)}</span>`).join(', ')}${names.length > 2 ? ` and ${names.length - 2} more` : ''}`); }
+  if (tn.tests.length) { const last = tn.tests[tn.tests.length - 1]; parts.push(last === true ? `tests passed${tn.tests.length > 1 ? ` after ${tn.tests.length} runs` : ''}` : last === false ? `tests still failing after ${flPlural(tn.tests.length, 'run')}` : 'ran the tests'); }
+  if (tn.runs) parts.push(`ran ${flPlural(tn.runs, 'command')}`);
+  if (!parts.length) return 'Thinking';
+  const s = parts.join(', '); return s[0].toUpperCase() + s.slice(1);
+}
+
+/** The world at slider position idx, recomputed from the start so that rewinding is exact. */
+function floorCompute(idx) {
+  const per = floorPlan.members.map(() => ({ state: 'off', text: 'Not started yet', short: '', pos: null, trail: [], edits: {}, lastT: null, turns: [], touched: new Map() }));
+  const cellState = {}, cellWho = {};
+  for (let i = 0; i < idx; i++) {
+    const e = floorPlan.merged[i], p = per[e.si]; p.lastT = e.t;
+    const n = floorNarrate(e, p); p.state = n.state; p.text = n.text; p.short = n.short;
+    if (e.k === 'prompt' || !p.turns.length) p.turns.push({ t: e.t, you: e.k === 'prompt' ? e.text : null, reads: new Set(), edits: new Set(), tests: [], runs: 0, outcome: null });
+    const tn = p.turns[p.turns.length - 1];
+    if (e.k === 'read' && e.key) tn.reads.add(e.key);
+    if (e.k === 'edit' && e.name) tn.edits.add(e.name);
+    if (e.k === 'test') tn.tests.push(e.ok);
+    if (e.k === 'run' || e.k === 'build') tn.runs++;
+    tn.outcome = n.state === 'needs' || n.state === 'done' ? { state: n.state, text: n.text } : e.k === 'prompt' ? tn.outcome : null;
+    if (e.key) {
+      const c = floorPlan.cells.get(e.key);
+      if (c) {
+        p.pos = c; p.trail.push(c);
+        if (e.k === 'edit') cellState[e.key] = 'edit'; else cellState[e.key] ??= 'read';
+        (cellWho[e.key] ??= new Map()).set(e.si, { t: e.t, k: e.k });
+        p.touched.set(e.key, e.t);
+      }
+    }
+  }
+  return { per, cellState, cellWho };
+}
+
+// ---- drawing
+
+const floorLiveIdx = () => floorPlan.merged.length;
+const floorIdx = () => Math.min(floorPlan.idx ?? floorLiveIdx(), floorLiveIdx());
+const floorRank = (s) => ({ needs: 0, done: 1, busy: 2, off: 3 }[s]);
+
+/** The stage (rooms, cells, trails, people) is built once per repository and set of sessions; cells are added as files appear. */
+function floorStage() {
+  const g = floorPlan.geometry; const key = (floorPlan.roomsRoot ?? '') + '|' + floorPlan.members.map((s) => s.id).join(',');
+  if (floorPlan.stageKey === key && floorPlan.stage) return;
+  floorPlan.stageKey = key;
+  const host = $('#floorStage'); host.replaceChildren();
+  const stage = h('div', { class: 'fl-stage' });
+  const svg = sv('svg', { viewBox: `0 0 ${FL_W} ${FL_H}`, 'aria-label': 'Floor plan of the repository' });
+  floorPlan.roomEls = new Map(); floorPlan.cellEls = new Map();
+  for (const r of [...g.rooms, g.hall]) {
+    const el = sv('rect', { class: r.hall ? 'fl-hall' : 'fl-room', x: r.x, y: r.y, width: r.w, height: r.h, rx: 3 }); svg.append(el); floorPlan.roomEls.set(r.name, el);
+    const fit = Math.floor((r.w - 12) / 6.4); const label = r.name.length <= fit ? r.name : r.name.slice(0, Math.max(3, fit - 1)) + '…';
+    svg.append(sv('text', { class: 'fl-room-name', x: r.x + 6, y: r.y + 12 }, label));
+    if (!r.hall && r.w > 120) svg.append(sv('text', { class: 'fl-room-n', x: r.x + r.w - 6, y: r.y + 12, 'text-anchor': 'end' }, String(r.n)));
+  }
+  const cellLayer = sv('g'); svg.append(cellLayer);
+  floorPlan.trailEls = floorPlan.members.map((s, i) => { const p = sv('path', { class: 'fl-trail', stroke: FL_COLORS[i % FL_COLORS.length], d: '' }); svg.append(p); return p; });
+  stage.append(svg);
+  floorPlan.people = floorPlan.members.map((s, i) => {
+    const colour = FL_COLORS[i % FL_COLORS.length];
+    const p = h('div', { class: 'fl-person', 'data-si': i, hidden: true },
+      h('div', { class: 'fl-av', style: `background:${colour};color:${colour}` }, h('span', { style: 'color:#fff' }, (s.name[0] ?? '?').toUpperCase())),
+      h('div', { class: 'fl-badge' }), h('div', { class: 'fl-bubble' }));
+    p.addEventListener('click', (e) => { e.stopPropagation(); floorFocus(floorPlan.focus === i ? null : i); });
+    stage.append(p); return p;
+  });
+  host.append(stage);
+  const unzoom = h('button', { class: 'btn fl-unzoom', hidden: true, onclick: () => floorFocus(null) }, '← Whole floor'); host.append(unzoom);
+  floorPlan.stage = stage; floorPlan.svg = svg; floorPlan.cellLayer = cellLayer; floorPlan.unzoom = unzoom;
+  if (!floorPlan.rooms) {
+    svg.append(sv('text', { x: FL_W / 2, y: (FL_H - FL_HALL) / 2, 'text-anchor': 'middle', fill: 'var(--text-faint)', 'font-size': 14 },
+      floorPlan.members.some((s) => s.git?.isRepo) ? 'Reading the repository…' : 'No session of this project is in a Git repository, so there are no rooms: everything happens in the hallway.'));
+  }
+}
+
+/** The cell's rectangle (made on first sight) and its name, which shows when zoomed in; none for an overflow file. */
+function floorCellEl(c) {
+  if (c.overflow) return null;
+  let el = floorPlan.cellEls.get(c.key);
+  if (el) return el;
+  el = sv('rect', { class: 'fl-cell', x: c.x, y: c.y, width: FL_CELL, height: FL_CELL, rx: 1.5, 'data-key': c.key });
+  // Names on neighbouring cells would overlap, so every other column's name sits a line lower.
+  const name = sv('text', { class: 'fl-cell-name', x: c.x, y: c.y + FL_CELL + (c.col % 2 ? 8.5 : 4) }, c.name.length > 22 ? c.name.slice(0, 21) + '…' : c.name);
+  floorPlan.cellLayer.append(el, name);
+  floorPlan.cellEls.set(c.key, el);
+  el.nameEl = name;
+  return el;
+}
+
+/** "+N more" after a room's last slot when more files were touched there than its rows of cells can show. */
+function floorMoreLabels() {
+  const more = new Map();
+  for (const c of floorPlan.cells.values()) if (c.overflow) more.set(c.room.name, (more.get(c.room.name) ?? 0) + 1);
+  for (const [name, el] of floorPlan.moreEls ?? []) if (!more.has(name)) { el.remove(); floorPlan.moreEls.delete(name); }
+  floorPlan.moreEls ??= new Map();
+  for (const [name, n] of more) {
+    const slot = [...floorPlan.cells.values()].find((c) => c.overflow && c.room.name === name);
+    let el = floorPlan.moreEls.get(name);
+    if (!el) { el = sv('text', { class: 'fl-room-n', x: slot.x + FL_CELL + 3, y: slot.y + FL_CELL - 1 }); floorPlan.cellLayer.append(el); floorPlan.moreEls.set(name, el); }
+    el.textContent = `+${n} more`;
+  }
+}
+
+function renderFloor() {
+  const tab = activeTab();
+  if (!isFloorTab(tab)) return;
+  const members = floorPlan.members;
+  if (!members.length) { $('#floorStage').replaceChildren(h('div', { class: 'fl-empty' }, `${projectName(tab.projectId)} has no sessions.`)); $('#floorRail').replaceChildren(); $('#floorAttn').replaceChildren(); return; }
+  if (!floorPlan.geometry) floorGeometry();
+  floorStage();
+  const idx = floorIdx(); const world = floorPlan.world = floorCompute(idx); const { per, cellState, cellWho } = world;
+  const live = floorPlan.idx == null;
+  const now = live ? Date.now() : idx ? floorPlan.merged[idx - 1].t : Date.now();
+  const f = floorPlan.focus;
+  const activeRooms = new Set();
+  for (const c of floorPlan.cells.values()) {
+    const st = cellState[c.key]; const mine = f != null && st && per[f].touched.has(c.key); const dim = f != null && st && !mine;
+    if (st) activeRooms.add(c.room.name);
+    const el = floorCellEl(c); if (!el) continue;
+    el.setAttribute('class', `fl-cell ${st ?? ''}${st && floorPlan.shared.has(c.key) && cellWho[c.key]?.size > 1 ? ' shared' : ''}${dim ? ' dim' : ''}`);
+    el.nameEl.classList.toggle('mine', !!mine);
+  }
+  floorMoreLabels();
+  for (const [name, el] of floorPlan.roomEls) el.classList.toggle('active', activeRooms.has(name));
+  const hall = floorPlan.geometry.hall;
+  per.forEach((p, i) => {
+    const person = floorPlan.people[i]; if (!person) return;
+    const pos = p.pos ?? { x: hall.x + 60 + i * 70, y: hall.y + 28 };
+    person.className = `fl-person ${p.state}${pos.x > FL_W * 0.62 ? ' flip' : ''}${f != null && f !== i ? ' dim' : ''}${f === i ? ' focus' : ''}`;
+    person.hidden = p.state === 'off';
+    person.style.left = (pos.x + FL_CELL / 2) / FL_W * 100 + '%'; person.style.top = (pos.y + FL_CELL / 2) / FL_H * 100 + '%';
+    person.querySelector('.fl-bubble').textContent = p.short;
+    person.querySelector('.fl-badge').textContent = p.state === 'needs' ? '?' : p.state === 'done' ? '✓' : '';
+    const tr = p.trail.slice(-6);
+    floorPlan.trailEls[i]?.setAttribute('d', tr.length > 1 ? tr.map((c, j) => `${j ? 'L' : 'M'}${c.x + FL_CELL / 2},${c.y + FL_CELL / 2}`).join('') : '');
+    floorPlan.trailEls[i]?.classList.toggle('dim', f != null && f !== i);
+  });
+  // whoever needs you, at the top
+  const attn = $('#floorAttn'); attn.replaceChildren();
+  per.forEach((p, i) => {
+    if (p.state !== 'needs') return;
+    const s = members[i];
+    const input = h('input', { placeholder: s.running ? 'Answer here, then Enter…' : 'The session isn’t running', disabled: !s.running, 'aria-label': `Answer ${s.name}` });
+    attn.append(h('div', { class: 'fl-ask' }, h('div', { class: 'fl-av', style: `background:${FL_COLORS[i % FL_COLORS.length]}` }, (s.name[0] ?? '?').toUpperCase()),
+      h('div', {}, h('div', { class: 'who' }, `${s.name} · asked ${flAgo(p.lastT, now)}`), h('div', { class: 'q' }, p.text.replace(/^Asking you: /, '').replace(/^“|”$/g, ''))),
+      h('form', { onsubmit: (e) => { e.preventDefault(); const text = input.value.trim(); if (!text || !s.running) return; post({ type: 'input', id: s.id, data: text + '\r' }); input.value = ''; toast(`Sent to ${s.name}.`); } },
+        input, h('button', { class: 'btn primary', type: 'submit', disabled: !s.running }, 'Send'),
+        h('button', { class: 'btn', type: 'button', title: 'Open the session', onclick: () => { showTerminalDoc(); expand(s.id); } }, 'Go to session'))));
+  });
+  // the tally in the toolbar
+  const n = per.filter((p) => p.state === 'needs').length, d = per.filter((p) => p.state === 'done').length, w = per.filter((p) => p.state === 'busy').length;
+  fill($('#floorSummary'), h('span', { class: 'n' }, h('b', {}, String(n)), n === 1 ? ' needs you' : ' need you'), h('span', { class: 'd' }, h('b', {}, String(d)), ' finished'), h('span', { class: 'w' }, h('b', {}, String(w)), ' working'));
+  // the cards: whoever needs you first
+  const order = per.map((p, i) => i).sort((a, b) => floorRank(per[a].state) - floorRank(per[b].state) || (per[b].lastT ?? 0) - (per[a].lastT ?? 0));
+  const rail = $('#floorRail'); rail.replaceChildren();
+  for (const i of order) {
+    const s = members[i], p = per[i];
+    const label = { needs: 'Needs your answer', done: 'Finished, waiting for you', busy: 'Working', off: floorPlan.data.get(s.id)?.found === false ? 'No conversation yet' : 'Not started yet' }[p.state];
+    const card = h('div', { class: `fl-card ${p.state}${f === i ? ' focus' : ''}`, tabindex: '0', role: 'button', 'aria-expanded': String(f === i),
+      onclick: () => floorFocus(f === i ? null : i), onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); floorFocus(f === i ? null : i); } } },
+      h('div', { class: 'fl-ch' }, h('div', { class: 'fl-av', style: `background:${FL_COLORS[i % FL_COLORS.length]}` }, (s.name[0] ?? '?').toUpperCase()), h('span', { class: 'fl-cname' }, s.name), h('span', { class: 'fl-chip ' + p.state }, label)));
+    if (p.state !== 'off') {
+      const nowEl = h('div', { class: 'fl-now' }); nowEl.innerHTML = p.text;
+      card.append(nowEl, h('div', { class: 'fl-ago' }, `${flAgo(p.lastT, now)} · ${flPlural(p.touched.size, 'file')} touched · ${flPlural(p.turns.length, 'turn')}`));
+    }
+    if (f === i && p.turns.length) {
+      const turns = h('div', { class: 'fl-turns' });
+      for (const tn of p.turns.slice(-6).reverse()) {
+        const did = h('div', { class: 'did' }); did.innerHTML = floorTurnSummary(tn);
+        const out = tn.outcome ? h('div', { class: 'out ' + tn.outcome.state }) : null; if (out) out.innerHTML = tn.outcome.text;
+        turns.append(h('div', { class: 'fl-turn' }, h('time', {}, flTime(tn.t)), h('div', {}, tn.you ? h('div', { class: 'you', title: tn.you }, `You: ${tn.you}`) : h('div', { class: 'you' }, 'Picked up where it left off'), did, out)));
+      }
+      card.append(turns);
+      const shared = [...p.touched.keys()].filter((k) => floorPlan.shared.has(k) && cellWho[k]?.size > 1);
+      if (shared.length) card.append(h('div', { class: 'fl-shared' }, 'Also touched by another session: ', ...shared.slice(0, 3).flatMap((k, j) => [j ? ', ' : '', h('span', { class: 'fl-f' }, floorPlan.cells.get(k).name)]), shared.length > 3 ? ` and ${shared.length - 3} more` : ''));
+    }
+    rail.append(card);
+  }
+  // the slider, the clock and the lanes
+  const total = floorLiveIdx();
+  const range = $('#floorRange'); range.max = total; range.value = idx;
+  $('#floorPlayhead').style.left = (total ? idx / total * 100 : 0) + '%';
+  $('#floorPos').textContent = live ? 'now' : idx ? `${flDay(now)} ${flTime(now)}` : 'the start';
+  $('#floorLive').classList.toggle('on', live);
+  if (floorPlan.lanesLen !== total) { floorPlan.lanesLen = total; floorLanes(); floorDays(); }
+  floorZoom();
+}
+
+/** Zooms the floor to where the focused person has been; others dim. */
+function floorFocus(i) { floorPlan.focus = i; if (floorPlan.unzoom) floorPlan.unzoom.hidden = i == null; renderFloor(); }
+
+function floorZoom() {
+  const stage = floorPlan.stage, host = $('#floorStage'); if (!stage) return;
+  const f = floorPlan.focus; const p = f != null ? floorPlan.world?.per[f] : null;
+  if (!p || p.state === 'off') { stage.style.transform = ''; stage.style.setProperty('--k', 1); stage.classList.remove('zoomed'); return; }
+  const pts = [...p.trail.slice(-8), p.pos].filter(Boolean); if (!pts.length) return;
+  const xs = pts.map((c) => c.x), ys = pts.map((c) => c.y);
+  const bx = Math.min(...xs) - 60, by = Math.min(...ys) - 40, bw = Math.max(...xs) - Math.min(...xs) + FL_CELL + 120, bh = Math.max(...ys) - Math.min(...ys) + FL_CELL + 80;
+  const k = Math.min(3.2, Math.max(1.4, Math.min(FL_W / bw, FL_H / bh)));
+  const cx = bx + bw / 2, cy = by + bh / 2; const u = host.clientWidth / FL_W;
+  let tx = host.clientWidth / 2 - cx * u * k, ty = host.clientHeight / 2 - cy * u * k;
+  tx = Math.min(0, Math.max(host.clientWidth - FL_W * u * k, tx)); ty = Math.min(0, Math.max(host.clientHeight - FL_H * u * k, ty));
+  stage.style.transform = `translate(${tx}px, ${ty}px) scale(${k})`; stage.style.setProperty('--k', k); stage.classList.toggle('zoomed', k >= 2);
+}
+
+/** A lane per session under the slider, a tick per event (your prompts brighter), so you can see who was busy when. */
+function floorLanes() {
+  const cv = $('#floorLanes'); const r = cv.getBoundingClientRect(); if (!r.width) return;
+  cv.width = Math.round(r.width * devicePixelRatio); cv.height = Math.round(r.height * devicePixelRatio);
+  const ctx = cv.getContext('2d'); ctx.scale(devicePixelRatio, devicePixelRatio);
+  const merged = floorPlan.merged, lanes = Math.max(1, floorPlan.members.length), lane = r.height / lanes;
+  const cs = getComputedStyle(document.documentElement);
+  merged.forEach((e, i) => {
+    ctx.fillStyle = cs.getPropertyValue(`--fl-s${(e.si % FL_COLORS.length) + 1}`).trim(); ctx.globalAlpha = e.k === 'prompt' ? 1 : .45;
+    ctx.fillRect(i / merged.length * r.width, e.si * lane + 2, 1.2, lane - 4);
+  });
+}
+
+function floorDays() {
+  const days = $('#floorDays'); days.replaceChildren(); let last = '';
+  for (const e of floorPlan.merged) { const d = flDay(e.t); if (d !== last) { days.append(h('span', {}, d)); last = d; } }
+}
+
+function floorStop() { floorPlan.playing = false; clearInterval(floorPlan.playTimer); floorPlan.playTimer = null; fill($('#floorPlay'), iconEl('play'), 'Replay'); }
+function floorPlay() {
+  if (floorPlan.playing) return floorStop();
+  if (floorIdx() >= floorLiveIdx()) floorPlan.idx = 0;
+  floorPlan.playing = true; fill($('#floorPlay'), iconEl('pause'), 'Pause');
+  floorPlan.playTimer = setInterval(() => {
+    floorPlan.idx = Math.min(floorLiveIdx(), floorIdx() + 1); renderFloor();
+    if (floorPlan.idx >= floorLiveIdx()) { floorPlan.idx = null; floorStop(); renderFloor(); }
+  }, 80);
+}
+function floorLive() { floorStop(); floorPlan.idx = null; renderFloor(); }
+
+// tooltips for cells and people
+const floorTip = h('div', { class: 'fl-tip', hidden: true });
+document.body.append(floorTip);
+$('#floorStage').addEventListener('mousemove', (e) => {
+  const cell = e.target.closest?.('.fl-cell'), person = e.target.closest?.('.fl-person'); const world = floorPlan.world;
+  if (cell && world) {
+    const c = floorPlan.cells.get(cell.dataset.key); const who = world.cellWho[c.key]; const now = floorPlan.idx == null ? Date.now() : floorPlan.merged[floorIdx() - 1]?.t ?? Date.now();
+    floorTip.innerHTML = `<div class="p">${flEsc(c.path)}</div>` + (who ? [...who].map(([si, v]) => `<div class="w">${flEsc(floorPlan.members[si]?.name ?? '')} · ${v.k === 'edit' ? 'edited' : 'read'} ${flAgo(v.t, now)}</div>`).join('') : '<div class="w">Not touched yet</div>');
+  } else if (person && world) {
+    const p = world.per[Number(person.dataset.si)]; floorTip.innerHTML = `<div>${p.text}</div><div class="w">Click to zoom in</div>`;
+  } else { floorTip.hidden = true; return; }
+  floorTip.hidden = false;
+  floorTip.style.left = Math.min(e.clientX + 14, innerWidth - floorTip.offsetWidth - 8) + 'px';
+  floorTip.style.top = Math.max(4, e.clientY - floorTip.offsetHeight - 10) + 'px';
+});
+$('#floorStage').addEventListener('mouseleave', () => { floorTip.hidden = true; });
+$('#floorStage').addEventListener('click', (e) => { if (e.target.classList.contains('fl-room') || e.target.classList.contains('fl-hall') || e.target.tagName === 'svg') floorFocus(null); });
+
+$('#floorRefresh').replaceChildren(iconEl('refresh'));
+$('#floorRefresh').addEventListener('click', () => { floorPlan.roomsAt = 0; loadFloor(true); });
+fill($('#floorPlay'), iconEl('play'), 'Replay');
+$('#floorPlay').addEventListener('click', floorPlay);
+fill($('#floorLive'), '● Live');
+fill($('#floorLegend'), h('span', {}, h('i', { style: 'background:var(--fl-read)' }), 'read'), h('span', {}, h('i', { style: 'background:var(--fl-edit)' }), 'edited'), h('span', {}, h('i', { style: 'background:transparent;border:1.5px solid var(--text)' }), 'two sessions'));
+$('#floorLive').addEventListener('click', floorLive);
+$('#floorRange').addEventListener('input', (e) => { floorStop(); const v = Number(e.target.value); floorPlan.idx = v >= floorLiveIdx() ? null : v; renderFloor(); });
+$('#floorBody').addEventListener('keydown', (e) => {
+  if (e.target.matches('input, textarea')) return;
+  if (e.key === ' ') { e.preventDefault(); floorPlay(); }
+  else if (e.key === 'Escape' && floorPlan.focus != null) { e.stopPropagation(); floorFocus(null); }
+  else if (e.key === 'End') floorLive();
+  else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); floorStop(); const step = (e.shiftKey ? 20 : 1) * (e.key === 'ArrowLeft' ? -1 : 1); const v = Math.max(0, Math.min(floorLiveIdx(), floorIdx() + step)); floorPlan.idx = v >= floorLiveIdx() ? null : v; renderFloor(); }
+  else if (/^[1-9]$/.test(e.key) && Number(e.key) <= floorPlan.members.length) floorFocus(Number(e.key) - 1);
+});
+addEventListener('resize', () => { if (isFloorTab(activeTab())) { floorPlan.lanesLen = -1; renderFloor(); } });

@@ -39,6 +39,14 @@
   --error-border: #6c2a2a;
   --pv-warn-bg: #3a2e14;
   --pv-warn-border: #6b5520;
+  /* The Floor plan: the drafting grid, the rooms, the file cells (read, edited) and one colour per session. */
+  --fl-grid: rgba(255, 255, 255, .035);
+  --fl-room: #232326;
+  --fl-room-active: #292a33;
+  --fl-room-line: #3f3f46;
+  --fl-read: #4d6180;
+  --fl-edit: #d79a17;
+  --fl-s1: #3987e5; --fl-s2: #199e70; --fl-s3: #9085e9; --fl-s4: #d55181; --fl-s5: #d95926; --fl-s6: #c98500; --fl-s7: #e66767; --fl-s8: #008300;
   --ico-folder: #dcb67a;
   --ico-file: #9da5b4;
   --graph: #5d8ac4;
@@ -110,6 +118,13 @@
   --error-border: #e8a7a1;
   --pv-warn-bg: #fff4d6;
   --pv-warn-border: #e6c56a;
+  --fl-grid: rgba(0, 0, 0, .045);
+  --fl-room: #fbfbf9;
+  --fl-room-active: #ffffff;
+  --fl-room-line: #cfcfc8;
+  --fl-read: #a9bcd8;
+  --fl-edit: #e8a512;
+  --fl-s1: #2a78d6; --fl-s2: #1baf7a; --fl-s3: #6250d6; --fl-s4: #e87ba4; --fl-s5: #eb6834; --fl-s6: #eda100; --fl-s7: #e34948; --fl-s8: #008300;
   --ico-folder: #b07d1f;
   --ico-file: #6a7280;
   --graph: #3d6fb5;
@@ -1090,3 +1105,96 @@ svg.sparkline circle { fill: var(--accent); }
 .update-what { color: var(--text-dim); }
 .update-status { margin-top: 8px; }
 .update-status.error { color: var(--danger); }
+
+/* ---- Floor plan: a project's sessions on a map of the code. The repository's folders are rooms, each session a person
+   standing at the file it is on; whoever needs you is asked for at the top; the slider at the bottom rewinds. */
+#floorDoc { position: absolute; inset: 0; z-index: 20; display: flex; flex-direction: column; background: var(--editor-bg); }
+#floorRefresh.busy svg.ic { animation: pv-spin 1s linear infinite; }
+#floorBody { flex: 1; min-height: 0; overflow: auto; padding: 10px 14px 20px; outline: none; display: flex; flex-direction: column; gap: 10px; }
+#floorSummary { display: flex; gap: 14px; }
+#floorSummary b { font-weight: 600; font-variant-numeric: tabular-nums; }
+#floorSummary .n::before, #floorSummary .d::before, #floorSummary .w::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
+#floorSummary .n::before { background: var(--attention); } #floorSummary .d::before { background: var(--ok); } #floorSummary .w::before { background: var(--working); }
+#floorLive.on { color: var(--ok); }
+.fl-empty { color: var(--text-dim); padding: 20px; }
+.fl-attn:empty { display: none; }
+.fl-attn { display: grid; gap: 8px; }
+.fl-ask { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; background: var(--pv-warn-bg); border: 1px solid var(--pv-warn-border); border-radius: 8px; padding: 9px 12px; }
+.fl-ask .fl-av { width: 32px; height: 32px; font-size: 14px; }
+.fl-ask .who { font-size: 11px; color: var(--attention); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+.fl-ask .q { font-size: 14px; margin-top: 2px; line-height: 1.35; }
+.fl-ask form { display: flex; gap: 6px; min-width: 0; }
+.fl-ask input { width: 240px; max-width: 100%; }
+.fl-main { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 12px; align-items: start; }
+@media (max-width: 900px) { .fl-main { grid-template-columns: 1fr; } }
+.fl-floor { position: relative; width: min(100%, calc(62vh * 1000 / 600)); aspect-ratio: 1000 / 600; background: var(--chrome-2); background-image: linear-gradient(var(--fl-grid) 1px, transparent 1px), linear-gradient(90deg, var(--fl-grid) 1px, transparent 1px); background-size: 20px 20px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.fl-stage { position: absolute; inset: 0; transform-origin: 0 0; transition: transform .55s cubic-bezier(.2, .7, .2, 1); --k: 1; }
+.fl-stage svg { display: block; width: 100%; height: 100%; }
+.fl-room { fill: var(--fl-room); stroke: var(--fl-room-line); stroke-width: 1; transition: fill .3s; }
+.fl-room.active { fill: var(--fl-room-active); }
+.fl-room-name { fill: var(--text-dim); font-size: 9.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; pointer-events: none; }
+.fl-room-n { fill: var(--text-faint); font: 9px "Cascadia Mono", Consolas, monospace; pointer-events: none; }
+.fl-hall { fill: none; stroke: var(--fl-room-line); stroke-dasharray: 3 3; }
+.fl-cell { fill: var(--border); transition: fill .3s; cursor: pointer; }
+.fl-cell.read { fill: var(--fl-read); } .fl-cell.edit { fill: var(--fl-edit); }
+.fl-cell.shared { stroke: var(--text); stroke-width: 1.2; }
+.fl-cell.dim { opacity: .3; }
+.fl-cell-name { fill: var(--text-dim); font: 3.6px "Cascadia Mono", Consolas, monospace; pointer-events: none; opacity: 0; transition: opacity .3s; }
+.fl-stage.zoomed .fl-cell-name.mine { opacity: 1; }   /* zoomed in on someone: the names of the files they touched */
+.fl-trail { fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-dasharray: 1.5 4; opacity: .5; }
+.fl-trail.dim { opacity: .12; }
+.fl-person { position: absolute; width: 0; height: 0; transition: left .5s cubic-bezier(.2, .7, .2, 1), top .5s cubic-bezier(.2, .7, .2, 1), opacity .3s; z-index: 2; cursor: pointer; }
+.fl-person.dim { opacity: .3; }
+.fl-av { position: relative; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-weight: 600; font-size: 12px; border: 2px solid var(--chrome-2); box-shadow: 0 1px 6px rgba(0, 0, 0, .45); flex: none; }
+.fl-person .fl-av { position: absolute; left: 0; top: 0; transform: translate(-50%, -50%) scale(calc(1 / var(--k))); transform-origin: center; }
+.fl-person.busy .fl-av::after { content: ""; position: absolute; inset: -6px; border-radius: 50%; border: 2px solid currentColor; opacity: 0; animation: fl-ping 2.2s ease-out infinite; }
+@keyframes fl-ping { 0% { transform: scale(.6); opacity: .7; } 100% { transform: scale(1.5); opacity: 0; } }
+.fl-badge { position: absolute; left: 6px; top: -16px; width: 16px; height: 16px; border-radius: 50%; display: grid; place-items: center; font-size: 10.5px; font-weight: 700; color: #fff; border: 2px solid var(--chrome-2); transform: scale(calc(1 / var(--k))); transform-origin: left bottom; }
+.fl-person.needs .fl-badge { background: var(--attention); } .fl-person.done .fl-badge { background: var(--ok); } .fl-person.busy .fl-badge { display: none; }
+.fl-person.needs .fl-av { box-shadow: 0 0 0 3px var(--attention), 0 1px 6px rgba(0, 0, 0, .45); }
+.fl-person.done .fl-av { box-shadow: 0 0 0 3px var(--ok), 0 1px 6px rgba(0, 0, 0, .45); }
+.fl-bubble { position: absolute; left: 18px; top: -13px; background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 3px 9px; font-size: 11.5px; white-space: nowrap; max-width: 240px; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 2px 10px rgba(0, 0, 0, .35); transform: scale(calc(1 / var(--k))); transform-origin: left center; opacity: 0; pointer-events: none; transition: opacity .2s; }
+.fl-person.needs .fl-bubble, .fl-person:hover .fl-bubble, .fl-person.focus .fl-bubble { opacity: 1; }
+.fl-person.needs .fl-bubble { border-color: var(--attention); }
+.fl-person.flip .fl-bubble { left: auto; right: 18px; transform-origin: right center; }
+.fl-legend { display: flex; gap: 12px; color: var(--text-faint); font-size: 11px; margin-left: 10px; white-space: nowrap; }
+.fl-legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; vertical-align: -1px; margin-right: 4px; }
+.fl-unzoom { position: absolute; left: 8px; top: 8px; z-index: 3; }
+.fl-tip { position: fixed; z-index: 100; pointer-events: none; background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 6px; padding: 6px 9px; font-size: 12px; max-width: 320px; box-shadow: 0 4px 16px rgba(0, 0, 0, .35); }
+.fl-tip .p { font: 11px "Cascadia Mono", Consolas, monospace; color: var(--text-dim); word-break: break-all; }
+.fl-tip .w { color: var(--text-faint); margin-top: 2px; }
+.fl-rail { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.fl-card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 8px 11px 9px; min-width: 0; cursor: pointer; transition: border-color .2s; }
+.fl-card:hover { border-color: var(--text-faint); }
+.fl-card.focus { border-color: var(--focus); }
+.fl-card.off { opacity: .55; }
+.fl-card:focus-visible { outline: 1px solid var(--focus); }
+.fl-ch { display: flex; align-items: center; gap: 8px; }
+.fl-ch .fl-av { width: 20px; height: 20px; font-size: 10px; border-width: 0; box-shadow: none; }
+.fl-cname { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.fl-chip { margin-left: auto; font-size: 11px; white-space: nowrap; color: var(--text-faint); }
+.fl-chip.needs { color: var(--attention); font-weight: 600; } .fl-chip.done { color: var(--ok); font-weight: 600; } .fl-chip.busy { color: var(--working); }
+.fl-now { margin-top: 5px; font-size: 13px; line-height: 1.35; }
+.fl-f { font-family: "Cascadia Mono", Consolas, monospace; font-size: 11.5px; }
+.fl-ago { color: var(--text-faint); font-size: 11px; margin-top: 2px; }
+.fl-turns { margin: 8px 0 0; padding: 8px 0 0; border-top: 1px solid var(--border-soft); display: flex; flex-direction: column; gap: 8px; }
+.fl-turn { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 0 8px; }
+.fl-turn time { font: 11px "Cascadia Mono", Consolas, monospace; color: var(--text-faint); padding-top: 2px; }
+.fl-turn .you { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fl-turn .did { color: var(--text-dim); font-size: 11.5px; }
+.fl-turn .out { font-size: 11.5px; margin-top: 1px; }
+.fl-turn .out.needs { color: var(--attention); } .fl-turn .out.done { color: var(--ok); }
+.fl-shared { margin-top: 8px; font-size: 11.5px; color: var(--attention); }
+.fl-time { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px 6px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 6px 12px; align-items: center; }
+.fl-lab { font: 11px "Cascadia Mono", Consolas, monospace; color: var(--text-faint); white-space: nowrap; }
+.fl-lanes { position: relative; height: 30px; }
+.fl-lanes canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.fl-lanes input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.fl-playhead { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--text); pointer-events: none; transform: translateX(-1px); }
+.fl-days { grid-column: 2; display: flex; justify-content: space-between; color: var(--text-faint); font: 10.5px "Cascadia Mono", Consolas, monospace; }
+.fl-kbd { font: 10.5px "Cascadia Mono", Consolas, monospace; color: var(--text-faint); border: 1px solid var(--border); border-radius: 3px; padding: 0 4px; }
+.fl-hint { color: var(--text-faint); font-size: 11.5px; margin: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .fl-stage, .fl-person, .fl-cell, .fl-room, .fl-bubble { transition: none; }
+  .fl-person.busy .fl-av::after { animation: none; opacity: .5; transform: none; }
+}

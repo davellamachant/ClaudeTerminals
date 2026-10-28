@@ -737,6 +737,19 @@ internal sealed class MainForm : Form
                 if (!result.Ok) throw new InvalidOperationException(string.IsNullOrWhiteSpace(result.Error) ? "git couldn't remove the worktree." : result.Error.Trim());
                 return null;
             }
+            case "floor.rooms":
+                // The Floor plan's rooms: the top-level folders of the session's repository, with their file counts.
+                return await GitService.GetFloorRoomsAsync(GitDir(msg));
+            case "floor.events":
+            {
+                // What each of the Floor plan's sessions has done: the events of its conversation (the one its Claude is
+                // in, or the saved one it would resume). The page says which version of each it has, and gets only
+                // what's new since; a different conversation starts it over.
+                var ids = msg.TryGetProperty("ids", out var list) && list.ValueKind == JsonValueKind.Array
+                    ? list.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!).ToList() : [];
+                var have = msg.TryGetProperty("have", out var h) && h.ValueKind == JsonValueKind.Object ? h : default;
+                return await Task.Run(() => ids.Select(id => FloorEventsOf(id, have)).ToList());
+            }
             case "conversation":
             {
                 // The conversation the session's Claude is in: a light outline for the rail, or everything for the
@@ -962,6 +975,35 @@ internal sealed class MainForm : Form
 
     private TerminalSession Get(JsonElement msg) =>
         sessions.TryGetValue(Str(msg, "id"), out var s) ? s : throw new KeyNotFoundException("Unknown session");
+
+    /// <summary>
+    /// One session's part of a floor.events answer: the events of the conversation its Claude is in (or the saved one
+    /// it would resume), from the version the page has (<paramref name="have"/>: id → { conversation, version }) on.
+    /// </summary>
+    private object FloorEventsOf(string id, JsonElement have)
+    {
+        string? conversation = null, path = null;
+        if (sessions.TryGetValue(id, out var s))
+        {
+            if (s.IsRunning && ConversationReader.FindLiveSession(s.ProcessIds()) is { } live)
+            {
+                conversation = live.SessionId;
+                path = ConversationReader.FindTranscript(live.SessionId, live.Cwd);
+            }
+            if (path == null && s.Info.Conversation is { } saved)
+            {
+                conversation = saved;
+                path = ConversationReader.FindTranscript(saved, s.Info.Directory);
+            }
+        }
+        if (path == null) return new { id, found = false, conversation, version = 0L, from = 0, events = Array.Empty<FloorEvent>() };
+        var data = FloorReader.Read(path);
+        var from = 0;
+        if (have.ValueKind == JsonValueKind.Object && have.TryGetProperty(id, out var mine) && OptStr(mine, "conversation") == conversation &&
+            mine.TryGetProperty("version", out var v) && v.ValueKind == JsonValueKind.Number)
+            from = (int)Math.Clamp(v.GetInt64(), 0, data.Events.Count);
+        return new { id, found = true, conversation, version = data.Version, from, events = data.Events.Skip(from).ToArray() };
+    }
 
     private string GitDir(JsonElement msg)
     {

@@ -65,6 +65,7 @@ Releases are signed by **Llamachant Technology Ltd**. If SmartScreen still warns
 | Switch a session to another conversation | Session menu (⋯) › *Resume a different conversation…* |
 | Close a session | The × on its tab in the title bar, or middle-click the tab. After you confirm, the session is removed and its process stopped; the folder isn't touched |
 | See a project's worktrees side by side | Click the project's name at the start of its group in the session tab row (again to go back), or Session menu (⋯, or right-click a session tab) › *Project view*, or right-click the project in the Projects row: one row per worktree with its session, what it's on, its changes, how far its branch is from `main`, and its pull request. Click a row for the detail and the actions |
+| See a project's sessions on a map of the code | Session menu (⋯, or right-click a session tab) › *Floor plan*, or right-click the project in the Projects row: the repository's folders as rooms, each session a person at the file it is on, saying what it is doing; whoever needs you is asked for at the top; a slider rewinds |
 | Show one project | Ctrl+click its name in the Projects row, or right-click it › *Show only this project* |
 | Show several projects | Click a project's name or checkbox to show or hide it; **All** shows every project, **None** hides them all |
 | Put a session in a project | Pick the project when adding the session, drag its tab into the project's group, or right-click its tab › *Move to project…* |
@@ -142,6 +143,14 @@ The summary line counts the worktrees, how many need you, how many are behind th
 **New worktree…** on the view's toolbar adds a worktree of the project's repository on a new branch, started from its base branch (`origin/main`, say), with a session in it unless you untick *Start a session in it*; a project with sessions in several repositories asks which. Its row then shows with the others, and *Start a session here* adds a session to it later. The new branch has no upstream until its first Push, which publishes it under its own name.
 
 The view follows the sessions as they work and re-reads the repositories every half minute (or on Refresh).
+
+### Floor plan
+
+*Floor plan* (on a session's ⋯ menu, a session tab's right-click menu, or a project's right-click menu in the Projects row) is a place of its own like the Project view: the project's sessions on a map of its code, each at the file it is working on. The repository's top-level folders are the rooms, sized by how many tracked files they hold (the repository most of the project's sessions are in; a hallway along the bottom holds files outside it). Every file a session reads or edits lights up as a cell in its room, blue when read and amber when edited, outlined when two sessions have touched the same file. Each session is a person standing at the file it is on, with a bubble saying what it is doing in plain words, read from its conversation: *Editing RosterService.cs again, 3 edits with no test run*, *Tests failed, looking at why*, *Asking you: which host should this use?*. Someone who needs an answer gets an amber ring and is asked for at the top, with the question, a box to answer in (sent to the session's terminal as if typed there) and *Go to session*; someone who has finished and is waiting for you gets a green one.
+
+The cards beside the floor say the same in sentences, with whoever needs you first, and how long ago, how many files touched and how many turns. Click a person or a card to zoom the floor to where they have been (the others dim, and the file names appear) and to read their story turn by turn: what you asked, then *Read 3 files, edited RosterService.cs and 1 more, tests passed after 2 runs*, then how it ended. Files another session also touched are named. Hover a cell for the file and who touched it when.
+
+The slider at the bottom rewinds through everything that happened, with a lane per session showing when each was busy; *Replay* plays it from the start and *Live* follows what is happening now, which the floor otherwise does on its own, reading the conversations again every few seconds while it is showing. Keys: Space replays, 1 to 9 focus a session, ← → step (Shift for 20 at a time), End goes live, Esc zooms out.
 
 ### Git
 
