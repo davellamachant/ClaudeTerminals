@@ -20,6 +20,8 @@
       <button id="btnUpdate" class="tb-btn text update-btn" hidden></button>
       <button id="btnAdd" class="tb-btn text" title="New session (Ctrl+Shift+N)"></button>
       <button id="btnGit" class="tb-btn" title="Git Changes (Ctrl+Shift+G)"></button>
+      <!-- Plugins' buttons (see renderPluginButtons). -->
+      <span id="pluginButtons" class="plugin-buttons"></span>
     </header>
 
     <div id="main">
@@ -77,6 +79,9 @@
           </div>
           <div id="projectBody" tabindex="-1"></div>
         </section>
+
+        <!-- A plugin's page: a frame per open plugin tab (see showPlugin). -->
+        <section id="pluginDoc" hidden></section>
         </div>
       </div>
 

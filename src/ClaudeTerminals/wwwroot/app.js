@@ -35,7 +35,8 @@ const PATHS = {
   close: 'M4 4l8 8M12 4l-8 8',
   refresh: 'M13 3v3.5H9.5M12.6 6.2A5 5 0 1 0 13 9',
   grid: 'M2.5 2.5h4.5v4.5H2.5zM9 2.5h4.5v4.5H9zM2.5 9h4.5v4.5H2.5zM9 9h4.5v4.5H9z',
-  list: 'M5.8 4h7.7M5.8 8h7.7M5.8 12h7.7M2.6 4h.1M2.6 8h.1M2.6 12h.1',   // the Project view: a list of the project's worktrees
+  list: 'M5.8 4h7.7M5.8 8h7.7M5.8 12h7.7M2.6 4h.1M2.6 8h.1M2.6 12h.1',
+  plug: 'M6 1.5v3M10 1.5v3M4 4.5h8v2.5a4 4 0 0 1-8 0zM8 11v3.5',   // a plugin's tab   // the Project view: a list of the project's worktrees
   git: 'M5 3v10M5 11a2 2 0 1 0 0 .01M5 3a1.6 1.6 0 1 0 0 .01M11 3a1.6 1.6 0 1 0 0 .01M11 4.6C11 8 5 7 5 10',
   branch: 'M5 2.5v8M5 12a1.5 1.5 0 1 0 0 .01M11 4a1.5 1.5 0 1 0 0 .01M11 5.5c0 3-6 2.5-6 5',
   chevR: 'M6 4l4 4-4 4',
@@ -321,6 +322,7 @@ function projectMenu(p, x, y) {
       '-',
       { label: 'Show only sessions with no project', action: () => showOnlyProject(UNKNOWN) },
       { label: state.hiddenProjects.has(UNKNOWN) ? 'Show alongside the others' : 'Hide', action: () => toggleProject(UNKNOWN) },
+      ...pluginMenuItems('project', { project: null }),
     ]);
     return;
   }
@@ -336,6 +338,7 @@ function projectMenu(p, x, y) {
     i < state.projects.length - 1 && { label: 'Move right', action: () => moveProject(p, 1) },
     '-',
     { label: 'Delete project…', danger: true, action: () => confirmDeleteProject(p) },
+    ...pluginMenuItems('project', { project: p.name }),
   ]);
 }
 
@@ -878,7 +881,7 @@ function renderSessionTabs() {
     },
     onmousedown: (e) => { if (e.button === 1) e.preventDefault(); },   // no autoscroll cursor
     onauxclick: (e) => { if (e.button === 1) confirmRemove(s); },
-    oncontextmenu: (e) => { e.preventDefault(); sessionMenu(s, e.clientX, e.clientY); },
+    oncontextmenu: (e) => { e.preventDefault(); sessionMenu(s, e.clientX, e.clientY, 'sessionTab'); },
   }, h('button', { class: 'tab-label' },
     statusDot(s), h('span', { class: 'tab-name' }, s.name), i < 9 ? h('span', { class: 'key' }, `Ctrl+${i + 1}`) : null),
   // Closing a session tab removes the session, after the same confirmation as "Remove session…".
@@ -1176,7 +1179,8 @@ function menuKey(e) {
   return false;
 }
 
-function sessionMenu(s, x, y) {
+/** from: 'session' (the tile's ⋯ button or header) or 'sessionTab' (the session tab), for plugins' items (see pluginMenuItems). */
+function sessionMenu(s, x, y, from = 'session') {
   showMenu(x, y, [
     state.expandedId === s.id ? { label: 'Back to all sessions', kbd: 'Shift+Esc', action: collapse } : { label: 'Expand', action: () => expand(s.id) },
     { label: 'Show Git changes', action: () => showGit(s.id) },
@@ -1194,6 +1198,7 @@ function sessionMenu(s, x, y) {
     { label: 'Move right', action: () => moveSession(s, 1) },
     '-',
     { label: 'Remove session…', danger: true, action: () => confirmRemove(s) },
+    ...pluginMenuItems(from, pluginSessionContext(s)),
   ]);
 }
 
@@ -1794,7 +1799,7 @@ function loadDock() {
     .filter((g) => Array.isArray(g?.tabs))
     .map((g) => ({
       // Each tab once, and only tabs the app knows how to show.
-      tabs: g.tabs.filter((t) => typeof t === 'string' && (t in GIT_TABS || isPanelTab(t)) && !seen.has(t) && seen.add(t)),
+      tabs: g.tabs.filter((t) => typeof t === 'string' && (t in GIT_TABS || isPanelTab(t) || isPluginDockTab(t)) && !seen.has(t) && seen.add(t)),
       active: typeof g.active === 'string' ? g.active : null,
       size: Number(g.size) > 0 ? Number(g.size) : 1,
       folded: g.folded === true,
@@ -1811,13 +1816,17 @@ function saveDock() {
 
 const groupOfTab = (t) => dock.groups.find((g) => g.tabs.includes(t));
 
-/** A new panel's tab goes to the bottom group; a closed panel's tab goes, and so does a group left with nothing. */
+/**
+ * A new panel's tab goes to the bottom group; a closed panel's tab goes, and so does a group left with nothing. So does
+ * the tab of a plugin no longer in the plugins folder (or no longer shown in the side panel).
+ */
 function placePanels() {
   if (!state.panelsLoaded) return;   // until the host has said which panels exist, keep the saved layout as it is
   let changed = false;
   const live = new Set(state.panels.map(panelTab));
+  const pluginGone = (t) => plugins.loaded && pluginById(pluginOfTab(t))?.placement !== 'panel';
   for (const g of dock.groups) {
-    const kept = g.tabs.filter((t) => !isPanelTab(t) || live.has(t));
+    const kept = g.tabs.filter((t) => isPluginDockTab(t) ? !pluginGone(t) : !isPanelTab(t) || live.has(t));
     if (kept.length !== g.tabs.length) { g.tabs = kept; changed = true; }
   }
   for (const t of live) if (!groupOfTab(t)) { dock.groups[dock.groups.length - 1].tabs.push(t); changed = true; }
@@ -1826,7 +1835,7 @@ function placePanels() {
 }
 
 /** The tabs a group shows for the selected session: the Git ones always, panels when they show with it. */
-const groupTabs = (g) => g.tabs.filter((t) => !isPanelTab(t) || (panelByTab(t) && panelVisibleFor(panelByTab(t), currentSession())));
+const groupTabs = (g) => g.tabs.filter((t) => isPluginDockTab(t) ? !!pluginById(pluginOfTab(t)) : !isPanelTab(t) || (panelByTab(t) && panelVisibleFor(panelByTab(t), currentSession())));
 
 /**
  * The tab a group has open: its chosen one, or its first while the chosen one isn't shown for this session. The choice
@@ -1857,6 +1866,11 @@ function renderGit() {
     g.el.classList.toggle('folded', !!g.folded);
     renderDockTabs(g, tabs, open);
     if (g.folded) continue;   // drawn when it's unfolded
+    // A plugin's page is a frame of its own beside the body the other tabs draw into (redrawing would reload it).
+    const plugin = isPluginDockTab(open);
+    g.body.hidden = plugin;
+    g.frames.hidden = !plugin;
+    if (plugin) { showDockPlugin(g, open); continue; }
     if (!s) g.body.replaceChildren(h('div', { class: 'git-message' }, 'No session selected.'));
     else if (isPanelTab(open)) renderPanel(panelByTab(open), g.body);
     else if (open === 'repo') renderRepo(s, g.body);
@@ -1880,11 +1894,12 @@ function buildDock() {
 function makeGroupEl(g) {
   g.tabsEl = h('div', { class: 'tw-tabs', role: 'tablist' });
   g.body = h('div', { class: 'dock-body' });
+  g.frames = h('div', { class: 'dock-frames', hidden: true });
   const fold = h('button', { class: 'icon-btn small dock-fold', onclick: () => toggleFold(g) }, iconEl('chevD'));
   const title = h('div', { class: 'tw-title' }, fold, g.tabsEl);
   // Double-clicking the tab row folds the group too (not its ◀ ▶ buttons, which are often clicked in quick succession).
   title.addEventListener('dblclick', (e) => { if (!e.target.closest('.scroll-btn, .dock-fold')) toggleFold(g); });
-  g.el = h('div', { class: 'dock-group' }, title, g.body);
+  g.el = h('div', { class: 'dock-group' }, title, g.body, g.frames);
   g.el.dock = g;
   g.foldBtn = fold;
   makeScrollable(g.tabsEl, 'tw');
@@ -1923,6 +1938,13 @@ function layoutDock() {
 function renderDockTabs(g, tabs, open) {
   fill(g.tabsEl, tabs.map((t) => {
     const cls = 'tw-tab' + (t === open ? ' active' : '');
+    if (isPluginDockTab(t)) {
+      const id = pluginOfTab(t), p = pluginById(id);
+      return h('button', {
+        class: cls + ' plugin-tab', 'data-tab': t, role: 'tab', 'aria-selected': String(t === open),
+        title: `${pluginCaption(id)}: a plugin${p?.description ? '\n' + p.description : ''}`,
+      }, iconEl('plug'), h('span', { class: 'panel-tab-title' }, pluginCaption(id)), pluginBadge(id));
+    }
     if (!isPanelTab(t)) return h('button', { class: cls, 'data-tab': t, role: 'tab', 'aria-selected': String(t === open) }, GIT_TABS[t]);
     const p = panelByTab(t);
     const owner = state.byId.get(p.owner);
@@ -2001,7 +2023,7 @@ function reopenItems() {
 }
 
 function resetDock() {
-  const tabs = ['changes', 'repo', ...dock.groups.flatMap((g) => g.tabs).filter(isPanelTab)];
+  const tabs = ['changes', 'repo', ...dock.groups.flatMap((g) => g.tabs).filter((t) => isPanelTab(t) || isPluginDockTab(t))];
   for (const g of dock.groups) { g.el?.remove(); g.divider?.remove(); }
   dock.groups = [{ tabs, active: 'changes', size: 1 }];
   saveDock();
@@ -2157,8 +2179,10 @@ function makeDivider(g) {
     if (g.tabs.includes(tab.dataset.tab)) activateTab(g, tab.dataset.tab);
   });
 
-  host.addEventListener('mousedown', (e) => { if (e.button === 1 && e.target.closest('.panel-tab')) e.preventDefault(); });   // no autoscroll
+  host.addEventListener('mousedown', (e) => { if (e.button === 1 && e.target.closest('.panel-tab, .plugin-tab')) e.preventDefault(); });   // no autoscroll
   host.addEventListener('auxclick', (e) => {
+    const pt = e.button === 1 && e.target.closest('.plugin-tab');
+    if (pt) { e.preventDefault(); closeDockPlugin(pt.dataset.tab); return; }
     const tab = e.button === 1 && e.target.closest('.panel-tab');
     const p = tab && panelByTab(tab.dataset.tab);
     if (p) { e.preventDefault(); confirmClosePanel(p); }
@@ -2181,6 +2205,8 @@ function makeDivider(g) {
       { label: g.folded ? 'Unfold group' : 'Fold group to its tabs', action: () => toggleFold(g) },
       p && '-',
       p && { label: 'Close panel…', danger: true, action: () => confirmClosePanel(p) },
+      isPluginDockTab(t) && '-',
+      isPluginDockTab(t) && { label: 'Close plugin', action: () => closeDockPlugin(t) },
       ...reopenItems(),
       '-',
       { label: 'Example panel skill…', action: showExampleSkill },
@@ -3293,6 +3319,7 @@ function tabShown(t) {
   // A Project view is shown on its own: neither a session's tabs with it, nor it with a session's.
   if (isProjectTab(t)) return state.projectViewOf === t.projectId;
   if (state.projectViewOf != null) return false;
+  if (isPluginTab(t)) return true;   // a plugin belongs to no project
   const cur = currentSession();
   const s = state.byId.get(t.sessionId);
   return !cur || !s || groupOf(s) === groupOf(cur);
@@ -3334,9 +3361,10 @@ function activateDoc(key) {
   if (state.projectViewOf != null) collapse();
   docs.active = docs.tabs.some((t) => t.key === key && tabShown(t)) ? key : 'terminal';
   const tab = activeTab();
-  $('#diffDoc').hidden = !tab || isConvTab(tab) || isProjectTab(tab);
+  $('#diffDoc').hidden = !tab || isConvTab(tab) || isProjectTab(tab) || isPluginTab(tab);
   $('#convDoc').hidden = !isConvTab(tab);
   $('#projectDoc').hidden = !isProjectTab(tab);
+  $('#pluginDoc').hidden = !isPluginTab(tab);
   $('#termPane').classList.toggle('behind', !!tab);
   hideRailCard();
   renderDocTabs();
@@ -3344,6 +3372,7 @@ function activateDoc(key) {
     if (prev !== tab) {
       if (isConvTab(tab)) showConversation(tab);
       else if (isProjectTab(tab)) showProjectView(tab);
+      else if (isPluginTab(tab)) showPlugin(tab);
       else loadDiff(tab);
     }
   } else {
@@ -3359,6 +3388,7 @@ function closeDoc(key) {
   const i = docs.tabs.findIndex((t) => t.key === key);
   if (i < 0) return;
   const wasActive = docs.active === key;
+  if (isPluginTab(docs.tabs[i])) closePluginFrame(docs.tabs[i].pluginId);
   docs.tabs.splice(i, 1);
   if (wasActive) {
     docs.active = 'terminal';   // don't save view state for the tab being closed
@@ -3368,7 +3398,7 @@ function closeDoc(key) {
   } else {
     renderDocTabs();
   }
-  if (!docs.tabs.some((t) => !isConvTab(t) && !isProjectTab(t))) disposeDiffModels();
+  if (!docs.tabs.some((t) => !isConvTab(t) && !isProjectTab(t) && !isPluginTab(t))) disposeDiffModels();
 }
 
 function cycleDoc(delta) {
@@ -3399,6 +3429,18 @@ function renderDocTabs() {
         onauxclick: (e) => { if (e.button === 1) closeDoc(t.key); },
       }, iconEl('list'), h('span', { class: 'doc-title' }, 'Project'),
       h('span', { class: 'doc-sub' }, projectName(t.projectId)),
+      h('button', { class: 'icon-btn small', title: 'Close (Ctrl+W)', onclick: () => closeDoc(t.key) }, iconEl('close')));
+    }
+    if (isPluginTab(t)) {
+      const p = pluginById(t.pluginId);
+      return h('div', {
+        class: 'doc-tab' + (docs.active === t.key ? ' active' : ''),
+        'data-id': t.key,
+        title: `${pluginCaption(t.pluginId)}: a plugin${p?.description ? '\n' + p.description : ''}`,
+        onclick: (e) => { if (!e.target.closest('button')) activateDoc(t.key); },
+        onmousedown: (e) => { if (e.button === 1) e.preventDefault(); },
+        onauxclick: (e) => { if (e.button === 1) closeDoc(t.key); },
+      }, iconEl('plug'), h('span', { class: 'doc-title' }, pluginCaption(t.pluginId)), pluginBadge(t.pluginId, 'badge'),
       h('button', { class: 'icon-btn small', title: 'Close (Ctrl+W)', onclick: () => closeDoc(t.key) }, iconEl('close')));
     }
     if (isConvTab(t)) {
@@ -4500,6 +4542,7 @@ function applyTheme(before = null) {
   for (const s of state.sessions) s.term.options.theme = termTheme();
   if (window.monaco) monaco.editor.setTheme(isLight() ? 'vs2026-light' : 'vs2026-dark');
   applyAccent();
+  for (const f of pluginFrames.values()) postPluginTheme(f.frame);
   post({ type: 'theme', light: isLight() });
   if (before && before !== name) offerClaudeRestart();
 }
@@ -4557,6 +4600,15 @@ function themeMenu(x, y) {
     '-',
     { header: 'Status dots' },
     { label: DOT_STYLES.find((d) => d.id === dotStyle.id).name, kbd: 'Change…', action: showDotStyleDialog },
+    '-',
+    { header: 'Plugins' },
+    ...plugins.list.flatMap((p) => [
+      { label: p.title, kbd: p.placement === 'panel' ? 'Side panel' : '', action: () => openPlugin(p.id) },
+      ...p.menu.filter((m) => m.where.includes('palette')).map((m) => ({ label: [h('span', { class: 'menu-indent' }), m.label], action: () => openPlugin(p.id, m.command, { menu: 'palette' }) })),
+      p.toolbar && hiddenPluginButtons.has(p.id) && { label: [h('span', { class: 'menu-indent' }), 'Show its title bar button'], action: () => setPluginButton(p.id, true) },
+    ]),
+    plugins.problems.length > 0 && { label: `${plugins.problems.length} couldn't be loaded`, kbd: 'Why?', action: () => toast(plugins.problems.join('\n'), true) },
+    { label: plugins.list.length ? 'Open the plugins folder' : 'Add a plugin: open the plugins folder', action: () => request('plugins.openFolder') },
   ]);
 }
 
@@ -4641,7 +4693,8 @@ function showAccentDialog() {
 
 $('#btnUpdate').addEventListener('click', showUpdateDialog);
 $('#btnTheme').innerHTML = icon('theme');
-$('#btnTheme').addEventListener('click', (e) => { const r = e.currentTarget.getBoundingClientRect(); themeMenu(r.right - 260, r.bottom + 2); });
+// The plugins folder is read again each time, so a plugin added since is on the menu.
+$('#btnTheme').addEventListener('click', async (e) => { const r = e.currentTarget.getBoundingClientRect(); await loadPlugins(); themeMenu(r.right - 260, r.bottom + 2); });
 request('app.version').then((v) => {
   updates.current ??= v;
   $('#appVersion').replaceChildren(`v${v}`, iconEl('chevD'));   // the chevron says it opens a menu
@@ -4791,6 +4844,203 @@ function revealActive(row, selector) {
   // buttons have settled.
   requestAnimationFrame(() => requestAnimationFrame(go));
 }
+
+// ------------------------------------------------------------------ plugins
+
+/**
+ * Plugins: web pages of their own (see PluginCatalog), opened from the palette menu, each in a document tab or, with
+ * "placement": "panel" in its plugin.json, a tab in the side panel. A plugin runs in a sandboxed frame on its own origin
+ * (https://<id>.plugin.local/), so it can't reach the app, its sessions, files or terminals, or another plugin.
+ *
+ * Messages, each { type: 'claude-terminals:<name>', … }. To a plugin: theme { theme: 'light' | 'dark' } (also ?theme= on
+ * its address) whenever it changes, and command { command, context } when one of its menu items (or its title bar
+ * button, see renderPluginButtons) is picked, context
+ * saying what was clicked (see pluginMenuItems): a name and folder to go on, not a way into the session. From a plugin, about
+ * its own tab and nothing else: badge { count } or { dot: true } ({ count: 0 } clears it), and title { title } (null
+ * puts its name back). Anything else it sends is ignored.
+ */
+const plugins = { list: [], problems: [], folder: null, loaded: false };
+const pluginById = (id) => plugins.list.find((p) => p.id === id);
+const pluginKey = (id) => 'plugin|' + id;   // its document tab
+const isPluginTab = (t) => t?.kind === 'plugin';
+// Its side panel tab (function declarations: the dock's saved layout is read before this part of the script runs).
+function isPluginDockTab(t) { return t.startsWith('plugin:'); }
+function pluginOfTab(t) { return t.slice('plugin:'.length); }
+
+/** Each plugin with a page up: id → { frame, ready, queue (messages for when it has loaded), badge, title }. */
+const pluginFrames = new Map();
+
+/** Reads the plugins folder again (a plugin added since shows up without restarting). */
+async function loadPlugins() {
+  try {
+    const r = await request('plugins.list');
+    Object.assign(plugins, { list: r.plugins, problems: r.problems, folder: r.folder, loaded: true });
+    renderPluginButtons();
+  }
+  catch (e) { console.error('The plugins could not be read', e); }
+}
+
+/** Opens a plugin where it shows; a command from one of its menu items reaches it once its page has loaded. */
+function openPlugin(id, command = null, context = null) {
+  const p = pluginById(id);
+  if (!p) return;
+  if (command != null) sendToPlugin(p, { type: 'claude-terminals:command', command, context });
+  if (p.placement === 'panel') {
+    const t = 'plugin:' + id;
+    if (!groupOfTab(t)) dock.groups[dock.groups.length - 1].tabs.push(t);
+    if (!state.gitVisible) { state.gitVisible = true; store.set('gitVisible', true); applyGitVisibility(); }
+    activateTab(groupOfTab(t), t);
+    return;
+  }
+  const key = pluginKey(id);
+  if (!docs.tabs.some((t) => t.key === key)) docs.tabs.push({ key, kind: 'plugin', pluginId: id, preview: false });
+  activateDoc(key);
+}
+
+const pluginSessionContext = (s) => ({ sessionId: s.id, session: s.name, directory: s.directory, project: groupOf(s) === UNKNOWN ? null : projectName(groupOf(s)) });
+
+/**
+ * The items plugins add to a menu ('project', 'session' or 'sessionTab'), under a Plugins heading. Picking one opens the
+ * plugin and sends it the item's command with what was clicked: { menu, project } for a project (its name; null for
+ * sessions with no project), and { menu, sessionId, session, directory, project } for a session (its id, name, working
+ * folder and project's name). That's all a plugin learns: the id names the session, it doesn't open a way into it.
+ */
+function pluginMenuItems(where, context) {
+  const items = plugins.list.flatMap((p) => p.menu.filter((m) => m.where.includes(where))
+    .map((m) => ({ label: m.label, kbd: p.title, action: () => openPlugin(p.id, m.command, { menu: where, ...context }) })));
+  return items.length ? ['-', { header: 'Plugins' }, ...items] : [];
+}
+
+/**
+ * The plugin's frame, made on first use and kept until its tab closes, so switching tabs doesn't reload it. (Moving it
+ * to another place in the page does: dragging its side panel tab to another group starts it again.)
+ */
+function pluginFrame(p) {
+  let f = pluginFrames.get(p.id);
+  if (f) return f;
+  const url = new URL(p.url);
+  url.searchParams.set('theme', isLight() ? 'light' : 'dark');
+  // No allow-same-origin: the page gets an opaque origin, so it can't reach this page, and has no storage to share.
+  const frame = h('iframe', { class: 'plugin-frame', sandbox: 'allow-scripts allow-forms allow-modals', referrerpolicy: 'no-referrer', title: p.title, src: url.href });
+  f = { frame, ready: false, queue: [], badge: null, title: null };
+  const entry = f;
+  frame.addEventListener('load', () => {
+    entry.ready = true;
+    postPluginTheme(frame);
+    for (const m of entry.queue.splice(0)) frame.contentWindow?.postMessage(m, '*');
+  });
+  pluginFrames.set(p.id, f);
+  return f;
+}
+
+function sendToPlugin(p, message) {
+  const f = pluginFrame(p);
+  if (f.ready) f.frame.contentWindow?.postMessage(message, '*');
+  else f.queue.push(message);
+}
+
+const postPluginTheme = (frame) => frame.contentWindow?.postMessage({ type: 'claude-terminals:theme', theme: isLight() ? 'light' : 'dark' }, '*');
+
+/** Its page goes when its tab closes; so do the caption and badge it set, which start afresh next time. */
+function closePluginFrame(id) {
+  pluginFrames.get(id)?.frame.remove();
+  pluginFrames.delete(id);
+}
+
+/** The plugin's tab caption: what it set, or its title. */
+const pluginCaption = (id) => pluginFrames.get(id)?.title ?? pluginById(id)?.title ?? id;
+
+/** The count or dot it put on its tab, if any. */
+function pluginBadge(id, cls = 'tw-badge') {
+  const b = pluginFrames.get(id)?.badge;
+  if (!b) return null;
+  return b.dot ? h('span', { class: 'tw-dot', 'aria-label': 'something new' }) : h('span', { class: cls }, b.count > 99 ? '99+' : String(b.count));
+}
+
+function showPlugin(tab) {
+  const p = pluginById(tab.pluginId);
+  if (!p) { toast(`The plugin "${tab.pluginId}" isn't in the plugins folder any more.`, true); closeDoc(tab.key); return; }
+  const host = $('#pluginDoc');
+  const { frame } = pluginFrame(p);
+  if (frame.parentNode !== host) host.append(frame);
+  for (const f of host.children) f.hidden = f !== frame;
+  frame.focus();
+}
+
+/** A side panel plugin, open in its group. */
+function showDockPlugin(g, t) {
+  const { frame } = pluginFrame(pluginById(pluginOfTab(t)));
+  if (frame.parentNode !== g.frames) g.frames.append(frame);
+  for (const f of g.frames.children) f.hidden = f !== frame;
+}
+
+function closeDockPlugin(t) {
+  const g = groupOfTab(t);
+  if (!g) return;
+  g.tabs.splice(g.tabs.indexOf(t), 1);
+  if (!g.tabs.length) removeGroup(g);
+  closePluginFrame(pluginOfTab(t));
+  saveDock();
+  renderGit();
+}
+
+/** Redraws a plugin's tab, wherever it is, and its title bar button, after it changed its caption or badge. */
+function renderPluginTab(id) {
+  if (pluginById(id)?.toolbar) renderPluginButtons();
+  if (docs.tabs.some((t) => t.key === pluginKey(id))) renderDocTabs();
+  const g = groupOfTab('plugin:' + id);
+  if (g && state.gitVisible && !g.el?.hidden) renderDockTabs(g, groupTabs(g), shownActive(g));
+}
+
+// ---- title bar buttons
+
+/** Plugins whose title bar button you hid (right-click it › Hide this button); the palette menu brings it back. */
+const hiddenPluginButtons = new Set(store.get('hiddenPluginButtons', []));
+
+function setPluginButton(id, shown) {
+  if (shown) hiddenPluginButtons.delete(id); else hiddenPluginButtons.add(id);
+  store.set('hiddenPluginButtons', [...hiddenPluginButtons]);
+  renderPluginButtons();
+}
+
+/**
+ * Each plugin's button, after New Session and Git Changes, set apart. Only an icon, its tooltip starting with the
+ * plugin's name, so it can't pass for one of the app's own (such as Update). Clicking it opens the plugin and sends its
+ * command, if it has one, with the open session as context ({ menu: 'toolbar', sessionId, session, directory, project },
+ * or just { menu: 'toolbar' } with none open). It shows the plugin's badge too, while the plugin is open.
+ */
+function renderPluginButtons() {
+  fill($('#pluginButtons'), plugins.list.filter((p) => p.toolbar && !hiddenPluginButtons.has(p.id)).map((p) => {
+    const tip = `${p.title} (plugin)${p.toolbar.tooltip ? ': ' + p.toolbar.tooltip : ''}`;
+    return h('button', {
+      class: 'tb-btn plugin-btn', title: tip, 'aria-label': tip,
+      onclick: () => {
+        const s = state.byId.get(state.expandedId);
+        openPlugin(p.id, p.toolbar.command, { menu: 'toolbar', ...(s ? pluginSessionContext(s) : {}) });
+      },
+      oncontextmenu: (e) => { e.preventDefault(); showMenu(e.clientX, e.clientY, [{ header: p.title }, { label: 'Hide this button', action: () => setPluginButton(p.id, false) }]); },
+    }, h('img', { src: p.toolbar.icon, alt: '', draggable: 'false' }), pluginBadge(p.id, 'plugin-btn-count'));
+  }));
+}
+
+// What a plugin asks for its own tab. Only its own frame is listened to, so it can't speak for another plugin.
+addEventListener('message', (e) => {
+  const id = [...pluginFrames].find(([, f]) => f.frame.contentWindow === e.source)?.[0];
+  const m = e.data;
+  if (!id || typeof m?.type !== 'string') return;
+  const f = pluginFrames.get(id);
+  if (m.type === 'claude-terminals:badge') {
+    const n = Math.floor(Number(m.count));
+    f.badge = n > 0 ? { count: Math.min(n, 999) } : m.dot === true ? { dot: true } : null;
+  } else if (m.type === 'claude-terminals:title') {
+    const t = typeof m.title === 'string' ? m.title.replace(/\s+/g, ' ').trim().slice(0, 60) : '';
+    f.title = t || null;
+  } else return;
+  renderPluginTab(id);
+});
+
+// Side panel plugins kept from last time show once the folder has been read.
+loadPlugins().then(() => renderGit());
 
 // ------------------------------------------------------------------ boot
 
