@@ -48,7 +48,7 @@ Releases are signed by **Llamachant Technology Ltd**. If SmartScreen still warns
 ### Requirements
 
 - Windows 10 1809+ or Windows 11 (x64)
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) on `PATH`, plus Git
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and/or [Codex CLI](https://github.com/openai/codex) on `PATH`, plus Git
 - WebView2 Runtime (built into Windows 11; setup offers the download if it's missing)
 - To build it yourself: .NET 10 SDK and Node.js (for the bundled xterm.js / Monaco packages)
 
@@ -80,6 +80,7 @@ Releases are signed by **Llamachant Technology Ltd**. If SmartScreen still warns
 | Copy / paste | `Ctrl+C` with a selection / `Ctrl+V` (or right-click when expanded) |
 | Diff tabs | Click a file for a preview tab (italic, reused); double-click to keep it open. Tabs belong to their session's project: switching to a session in another project shows that project's tabs, and yours come back when you return |
 | Terminal ↔ diffs | Click the Terminal tab, `Shift+Esc` from a diff, or `Ctrl+PgUp` / `Ctrl+PgDn` |
+| A tab beside the terminal | Drag a diff, Conversation or plugin tab down into the area, near the edge you want it on (left, right, top or bottom), or right-click it and pick a side; the middle shows it on its own again. Drag the Terminal tab the same way to put the terminal on that side of the tab. While split, the tab you pick goes beside the terminal, `Shift+Esc` goes back to the terminal and leaves it there, and `Ctrl+W` closes the tab only while you're in it. Drag the divider to resize (double-click to even up); the side and size are remembered |
 | Close diff tab | `Ctrl+W` or `Ctrl+F4`, middle-click, or the tab's ×; `Alt+↑/↓` jumps between changes. (In the terminal `Ctrl+W` stays Claude's delete-word) |
 
 Plain `Esc` always goes to the terminal, because Claude Code uses it to interrupt.
@@ -112,6 +113,8 @@ With Windows' animation effects turned off the dots stay still, and in every sty
 - **Commands that choose for themselves:** commands with their own `--resume`, `--session-id` or `--fork-session` are left alone.
 
 **Resuming:** the picker reads Claude Code's saved conversations from `~/.claude/projects`. Picking one (in New session, or *Resume a different conversation…*) makes it the session's conversation; *New conversation* gives the session a fresh one. Close the conversation in any other terminal first. Conversations updated in the last few minutes are tagged *active now* as a reminder.
+
+**Codex sessions:** make the command `codex` (plus any options). Codex can't be told which conversation id to use, so a new session learns its conversation once Codex has saved it (the latest one started in its folder since the session started, not counting `codex exec` runs) and reopens it with `codex resume <id>` from then on. It follows Codex to a new conversation after `/new`, and to one you pick with `/resume` once you send a prompt in it (from Codex's prompt history, `~/.codex/history.jsonl`). Codex sessions start when you first open them, appear in the resume picker (tagged *Codex*, read from `~/.codex/sessions`, or `CODEX_HOME`), and can show panels: the app adds its MCP server with `-c mcp_servers.claude-terminals.…`, passing the token in an environment variable. The conversation rail and Conversation tab show its conversation too, and the *needs your answer* dot shows while Codex waits for an approval or an answer (Codex reports it in the terminal), or on its folder trust check. **Suggest** asks Codex for the message (`codex exec`, not saved). Not yet for Codex: matching colours.
 
 **Closing the app** stops the sessions but loses nothing: Claude keeps every conversation, and the sessions come back with the app. The closing prompt says which pick up where they left off (those that continue or resume) and which start a new conversation.
 
@@ -147,7 +150,7 @@ The view follows the sessions as they work and re-reads the repositories every h
 
 **Git panel:** shows the selected session's repository. *Git Changes* has staged/unstaged trees, stage/unstage, commit, and VS-style **Undo Changes** (right-click a file or folder, or the ↶ on a section header; new files go to the Recycle Bin; it refuses rather than guesses if the files changed after you confirmed, or if restoring would overwrite a file that now exists at a deleted or renamed file's old name). *Git Repository* has outgoing commits and history, plus each commit's files. Click any file to open a diff. Open diffs refresh as the session edits the file.
 
-**Suggest** writes a commit message for what Commit would take (the staged changes, or all of them), in the style of the repository's recent commits; Ctrl+Z brings back what was in the box. The ▾ beside it sets how much it writes, remembered for next time: *Short* (one line), *Standard* (a line, plus a few brief points when a change covers several things) or *Detailed* (a line and a paragraph on what changed and why). It runs Claude Code headless (`claude -p`, Haiku, no tools, not saved as a conversation) with your own Claude sign-in, sending it the diff, so it uses a little of your Claude plan.
+**Suggest** writes a commit message for what Commit would take (the staged changes, or all of them), in the style of the repository's recent commits; Ctrl+Z brings back what was in the box. The ▾ beside it sets how much it writes, remembered for next time: *Short* (one line), *Standard* (a line, plus a few brief points when a change covers several things) or *Detailed* (a line and a paragraph on what changed and why). It runs the session's own agent headless with your own sign-in, sending it the diff, so it uses a little of that agent's plan: Claude Code as `claude -p` (Haiku, no tools, not saved as a conversation), Codex as `codex exec` (read-only, low reasoning, not saved). A session running anything else uses Claude Code.
 
 **Fetch, Pull and Push** sit on the Git panel's toolbar, next to the branch and its outgoing/incoming counts. Pull only fast-forwards: it never creates a merge commit or leaves conflicts in a worktree a session may be editing, and stops with git's explanation if the branch has diverged. Push never forces; a branch with no upstream is published to `origin` and tracked. Each runs for up to 5 minutes, long enough to sign in through Git Credential Manager.
 
@@ -264,9 +267,36 @@ It can still run scripts, show forms and dialogs, load files from its own folder
 
 ### Theme and colours
 
-**Theme:** *System*, *Light* or *Dark*, from the palette button at the top right. *System* (the default) follows Windows' app mode (Settings › Personalisation › Colours), and changes with it. The terminals go light too, and each Claude is started in its matching theme (`--settings` with `{"theme":"light"}` or `"dark"`): Claude can't detect the terminal's colours itself, because the Windows console layer doesn't pass the question through. Sessions whose command passes its own `--settings` are left alone. Claude reads its theme when it starts, so after switching, the app offers to restart running Claude sessions; each carries on in its conversation.
+**Theme:** *System*, *Light*, *Dark*, or one of the themes below, from the palette button at the top right. *System* (the default) follows Windows' app mode (Settings › Personalisation › Colours), and changes with it. The terminals go light too, and each Claude is started in its matching theme (`--settings` with `{"theme":"light"}` or `"dark"`): Claude can't detect the terminal's colours itself, because the Windows console layer doesn't pass the question through. Sessions whose command passes its own `--settings` are left alone. Claude reads its theme when it starts, so after switching, the app offers to restart running Claude sessions; each carries on in its conversation.
 
 **Accent colour:** by default the app uses your Windows accent colour for tabs, buttons and highlights, and follows it when you change it. To pick another, use *Accent colour › Change…* under the palette button: Windows accent, the original purple, eight swatches or any custom colour, previewed as you click (Cancel or Esc puts back what you had). Shades are chosen so white text and the background stay readable in both themes, so a very light or dark colour is toned where needed.
+
+**Themes:** a theme is a JSON file of colours. The app comes with *Nerds*: everything in shades of your accent colour on near-black, like an old monochrome screen, in a monospaced face with a faint glow. Pick green under *Accent colour* for a phosphor terminal, amber for an old amber one; the whole app recolours as you click. Status, Git's changes and the terminal's colours differ by how light or strong their shade is rather than by hue, and the status dots still differ in shape.
+
+To add your own, the quickest start is *Save as a new theme…* under the palette button: it writes the theme you're looking at (Light, Dark, Nerds in your accent, or one of yours) to your themes folder as a file with every colour written out, for you to change. Or choose *Open the themes folder* and put a `<name>.json` there (letters, digits and hyphens; not `light`, `dark` or `system`). The folder is read each time the menu opens, so a theme shows without restarting. For example:
+
+```json
+{
+  "name": "Forest",
+  "base": "dark",
+  "font": "Cascadia Mono",
+  "glow": true,
+  "accent": { "line": "#39ff6a", "strong": "#0b6b26" },
+  "colors": { "chrome": "#050a06", "text": "#8cf0a6", "working": "#3fe0d0" },
+  "terminal": { "background": "#020703", "foreground": "#5cf08a", "red": "#e0524a" },
+  "diff": { "insertedLine": "#1a5a2a55", "removedLine": "#5a1d1d55", "keyword": "#c8ffd8" }
+}
+```
+
+- **`monochrome`:** `true` builds every colour from the accent colour, as [Nerds](src/ClaudeTerminals/wwwroot/themes/nerds.json) does; colours the theme sets itself still win.
+- **`base`** (`dark` or `light`) fills in every colour the theme leaves out, so a theme can set three colours or all of them. It's also what Claude and plugins are told, so Claude runs in its dark or light colours.
+- **`colors`:** the app's own: `chrome`, `chrome-2`, `chrome-3` (backgrounds, darkest last), `panel`, `panel-2`, `hover`, `hover-strong`, `border`, `border-soft`, `border-strong`, `text`, `text-dim`, `text-faint`, `text-strong`, `focus`, `select`, `select-inactive`, `terminal-bg`, `editor-bg`, the status colours `ok`, `working`, `attention`, `asking`, `danger`, `danger-fill`, Git's `st-m`, `st-a`, `st-d`, `st-r`, `st-u` (modified, added, deleted, renamed, untracked), `graph`, `ref-bg`, `ref-fg`, `ref-head-bg`, `ref-head-fg`, `ref-tag-bg`, `ref-tag-fg`, and `info-bg`, `info-border`, `error-bg`, `error-border`, `pv-warn-bg`, `pv-warn-border`, `ico-folder`, `ico-file`, `scroll-thumb`, `scroll-thumb-hover`, `tab-border-shown`, `tab-border-hover`, `tick`, `tick-active`, `tick-hot`, `card-bg`, `card-border`, `bubble`, `code-fg`, `code-bg`, `well`, `table-head`, `link`, `update-fg`. Colours are `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgb()` or `rgba()`.
+- **`terminal`:** xterm.js's names: `background`, `foreground`, `cursor`, `cursorAccent`, `selectionBackground`, `selectionForeground`, `selectionInactiveBackground`, the sixteen `black` … `white` and `brightBlack` … `brightWhite`, and `overviewRulerBorder`, `scrollbarSliderBackground`, `scrollbarSliderHoverBackground`, `scrollbarSliderActiveBackground`.
+- **`diff`:** `background`, `foreground`, `lineNumber`, `lineNumberActive`, `selection`, `cursor`, `lineHighlightBorder`, `insertedLine`, `insertedText`, `removedLine`, `removedText`, `insertedGutter`, `removedGutter`, `insertedOverview`, `removedOverview`, `diagonalFill`, `scrollbar`, and the syntax colours `comment`, `keyword`, `string`, `number`, `type`; `#rrggbb` or `#rrggbbaa` only.
+- **`accent`** replaces the accent colour while the theme is on: `line` for lines and highlights, `strong` for fills with white text. Leave it out to keep the one picked in *Accent colour*.
+- **`font`** is a font family for the app's own text (not the terminals'); **`glow`** makes text glow faintly in the accent colour.
+
+A theme is only data: the app takes the names above and checks each value, so it can't restyle anything else or load anything. A file it can't use, or a value it leaves out, is listed under *Why?* in the palette menu.
 
 ### Updates
 

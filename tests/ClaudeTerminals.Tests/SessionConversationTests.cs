@@ -17,25 +17,25 @@ public class SessionConversationTests
     [InlineData("claude -p hello", true, "claude -p hello")]
     [InlineData("pwsh", true, "pwsh")]
     public void A_session_reopens_its_own_conversation(string command, bool saved, string expected) =>
-        Assert.Equal(expected, TerminalSession.PrepareCommand(command, null, () => true, conversation: Id, isSaved: _ => saved));
+        Assert.Equal(expected, ClaudeAgent.PrepareCommand(command, null, () => true, conversation: Id, isSaved: _ => saved));
 
     [Fact]
     public void Its_own_conversation_wins_over_an_update_note_and_a_folders_latest()
     {
         var other = "11111111-2222-3333-4444-555555555555";
-        Assert.Equal("claude --resume " + Id, TerminalSession.PrepareCommand("claude --continue", other, () => true, conversation: Id, isSaved: _ => true));
+        Assert.Equal("claude --resume " + Id, ClaudeAgent.PrepareCommand("claude --continue", other, () => true, conversation: Id, isSaved: _ => true));
     }
 
     [Fact]
     public void A_session_started_from_a_panel_starts_its_conversation_with_the_prompt() =>
         Assert.Equal($"claude \"Fix it\" --session-id {Id} --mcp-config \"M.json\" --allowedTools mcp__claude-terminals",
-            TerminalSession.PrepareCommand("claude", null, () => true, mcpConfig: "M.json", newConversation: true, firstPrompt: "Fix it", conversation: Id, isSaved: _ => false));
+            ClaudeAgent.PrepareCommand("claude", null, () => true, mcpConfig: "M.json", newConversation: true, firstPrompt: "Fix it", conversation: Id, isSaved: _ => false));
 
     [Fact]
     public void Only_a_real_session_id_is_used()
     {
         foreach (var bad in new[] { "abc", "not-a-guid-at-all", "3f2a6c1e-8b4d-4c2a-9e1f-0a1b2c3d4e5f; calc" })
-            Assert.Equal("claude", TerminalSession.PrepareCommand("claude", null, () => true, conversation: bad, isSaved: _ => true));
+            Assert.Equal("claude", ClaudeAgent.PrepareCommand("claude", null, () => true, conversation: bad, isSaved: _ => true));
         Assert.True(TerminalSession.IsConversationId(Id));
     }
 
@@ -80,7 +80,7 @@ public class SessionConversationTests
         Assert.True(TerminalSession.IsConversationId(s.Info.Conversation));
         Assert.False(TerminalSession.NeedsOwnConversation(s.Info));
         Assert.Equal("claude --session-id " + s.Info.Conversation,   // not a plain claude, so the next start reopens it
-            TerminalSession.PrepareCommand(s.Info.Command, null, () => true, conversation: s.Info.Conversation, isSaved: _ => false));
+            ClaudeAgent.PrepareCommand(s.Info.Command, null, () => true, conversation: s.Info.Conversation, isSaved: _ => false));
     }
 
     [Fact]

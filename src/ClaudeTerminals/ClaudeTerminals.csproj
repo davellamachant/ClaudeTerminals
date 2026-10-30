@@ -10,7 +10,7 @@
     <ApplicationIcon>app.ico</ApplicationIcon>
 
     <!-- Version shown in Explorer, Apps & Features and the installer. Bump for each release. -->
-    <Version>1.1.2</Version>
+    <Version>1.1.4</Version>
     <Product>Claude Terminals</Product>
     <AssemblyTitle>Claude Terminals</AssemblyTitle>
     <Company>LLAMACHANT TECHNOLOGY LTD</Company>
