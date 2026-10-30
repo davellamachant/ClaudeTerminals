@@ -133,7 +133,7 @@ host.addEventListener('message', (e) => {
       m.ok ? p.resolve(m.result) : p.reject(new Error(m.error));
       break;
     }
-    case 'sessions': syncSessions(m.sessions, m.projects || []); break;
+    case 'sessions': state.agents = m.agents || state.agents; syncSessions(m.sessions, m.projects || []); break;
     case 'output': onOutput(m.id, m.data); break;
     case 'exited': onExited(m.id, m.code); break;
     case 'git.status': onGitStatus(m); break;
@@ -147,6 +147,7 @@ host.addEventListener('message', (e) => {
 
 const state = {
   sessions: [],              // ordered session objects
+  agents: [],                // the coding agents the host knows (AgentProfile.Describe): id, name, programs, choosesId, follows, …
   byId: new Map(),
   expandedId: null,
   projectViewOf: null,       // the project whose Project view is showing: a place of its own, with no session open
@@ -501,7 +502,7 @@ function syncSessions(list, projects) {
   state.restored = true;
   for (const s of state.sessions) {
     if (s.running || s.started || s.startsOnOpen) continue;
-    if (restoring && isClaudeCommand(s.command)) { s.startsOnOpen = true; renderTileHeader(s); }
+    if (restoring && agentOf(s.command)) { s.startsOnOpen = true; renderTileHeader(s); }
     else startSession(s);
   }
   applyProjectFilter(true);
@@ -569,6 +570,13 @@ function createSession(info) {
   });
   term.onResize(({ cols, rows }) => { if (s.running) post({ type: 'resize', id: s.id, cols, rows }); });
   term.onTitleChange((t) => { s.title = t; renderTileHeader(s); });
+  // Some agents (Codex) report what they're doing in an OSC 7501 sequence, "state=working:app=codex", with state=blocked
+  // while they wait on an answer from you. A session that reports it is taken at its word rather than read off the screen.
+  term.parser.registerOscHandler(7501, (data) => {
+    const reported = /(?:^|:)state=([a-z]+)/.exec(data)?.[1];
+    if (reported) { s.reportsState = true; setAsking(s, reported === 'blocked'); }
+    return true;
+  });
   term.onBell(() => { if (state.expandedId !== s.id) setAttention(s, true); });
   // The right button only opens the menu. Left to xterm, a right press is reported to Claude when it tracks the mouse,
   // and Claude pastes on right-click, so the clipboard was pasted as the menu opened.
@@ -596,7 +604,15 @@ function fitTerm(s) {
   try { s.fit.fit(); } catch { /* not attached yet */ }
 }
 
-const isClaudeCommand = (command) => /^claude(\.exe)?(\s|$)/i.test((command || '').trim());
+/** The coding agent a command runs (one of state.agents, as the host's Agents.For), or null for any other command. */
+const agentOf = (command) => {
+  const program = (command || '').trim().split(' ')[0].toLowerCase();
+  return state.agents.find((a) => a.programs.includes(program)) ?? null;
+};
+const agentById = (id) => state.agents.find((a) => a.id === id) ?? null;
+
+/** Whether the command has an option an agent's pattern (a regex source from the host) describes. */
+const hasOption = (pattern, command) => !!pattern && new RegExp(pattern, 'i').test(' ' + (command || '').trim());
 
 function startSession(s) {
   s.started = true;
@@ -642,6 +658,7 @@ function onExited(id, code) {
   s.exitCode = code;
   s.act.state = 'idle';
   s.asking = false;
+  s.reportsState = false;   // the next start may run another command
   const what = code == null ? 'Process stopped' : `Process exited with code ${code}`;   // null: stopped from the menu
   s.term.write(`\r\n\x1b[90m[${what} — press Enter to restart]\x1b[0m\r\n`);
   renderTileHeader(s);
@@ -661,9 +678,9 @@ function noteActivity(s) {
       a.workingSince = a.burstStart;
       // Working again means it's no longer waiting for you, e.g. another session handed it a task or you answered its
       // question. "Waiting" takes priority in statusClass, so without this the dot stayed yellow until the session was
-      // opened.
-      const asked = s.asking;
-      s.asking = false;
+      // opened. A session that reports its state says when it stops asking (Codex blinks its title while it asks).
+      const asked = s.asking && !s.reportsState;
+      if (asked) s.asking = false;
       if (s.attention) setAttention(s, false);
       else { renderTileState(s); if (asked) renderDocTabs(); }
     }
@@ -680,11 +697,12 @@ setInterval(() => {
       if (now - a.workingSince > 4000 && state.expandedId !== s.id) setAttention(s, true);
       else renderTileState(s);
     }
-    // Once the screen has settled after new output has been drawn (mid-redraw it can be half drawn), see whether Claude
-    // is asking. Only Claude: a shell or a dev server can print text that looks like its menus.
-    if (s.running && a.drawnAt !== a.readAt && now - a.drawnAt > 250 && /^claude(\.exe)?(\s|$)/i.test(s.command.trim())) {
+    // Once the screen has settled after new output has been drawn (mid-redraw it can be half drawn), see whether the
+    // agent is asking. Only agents: a shell or a dev server can print text that looks like their menus.
+    const asks = s.running && !s.reportsState && a.drawnAt !== a.readAt && now - a.drawnAt > 250 && askingScreen(s.command);
+    if (asks) {
       a.readAt = a.drawnAt;
-      setAsking(s, isAsking(s.term));
+      setAsking(s, isAsking(s.term, asks));
     }
   }
 }, 500);
@@ -703,17 +721,28 @@ function setAsking(s, on) {
   renderDocTabs();
 }
 
-// Claude asks by putting a menu where its prompt box was: a permission prompt, a question (AskUserQuestion), a plan to
-// approve, the folder trust check. Each has a picked numbered choice ("> 1. Yes") or an "Esc to cancel" hint. While the
-// prompt box (a rule with "> " under it) is there, it wants a prompt instead, so text like that in the conversation
-// above doesn't count.
-function isAsking(term) {
+/** How a command's agent shows on screen that it's asking (its profile's asks, as regexes), or null. */
+function askingScreen(command) {
+  const agent = agentOf(command);
+  if (!agent?.asks) return null;
+  const { choice, promptRule, promptLine } = agent.asks;
+  return (agent.asksRe ??= {
+    choice: new RegExp(choice),
+    promptRule: promptRule && new RegExp(promptRule),
+    promptLine: promptLine && new RegExp(promptLine),
+  });
+}
+
+// An agent asks by putting a menu on screen, with a line its profile recognises (Claude's picked numbered choice, say).
+// While its prompt box (a rule with the prompt under it) is there, it wants a prompt instead, so text like that in the
+// conversation above doesn't count.
+function isAsking(term, asks) {
   const b = term.buffer.active;
   let choice = false, prev = '';
   for (let y = b.baseY; y < b.baseY + term.rows; y++) {
     const line = b.getLine(y)?.translateToString(true) ?? '';
-    if (/^\s*─{8,}/.test(prev) && /^[>!❯](\s|$)/.test(line)) return false;
-    if (/^\s*[>❯›] ?\d+\. |\bEsc to cancel\b/.test(line)) choice = true;
+    if (asks.promptRule?.test(prev) && asks.promptLine?.test(line)) return false;
+    if (asks.choice.test(line)) choice = true;
     prev = line;
   }
   return choice;
@@ -842,8 +871,12 @@ function sessionTabTitle(s) {
  * before you type into it. Null for other commands, and until it has been fetched (see loadConversationInfo).
  */
 function conversationLine(s) {
-  if (!isClaudeCommand(s.command)) return null;
-  if (!s.conversation) return /\s(-c|--continue)(\s|$)/i.test(s.command + ' ') ? "Conversation: the folder's latest, once Claude has picked it" : null;
+  const agent = agentOf(s.command);
+  if (!agent) return null;
+  if (!s.conversation) {
+    if (hasOption(agent.continue, s.command)) return `Conversation: the folder's latest, once ${agent.name} has picked it`;
+    return agent.choosesId || hasOption(agent.ownConversation, s.command) ? null : `Conversation: a new one, once ${agent.name} has started it`;
+  }
   const c = s.convInfo;
   if (c?.id !== s.conversation) return null;
   if (!c.saved) return 'Conversation: a new one, nothing in it yet';
@@ -853,7 +886,7 @@ function conversationLine(s) {
 
 /** Fetches the session's conversation for its tooltips when the pointer reaches its tab or tile header, so it's current. */
 async function loadConversationInfo(s) {
-  if (!isClaudeCommand(s.command) || !s.conversation) return;
+  if (!agentOf(s.command) || !s.conversation) return;
   try { s.convInfo = await request('conversationInfo', { id: s.id }); } catch { return; }
   const tab = $(`.session-tab[data-id="${s.id}"]`);
   if (tab) tab.title = sessionTabTitle(s);
@@ -1293,7 +1326,7 @@ function projectField(selectedId) {
   });
   let created = null;   // so retrying after a failed save doesn't create the project twice
   return {
-    el: field('Project', h('div', { class: 'stack' }, select, newName)),
+    el: field('Project', h('div', { class: 'stack' }, h('div', { class: 'combo' }, select, h('span', { class: 'combo-btn' }, iconEl('chevD'))), newName)),
     select,
     newName,
     async resolve() {
@@ -1313,6 +1346,7 @@ function defaultProjectId() {
 }
 
 function showEditDialog(s, focus) {
+  const agent = agentOf(s.command);
   const name = h('input', { value: s.name, spellcheck: 'false' });
   const command = h('input', { value: s.command, spellcheck: 'false' });
   const project = projectField(s.project);
@@ -1334,24 +1368,36 @@ function showEditDialog(s, focus) {
   for (const i of [name, command, project.newName]) i.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); });
   openModal('Edit session', [
     field('Name', name),
-    field('Command', command, 'For example: claude, claude --model opus'),
+    field('Command', command, 'For example: claude, claude --model opus, codex'),
     project.el,
     field('Folder', h('input', { value: s.directory, readonly: true })),
-    /^claude(\.exe)?(\s|$)/i.test(s.command) && field('Conversation',
-      h('input', { value: s.conversation ?? '', placeholder: 'Learned from Claude once it has picked one (--continue)', readonly: true, spellcheck: 'false' }),
-      'The conversation this session reopens each time it starts, followed through /clear and /resume. Change it with Resume a different conversation…'),
+    agent && field('Conversation',
+      h('input', {
+        value: s.conversation ?? '', readonly: true, spellcheck: 'false',
+        placeholder: agent.choosesId ? `Learned from ${agent.name} once it has picked one (--continue)` : `Learned from ${agent.name} once it has started one`,
+      }),
+      `The conversation this session reopens each time it starts, followed ${agent.follows}. Change it with Resume a different conversation…`),
     error,
   ], [h('button', { class: 'btn', onclick: closeModal }, 'Cancel'), h('button', { class: 'btn primary', onclick: save }, 'Save')]);
   if (focus === 'project') setTimeout(() => project.select.focus(), 30);
 }
 
+/** An agent's name as a tag, in its colour (AgentProfile.Color) when it has one; the stylesheet picks the theme's. */
+function agentTag(id) {
+  const a = agentById(id);
+  return h('span', {
+    class: 'conv-agent' + (a?.color ? ' colored' : ''),
+    style: a?.color && `--agent-dark: ${a.color.dark}; --agent-light: ${a.color.light}`,
+  }, a?.name ?? id);
+}
+
 const leafName = (path) => (path || '').split(/[\\/]/).filter(Boolean).pop() || path;
 
 /**
- * Searchable list of Claude Code's saved conversations (optionally limited to one folder).
- * onPick(conv, confirm) fires on click; confirm is true for a double-click.
+ * Searchable list of Claude Code's and Codex's saved conversations (optionally limited to one folder, or one agent's).
+ * onPick(conv, confirm) fires on click; confirm is true for a double-click. Each conversation's agent is conv.agent.
  */
-function conversationPicker({ directory = null, onPick }) {
+function conversationPicker({ directory = null, agent = null, onPick }) {
   const search = h('input', { placeholder: 'Search conversations by title, prompt or folder…', spellcheck: 'false' });
   const list = h('div', { class: 'conv-list' }, h('div', { class: 'conv-empty' }, 'Loading conversations…'));
   let all = [];
@@ -1376,6 +1422,7 @@ function conversationPicker({ directory = null, onPick }) {
         ondblclick: () => { if (!open) onPick(c, true); },
       },
       h('div', { class: 'conv-title' }, h('span', {}, c.title),
+        !agent && agentTag(c.agent),
         open ? h('span', { class: 'conv-open' }, 'open in ' + open.name)
           : Date.now() - new Date(c.modified) < 3 * 60000 && h('span', { class: 'conv-open', title: 'Updated in the last few minutes — it may still be running in another terminal' }, 'active now')),
       h('div', { class: 'conv-meta' }, [!directory && c.cwd, c.branch && 'on ' + c.branch, relTime(c.modified)].filter(Boolean).join('  ·  ')),
@@ -1384,7 +1431,7 @@ function conversationPicker({ directory = null, onPick }) {
   };
 
   search.addEventListener('input', render);
-  request('conversations', { directory })
+  request('conversations', { directory, agent })
     .then((r) => { all = r || []; render(); })
     .catch((e) => list.replaceChildren(h('div', { class: 'conv-empty' }, e.message)));
   return h('div', { class: 'conv-picker' }, search, list);
@@ -1493,6 +1540,7 @@ function showAddDialog(mode = 'new', from = null) {
           picked = c;
           dir.value = c.cwd || '';
           name.value = leafName(c.cwd);
+          if (agentOf(command.value)?.id !== c.agent) command.value = agentById(c.agent)?.programs[0] ?? command.value;   // only its own agent can open it
           error.hidden = true;
           updateNote();
           if (confirm) add();
@@ -1511,20 +1559,31 @@ function showAddDialog(mode = 'new', from = null) {
   // What happens to the conversation, in words, under the Command box: it follows the mode, the pick and the command.
   function updateNote() {
     const cmd = command.value.trim() || DEFAULT_COMMAND;
-    const claude = /^claude(\.exe)?(\s|$)/i.test(cmd);
-    const flag = (re) => re.test(` ${cmd} `);
+    const agent = agentOf(cmd);
     let text;
     if (firstPrompt) text = 'Starts a new conversation with the first prompt above, and reopens it each time the session starts.';
-    else if (!claude) text = 'Runs in the folder above.';
-    else if (flag(/\s(-r|--resume|--session-id|--fork-session)[\s=]/)) text = 'Your command picks its own conversation, so the app leaves that to it.';
+    else if (!agent) text = 'Runs in the folder above.';
+    else if (hasOption(agent.ownConversation, cmd)) text = 'Your command picks its own conversation, so the app leaves that to it.';
     else if (mode === 'resume') text = picked
-      ? `Reopens "${picked.title}" each time the session starts, following it through /clear and /resume.`
+      ? `Reopens "${picked.title}" each time the session starts, following it ${agent.follows}.`
       : 'Pick the conversation to carry on above.';
-    else if (flag(/\s(-c|--continue)\s/)) text = 'Carries on the folder\'s latest conversation, then keeps that one: it reopens each time the session starts.';
-    else text = 'Gets a conversation of its own and reopens it each time the session or the app restarts, following it through /clear and /resume.';
+    else if (hasOption(agent.continue, cmd)) text = 'Carries on the folder\'s latest conversation, then keeps that one: it reopens each time the session starts.';
+    else text = `${agent.choosesId ? 'Gets a conversation of its own' : 'Starts a new conversation'} and reopens it each time the session or the app restarts, following it ${agent.follows}.`;
     commandNote.textContent = text;
   }
   command.addEventListener('input', updateNote);
+  // Each agent's plain command to pick from, dropped down from the box like a combo box's list (the arrow, or Alt+Down
+  // in the box); the box stays free to type over (e.g. "claude --model opus").
+  const suggestions = () => {
+    const r = command.getBoundingClientRect();
+    showMenu(r.left, r.bottom + 2, state.agents.map((a) => ({
+      label: a.programs[0], kbd: a.name, checked: command.value.trim() === a.programs[0],
+      action: () => { command.value = a.programs[0]; updateNote(); command.focus(); },
+    })));
+    openMenuEl.style.minWidth = r.width + 'px';
+  };
+  const suggest = h('button', { class: 'combo-btn', title: 'Suggested commands (Alt+Down)', tabindex: '-1', onclick: suggestions }, iconEl('chevD'));
+  command.addEventListener('keydown', (e) => { if (e.altKey && e.key === 'ArrowDown') { e.preventDefault(); suggestions(); } });
   segNew.addEventListener('click', () => setMode('new'));
   segResume.addEventListener('click', () => setMode('resume'));
 
@@ -1534,7 +1593,7 @@ function showAddDialog(mode = 'new', from = null) {
     field('Folder (repository or worktree)', h('div', { class: 'inline' }, dir, browse)),
     field('Name', name, 'Leave it empty to use the folder\'s name.'),
     firstPrompt && field('First prompt', firstPrompt, 'From the panel. Starts a new conversation in this session; edit it first if you like.'),
-    field('Command', command, commandNote),
+    field('Command', h('div', { class: 'combo' }, command, suggest), commandNote),
     project.el,
     wtHost,
     error,
@@ -1562,9 +1621,12 @@ function quickAddMenu(s, anchor) {
 }
 
 /** The session's command without anything that picks a conversation: a new session gets one of its own. */
-const ownOptionsOnly = (command) => (/^claude(\.exe)?(\s|$)/i.test(command)
-  ? command.replace(/\s+(-c|--continue)(?=\s|$)/gi, '').replace(/\s+(-r|--resume|--session-id|--fork-session)(=\S+|\s+[^-\s]\S*)?(?=\s|$)/gi, '').trim()
-  : command);
+function ownOptionsOnly(command) {
+  const agent = agentOf(command);
+  if (!agent) return command;
+  for (const pattern of [agent.continue, agent.ownConversation].filter(Boolean)) command = command.replace(new RegExp(pattern, 'gi'), '');
+  return command.trim();
+}
 
 /** "checkout-api", or "checkout-api 2" (3, …) when that's taken. */
 function freeName(base) {
@@ -1674,9 +1736,10 @@ function showResumeDialog(s) {
     h('div', { class: 'dim' }, s.directory),
     conversationPicker({
       directory: s.directory,
+      agent: agentOf(s.command)?.id ?? null,
       onPick: (c, confirm) => { picked = c; resumeBtn.disabled = false; if (confirm) apply(c.sessionId); },
     }),
-    h('div', { class: 'dim' }, 'Close the conversation in any other terminal first, so two Claude processes don’t write to it at once.'),
+    h('div', { class: 'dim' }, `Close the conversation in any other terminal first, so two ${agentOf(s.command)?.name ?? 'agent'} processes don’t write to it at once.`),
   ], [
     h('button', { class: 'btn', onclick: closeModal }, 'Cancel'),
     h('button', { class: 'btn', title: 'Start a fresh conversation in this folder', onclick: () => apply('new') }, 'New conversation'),
@@ -2406,7 +2469,7 @@ function commitArea(s) {
     suggest.disabled = level.disabled = total === 0 || !!s.suggesting;
     suggest.classList.toggle('busy', !!s.suggesting);
     suggest.title = s.suggesting ? 'Writing a commit message…'
-      : `Suggest a ${SUGGEST_LEVELS[suggestLevel()].toLowerCase()} commit message for the ${g?.staged.length ? 'staged changes' : 'changes'} (Claude)`;
+      : `Suggest a ${SUGGEST_LEVELS[suggestLevel()].toLowerCase()} commit message for the ${g?.staged.length ? 'staged changes' : 'changes'} (${suggestedBy(s)})`;
   };
   msg.addEventListener('input', () => { s.commitDraft = msg.value; s.commitEdits = (s.commitEdits || 0) + 1; update(); });
   msg.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.ctrlKey && !btn.disabled) btn.click(); });
@@ -2430,8 +2493,14 @@ function suggestLevelMenu(s, x, y) {
   ]);
 }
 
+/** Who writes a session's suggested commit message: its agent, or Claude for a session whose agent can't. */
+function suggestedBy(s) {
+  const agent = agentOf(s.command);
+  return agent?.suggests ? agent.name : 'Claude';
+}
+
 /**
- * Visual Studio's "Generate commit message": Claude writes one for what Commit would take. It replaces the box's text
+ * Visual Studio's "Generate commit message": the session's agent writes one for what Commit would take. It replaces the box's text
  * as an edit, so Ctrl+Z brings back what was there.
  */
 async function suggestCommitMessage(s) {
@@ -3589,8 +3658,9 @@ $('#diffDoc').addEventListener('keydown', (e) => {
 });
 
 // ------------------------------------------------------------------ conversation rail and Conversation tab
-// In its full-screen mode Claude keeps no terminal scrollback, so the rail outlines the conversation from Claude's own
-// transcript (one tick per prompt), and the Conversation tab shows the whole of it as text the app can scroll.
+// In its full-screen mode Claude keeps no terminal scrollback, so the rail outlines the conversation from the agent's own
+// transcript (one tick per prompt; see AgentProfile.ReadConversation), and the Conversation tab shows the whole of it
+// as text the app can scroll.
 
 const CONV_POLL_MS = 3000;
 const convKey = (sessionId) => 'conv|' + sessionId;
@@ -4017,11 +4087,11 @@ $('#projectNewWorktree').addEventListener('click', (e) => newProjectWorktree(e.c
  */
 function newProjectWorktree(anchor) {
   const members = projectMembers(state.projectViewOf);
-  const byRoot = new Map();   // repository root → the session it's asked through (a Claude one, for its options)
+  const byRoot = new Map();   // repository root → the session it's asked through (an agent one, for its options)
   for (const s of members) {
     if (!s.git?.isRepo || !s.git.root) continue;
     const key = s.git.root.toLowerCase(), had = byRoot.get(key);
-    if (!had || (!isClaudeCommand(had.command) && isClaudeCommand(s.command))) byRoot.set(key, s);
+    if (!had || (!agentOf(had.command) && agentOf(s.command))) byRoot.set(key, s);
   }
   const open = (s) => showWorktreeDialog(s, { startFrom: projectView.repos.get(s.git.root.toLowerCase())?.baseBranch ?? null });
   const choices = [...byRoot.values()];
@@ -4203,8 +4273,8 @@ function projectRowDetail(row, files, overlapOf, pr) {
     left.append(h('div', {}, h('h3', {}, row.sessions.length > 1 ? `${s.name} · ${statusText(s)}` : statusText(s)),
       h('div', { class: 'pv-conv' }, last
         ? [h('div', { class: 'pv-turn' }, h('span', { class: 't' }, last.time ? relTime(last.time) : ''), h('span', { class: 'you' }, last.prompt)),
-           last.reply && h('div', { class: 'pv-turn' }, h('span', { class: 't' }, 'Claude'), h('span', { class: 'cl' }, plainText(last.reply).slice(0, 400)))]
-        : !isClaudeCommand(s.command) ? `Runs ${s.command}.`
+           last.reply && h('div', { class: 'pv-turn' }, h('span', { class: 't' }, agentOf(s.command)?.name ?? 'Reply'), h('span', { class: 'cl' }, plainText(last.reply).slice(0, 400)))]
+        : !agentOf(s.command) ? `Runs ${s.command}.`
         : s.running ? 'No prompts in this conversation yet.'
         : s.convInfo?.title ? `Conversation: ${s.convInfo.title}${s.convInfo.modified ? ` · last used ${relTime(s.convInfo.modified)}` : ''}`
         : conversationLine(s) ?? 'Not running.')));
@@ -4240,7 +4310,7 @@ function projectRowDetail(row, files, overlapOf, pr) {
   const actions = h('div', { class: 'pv-actions' });
   for (const s of row.sessions) {
     actions.append(h('button', { class: 'btn primary', onclick: stop(() => expand(s.id)) }, row.sessions.length > 1 ? `Open ${s.name}` : s.startsOnOpen ? 'Open and start' : 'Open session'));
-    if (s.running && isClaudeCommand(s.command)) actions.append(h('button', { class: 'btn', onclick: stop(() => openConversation(s)) }, row.sessions.length > 1 ? `Conversation of ${s.name}` : 'Conversation'));
+    if (s.running && agentOf(s.command)?.showsConversation) actions.append(h('button', { class: 'btn', onclick: stop(() => openConversation(s)) }, row.sessions.length > 1 ? `Conversation of ${s.name}` : 'Conversation'));
   }
   if (!row.sessions.length && !row.missing) actions.append(h('button', { class: 'btn primary', onclick: stop(() => startSessionIn(row)) }, 'Start a session here'));
   if (pr?.pr) actions.append(h('button', { class: 'btn', onclick: stop(() => request('openUrl', { uri: pr.pr.url })) }, `View PR #${pr.pr.number}`));
@@ -4255,7 +4325,7 @@ function projectRowDetail(row, files, overlapOf, pr) {
 function startSessionIn(row) {
   const tab = activeTab();
   const members = projectMembers(tab.projectId);
-  const like = members.find((s) => isClaudeCommand(s.command)) ?? members[0];
+  const like = members.find((s) => agentOf(s.command)) ?? members[0];
   const name = freeName(leafName(row.branch && !row.branch.startsWith('(') ? row.branch : row.path));
   addAndOpen({ directory: row.path, name, command: like ? ownOptionsOnly(like.command) : 'claude', project: tab.projectId === UNKNOWN ? '' : tab.projectId })
     .catch((e) => toast(e.message, true));

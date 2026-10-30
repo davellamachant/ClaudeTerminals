@@ -8,7 +8,7 @@ namespace ClaudeTerminals.Sessions;
 
 internal sealed record ConversationInfo(
     string SessionId, string? Cwd, string? Branch, string Title, string? FirstPrompt, string? LastPrompt, DateTime Modified, long Size,
-    DateTime? Started = null);
+    DateTime? Started = null, string Agent = "claude");
 
 /// <summary>
 /// Reads Claude Code's saved conversations (~/.claude/projects/&lt;encoded-cwd&gt;/&lt;sessionId&gt;.jsonl).

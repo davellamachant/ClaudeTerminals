@@ -658,6 +658,17 @@ textarea.commit-msg { resize: vertical; min-height: 54px; height: 54px; user-sel
 .check-field { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
 .field label { color: var(--text-dim); }
 .field .inline { display: flex; gap: 6px; }
+/* A box with its drop-down arrow inside it, at the right. */
+.combo { position: relative; }
+.field .combo input, .field .combo select { padding-right: 28px; }
+.field .combo select { height: 28px; appearance: none; cursor: pointer; }   /* its own arrow is the combo's */
+span.combo-btn { pointer-events: none; }   /* a list's arrow only shows; the list opens from anywhere on it */
+.combo select:hover + .combo-btn { background: var(--hover-strong); color: var(--text); }
+.combo-btn {
+  position: absolute; top: 1px; right: 1px; bottom: 1px; width: 26px; display: flex; align-items: center; justify-content: center;
+  border: 0; border-radius: 0 3px 3px 0; background: transparent; color: var(--text-dim); cursor: pointer;
+}
+.combo-btn:hover { background: var(--hover-strong); color: var(--text); }
 .field input { height: 28px; user-select: text; }
 .field .help { color: var(--text-faint); }
 .wt-list { border: 1px solid var(--border); border-radius: 4px; max-height: 220px; overflow: auto; background: var(--chrome-2); }
@@ -705,6 +716,9 @@ textarea.commit-msg { resize: vertical; min-height: 54px; height: 54px; user-sel
 .conv-title { display: flex; gap: 8px; align-items: center; font-weight: 600; }
 .conv-title > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .conv-open { font-weight: 400; font-size: 11px; color: var(--attention); white-space: nowrap; }
+.conv-agent { font-weight: 400; font-size: 11px; color: var(--text-dim); border: 1px solid var(--border); border-radius: 3px; padding: 0 4px; white-space: nowrap; }
+.conv-agent.colored { --agent: var(--agent-dark); color: var(--agent); border-color: color-mix(in srgb, var(--agent) 55%, transparent); background: color-mix(in srgb, var(--agent) 12%, transparent); }
+:root[data-theme="light"] .conv-agent.colored { --agent: var(--agent-light); }
 .conv-meta { color: var(--text-dim); font-size: 11px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .conv-prompt { color: var(--text-faint); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .conv-empty { padding: 16px; color: var(--text-dim); }
