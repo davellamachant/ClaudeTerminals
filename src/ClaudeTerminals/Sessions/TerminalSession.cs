@@ -3,6 +3,12 @@ using ClaudeTerminals.Terminal;
 
 namespace ClaudeTerminals.Sessions;
 
+/// <summary>
+/// How a session's agent reaches the app's panel server: Claude reads <paramref name="ConfigFile"/> (--mcp-config); Codex
+/// is given <paramref name="Url"/>, and <paramref name="Token"/> through its environment.
+/// </summary>
+internal sealed record PanelLink(string? ConfigFile, string Url, string Token);
+
 /// <summary>Runtime state for one configured session: its pseudo console process and its git watcher.</summary>
 internal sealed partial class TerminalSession : IDisposable
 {
@@ -48,9 +54,12 @@ internal sealed partial class TerminalSession : IDisposable
     /// <summary>A first prompt that couldn't go on the command line: typed into the terminal once Claude has connected to the app.</summary>
     public string? PromptToType { get; set; }
 
-    /// <param name="claudeTheme">"light" or "dark": Claude is started in the theme that matches the terminal.</param>
-    /// <param name="mcpConfig">The file that connects Claude to the app's panel server (see <see cref="PrepareCommand"/>).</param>
-    public void Start(int cols, int rows, string? claudeTheme = null, string? mcpConfig = null)
+    /// <summary>When the current process started (UTC): a Codex conversation started after it is this session's (see <see cref="CodexConversations.Live"/>).</summary>
+    public DateTime StartedUtc { get; private set; }
+
+    /// <param name="theme">"light" or "dark": the agent is started in the theme that matches the terminal, if it can be.</param>
+    /// <param name="panels">How the session's agent reaches the app's panel server, or null when panels are unavailable.</param>
+    public void Start(int cols, int rows, string? theme = null, PanelLink? panels = null)
     {
         if (process != null) return;
         var generation = ++Generation;
@@ -69,12 +78,18 @@ internal sealed partial class TerminalSession : IDisposable
             var env = SessionEnvironment.Build();
             var firstPrompt = FirstPromptOnce;
             var onCommandLine = firstPrompt != null && CommandLineResolver.RunsDirectly(Info.Command, env);
-            var command = PrepareCommand(Info.Command, ResumeOnce, () => ConversationIndex.HasConversation(Info.Directory), ThemeSettingsFile(claudeTheme),
-                mcpConfig, newConversation: firstPrompt != null, firstPrompt: onCommandLine ? firstPrompt : null,
-                conversation: Info.Conversation, isSaved: id => ConversationReader.IsSaved(id, Info.Directory));
+            var command = Info.Command;
+            if (Agent is { } agent)
+            {
+                var launch = new Launch(Info.Directory, Info.Conversation, ResumeOnce, theme, panels,
+                    NewConversation: firstPrompt != null, FirstPrompt: onCommandLine ? firstPrompt : null);
+                command = agent.CommandLine(command, launch);
+                agent.AddEnvironment(env, launch);
+            }
             ResumeOnce = null;
             FirstPromptOnce = null;
             PromptToType = onCommandLine ? null : firstPrompt;
+            StartedUtc = DateTime.UtcNow;
             p.Start(CommandLineResolver.Resolve(command, env), Info.Directory, SessionEnvironment.ToBlock(env), cols, rows);
         }
         catch
@@ -87,146 +102,45 @@ internal sealed partial class TerminalSession : IDisposable
 
     public void Write(string data) => process?.Write(data);
 
-    /// <summary>
-    /// The command line for this start of a claude session. A command that names its own conversation (--resume,
-    /// --session-id, --fork-session) is left alone; otherwise:
-    /// - with the session's own <paramref name="conversation"/>: --resume it once Claude has saved it
-    ///   (<paramref name="isSaved"/>), or --session-id it before then (resuming an unsaved one fails with "No conversation
-    ///   found"), so Claude starts that very conversation; any --continue is dropped;
-    /// - after an update, the conversation it was in (<paramref name="resumeId"/>) replaces --continue, or is added to a
-    ///   plain claude;
-    /// - otherwise --continue is dropped when the folder has no saved conversation yet (<paramref name="hasConversation"/>),
-    ///   since claude would stop with "No conversation found to continue". The saved command keeps it for next time.
-    /// Anything that isn't an interactive claude is left alone.
-    /// </summary>
-    /// <param name="themeSettings">
-    /// A settings file naming Claude's theme to match the app's terminals (Claude can't ask the terminal itself: the
-    /// console layer swallows the question). Added unless the command already passes its own --settings.
-    /// </param>
-    /// <param name="mcpConfig">
-    /// The file connecting Claude to the app's panel server, whose tools are then allowed without asking. Added unless the
-    /// command passes its own --mcp-config.
-    /// </param>
-    /// <param name="newConversation">Start a new conversation (a session started from a panel): --continue is dropped.</param>
-    /// <param name="firstPrompt">
-    /// The prompt that conversation starts with, put straight after the program: the option lists added after it
-    /// (--mcp-config, --allowedTools) would otherwise take it as one of theirs.
-    /// </param>
-    internal static string PrepareCommand(string command, string? resumeId, Func<bool> hasConversation, string? themeSettings = null,
-        string? mcpConfig = null, bool newConversation = false, string? firstPrompt = null,
-        string? conversation = null, Func<string, bool>? isSaved = null)
-    {
-        var tokens = command.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (tokens.Length == 0 || !(tokens[0].Equals("claude", StringComparison.OrdinalIgnoreCase) || tokens[0].Equals("claude.exe", StringComparison.OrdinalIgnoreCase)))
-            return command;
-        var flags = tokens.Skip(1).Select(t => t.Split('=')[0]).ToList();
-        bool Has(params string[] names) => flags.Any(f => names.Contains(f, StringComparer.OrdinalIgnoreCase));
-        if (Has("-p", "--print")) return command;   // no interface, so nothing to theme or continue
 
-        var result = command.Trim();
-        if (!Has(OwnConversationFlags))
-        {
-            if (IsConversationId(conversation))
-                result = WithoutContinue(command) + (isSaved?.Invoke(conversation!) == true ? " --resume " : " --session-id ") + conversation;
-            else if (newConversation)
-                result = WithoutContinue(command);
-            else if (resumeId != null && ConversationId().IsMatch(resumeId))
-                result = WithoutContinue(command) + " --resume " + resumeId;
-            else if (Has("-c", "--continue") && !hasConversation())
-                result = WithoutContinue(command);
-        }
-        if (firstPrompt != null)
-            result = tokens[0] + " " + CommandLineResolver.QuoteArgument(firstPrompt) + result[tokens[0].Length..];
-        if (themeSettings != null && !Has("--settings"))
-            result = result.TrimEnd() + " --settings \"" + themeSettings + "\"";
-        if (mcpConfig != null && !Has("--mcp-config"))
-            result = result.TrimEnd() + " --mcp-config \"" + mcpConfig + "\" --allowedTools " + "mcp__" + Panels.PanelMcp.ServerName;
-        return result;
-    }
+    /// <summary>The agent the session's command runs, or null for any other command.</summary>
+    public AgentProfile? Agent => Agents.For(Info.Command);
 
-    /// <summary>The settings file that sets Claude's theme to "light" or "dark", written once into the app's data folder.</summary>
-    internal static string? ThemeSettingsFile(string? theme)
-    {
-        if (theme is not ("light" or "dark")) return null;
-        try
-        {
-            var path = Path.Combine(SessionStore.AppDataFolder, $"claude-theme-{theme}.json");
-            var content = $$"""{"theme":"{{theme}}"}""";
-            if (!File.Exists(path) || File.ReadAllText(path) != content) File.WriteAllText(path, content);
-            return path;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return null;   // Claude just uses its own theme setting
-        }
-    }
+    /// <summary>A conversation id the agents accept: a GUID.</summary>
+    internal static bool IsConversationId(string? id) => id != null && Guid.TryParse(id, out _) && IsPlainId(id);
 
-    /// <summary>Options with which a command picks its own conversation; the app then leaves the choice to it.</summary>
-    private static readonly string[] OwnConversationFlags = ["-r", "--resume", "--session-id", "--fork-session"];
+    /// <summary>Letters, digits and dashes only, so it can go on a command line as it is.</summary>
+    internal static bool IsPlainId(string id) => PlainId().IsMatch(id);
 
-    /// <summary>A session id Claude accepts for --session-id: a GUID.</summary>
-    internal static bool IsConversationId(string? id) => id != null && Guid.TryParse(id, out _) && ConversationId().IsMatch(id);
+    [System.Text.RegularExpressions.GeneratedRegex("^[A-Za-z0-9-]{1,100}$")]
+    private static partial System.Text.RegularExpressions.Regex PlainId();
 
-    /// <summary>
-    /// Whether the app can look after this command's conversation (the session's <see cref="SessionInfo.Conversation"/>):
-    /// an interactive claude that doesn't pick its own.
-    /// </summary>
-    internal static bool CanTrackConversation(string command)
-    {
-        var tokens = command.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (tokens.Length == 0 || !(tokens[0].Equals("claude", StringComparison.OrdinalIgnoreCase) || tokens[0].Equals("claude.exe", StringComparison.OrdinalIgnoreCase)))
-            return false;
-        var flags = tokens.Skip(1).Select(t => t.Split('=')[0]).ToList();
-        return !flags.Any(f => OwnConversationFlags.Concat(["-p", "--print"]).Contains(f, StringComparer.OrdinalIgnoreCase));
-    }
+    /// <summary>Whether the app can look after this command's conversation (see <see cref="AgentProfile.CanTrackConversation"/>).</summary>
+    internal static bool CanTrackConversation(string command) => Agents.For(command)?.CanTrackConversation(command) == true;
 
-    /// <summary>
-    /// Takes "--resume &lt;id&gt;" (or -r, or --resume=&lt;id&gt;) out of a claude command, so the session keeps the
-    /// conversation itself and the command keeps only the person's own options: "claude --resume X --model opus" becomes
-    /// ("claude --model opus", X). Anything else comes back unchanged, with no id.
-    /// </summary>
-    internal static (string Command, string? Conversation) TakeConversation(string command)
-    {
-        var m = ResumeFlag().Match(command);
-        if (!m.Success || !IsConversationId(m.Groups[1].Value)) return (command, null);
-        var rest = (command[..m.Index] + command[(m.Index + m.Length)..]).Trim();
-        return CanTrackConversation(rest) ? (rest, m.Groups[1].Value) : (command, null);
-    }
+    /// <summary>See <see cref="AgentProfile.TakeConversation"/>.</summary>
+    internal static (string Command, string? Conversation) TakeConversation(string command) =>
+        Agents.For(command)?.TakeConversation(command) ?? (command, null);
 
-    [System.Text.RegularExpressions.GeneratedRegex(@"\s+(?:--resume|-r)(?:=|\s+)([0-9A-Fa-f-]{36})(?=\s|$)")]
-    private static partial System.Text.RegularExpressions.Regex ResumeFlag();
-
-    /// <summary>The command without --continue / -c (the app picks the conversation instead).</summary>
-    internal static string StripContinue(string command) => WithoutContinue(command);
+    /// <summary>See <see cref="AgentProfile.StripContinue"/>.</summary>
+    internal static string StripContinue(string command) => Agents.For(command)?.StripContinue(command) ?? command;
 
     /// <summary>Whether this session carries on a conversation when it starts again, rather than starting a new one.</summary>
     internal static bool CarriesOnConversation(SessionInfo info) =>
         (IsConversationId(info.Conversation) && CanTrackConversation(info.Command)) || CarriesOnConversation(info.Command);
 
+    /// <summary>Whether starting this command again carries on a conversation it picks itself (claude --continue, codex resume).</summary>
+    internal static bool CarriesOnConversation(string command) => Agents.For(command)?.CarriesOnConversation(command) == true;
+
     /// <summary>
-    /// Whether the app should give this session a conversation of its own: an interactive claude without one that
-    /// doesn't carry on the folder's latest (--continue learns its conversation once Claude has picked it).
+    /// Whether the app should give this session a conversation of its own: one whose agent lets the app choose the id
+    /// (<see cref="AgentProfile.ChoosesConversationId"/>), without one, that doesn't carry on the folder's latest
+    /// (claude --continue learns its conversation once Claude has picked it).
     /// </summary>
     internal static bool NeedsOwnConversation(SessionInfo info) =>
-        info.Conversation == null && CanTrackConversation(info.Command) && !CarriesOnConversation(info.Command);
+        info.Conversation == null && Agents.For(info.Command) is { ChoosesConversationId: true } agent &&
+        agent.CanTrackConversation(info.Command) && !agent.CarriesOnConversation(info.Command);
 
-    /// <summary>Whether starting this command again carries on a conversation (--continue or --resume) rather than starting a new one.</summary>
-    internal static bool CarriesOnConversation(string command)
-    {
-        var tokens = command.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (tokens.Length == 0 || !(tokens[0].Equals("claude", StringComparison.OrdinalIgnoreCase) || tokens[0].Equals("claude.exe", StringComparison.OrdinalIgnoreCase)))
-            return false;
-        string[] carryOn = ["-c", "--continue", "-r", "--resume"];
-        return tokens.Skip(1).Any(t => carryOn.Contains(t.Split('=')[0], StringComparer.OrdinalIgnoreCase));
-    }
-
-    private static string WithoutContinue(string command) => ContinueFlag().Replace(command.Trim(), "");
-
-    [System.Text.RegularExpressions.GeneratedRegex(@"\s+(?:-c|--continue)(?=\s|$)", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
-    private static partial System.Text.RegularExpressions.Regex ContinueFlag();
-
-    [System.Text.RegularExpressions.GeneratedRegex("^[A-Za-z0-9-]{1,100}$")]
-    private static partial System.Text.RegularExpressions.Regex ConversationId();
 
     /// <summary>The running processes in this session's terminal (empty when it isn't running).</summary>
     public int[] ProcessIds() => process?.ProcessIds() ?? [];
