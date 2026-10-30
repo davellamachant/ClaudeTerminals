@@ -138,6 +138,12 @@
   --update-fg: #0b3d30;
   color-scheme: light;
 }
+/* A theme's glow (see ThemeCatalog): text glows faintly in the accent colour, as on a phosphor screen. The terminals
+   and diffs draw their own text and are left alone. A theme's colours are set on the root element by the page. */
+:root[data-glow] #app { text-shadow: 0 0 6px color-mix(in srgb, var(--accent) 30%, transparent); }
+:root[data-glow] :is(.xterm, .monaco-editor, textarea, input) { text-shadow: none; }
+:root[data-glow] :is(.modal, .menu, .toast, #railCard) { box-shadow: 0 0 0 1px var(--border), 0 8px 28px color-mix(in srgb, var(--accent) 10%, transparent); }
+
 /* Project colours are picked for a dark background; their text is deepened to stay readable on a light one. */
 :root[data-theme="light"] .proj-tag,
 :root[data-theme="light"] .session-group-label,
@@ -675,6 +681,7 @@ textarea.commit-msg { resize: vertical; min-height: 54px; height: 54px; user-sel
 .menu-item .kbd { margin-left: auto; padding-left: 24px; color: var(--text-faint); }
 .menu-item:hover .kbd, .menu-item.active .kbd { color: #ddd; }
 .menu-sep { height: 1px; background: var(--border); margin: 4px 2px; }
+.menu-sep.subtle { background: var(--border-soft); margin: 3px 24px; }   /* within a section: indented like the labels */
 .menu-header { padding: 6px 10px 3px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; color: var(--text-faint); cursor: default; }
 .menu-check { width: 12px; flex: none; text-align: center; }
 
@@ -836,6 +843,7 @@ textarea.commit-msg { resize: vertical; min-height: 54px; height: 54px; user-sel
   background: color-mix(in srgb, var(--proj) 6%, transparent);
 }
 .session-group:last-child { margin-right: 0; }
+.session-group.unnamed { padding-left: 2px; }   /* no projects: the outline without a name, so the first tab needs room */
 .session-group-label {
   align-self: stretch; display: inline-flex; align-items: center; padding: 0 9px; border: 0; border-radius: 5px 0 0 5px;
   font-size: 11px; font-weight: 700; letter-spacing: .2px; white-space: nowrap; cursor: pointer;

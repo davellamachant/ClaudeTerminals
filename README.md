@@ -250,9 +250,36 @@ It can still run scripts, show forms and dialogs, and load files from its own fo
 
 ### Theme and colours
 
-**Theme:** *System*, *Light* or *Dark*, from the palette button at the top right. *System* (the default) follows Windows' app mode (Settings › Personalisation › Colours), and changes with it. The terminals go light too, and each Claude is started in its matching theme (`--settings` with `{"theme":"light"}` or `"dark"`): Claude can't detect the terminal's colours itself, because the Windows console layer doesn't pass the question through. Sessions whose command passes its own `--settings` are left alone. Claude reads its theme when it starts, so after switching, the app offers to restart running Claude sessions; each carries on in its conversation.
+**Theme:** *System*, *Light*, *Dark*, or one of the themes below, from the palette button at the top right. *System* (the default) follows Windows' app mode (Settings › Personalisation › Colours), and changes with it. The terminals go light too, and each Claude is started in its matching theme (`--settings` with `{"theme":"light"}` or `"dark"`): Claude can't detect the terminal's colours itself, because the Windows console layer doesn't pass the question through. Sessions whose command passes its own `--settings` are left alone. Claude reads its theme when it starts, so after switching, the app offers to restart running Claude sessions; each carries on in its conversation.
 
 **Accent colour:** by default the app uses your Windows accent colour for tabs, buttons and highlights, and follows it when you change it. To pick another, use *Accent colour › Change…* under the palette button: Windows accent, the original purple, eight swatches or any custom colour, previewed as you click (Cancel or Esc puts back what you had). Shades are chosen so white text and the background stay readable in both themes, so a very light or dark colour is toned where needed.
+
+**Themes:** a theme is a JSON file of colours. The app comes with *Nerds*: everything in shades of your accent colour on near-black, like an old monochrome screen, in a monospaced face with a faint glow. Pick green under *Accent colour* for a phosphor terminal, amber for an old amber one; the whole app recolours as you click. Status, Git's changes and the terminal's colours differ by how light or strong their shade is rather than by hue, and the status dots still differ in shape.
+
+To add your own, the quickest start is *Save as a new theme…* under the palette button: it writes the theme you're looking at (Light, Dark, Nerds in your accent, or one of yours) to your themes folder as a file with every colour written out, for you to change. Or choose *Open the themes folder* and put a `<name>.json` there (letters, digits and hyphens; not `light`, `dark` or `system`). The folder is read each time the menu opens, so a theme shows without restarting. For example:
+
+```json
+{
+  "name": "Forest",
+  "base": "dark",
+  "font": "Cascadia Mono",
+  "glow": true,
+  "accent": { "line": "#39ff6a", "strong": "#0b6b26" },
+  "colors": { "chrome": "#050a06", "text": "#8cf0a6", "working": "#3fe0d0" },
+  "terminal": { "background": "#020703", "foreground": "#5cf08a", "red": "#e0524a" },
+  "diff": { "insertedLine": "#1a5a2a55", "removedLine": "#5a1d1d55", "keyword": "#c8ffd8" }
+}
+```
+
+- **`monochrome`:** `true` builds every colour from the accent colour, as [Nerds](src/ClaudeTerminals/wwwroot/themes/nerds.json) does; colours the theme sets itself still win.
+- **`base`** (`dark` or `light`) fills in every colour the theme leaves out, so a theme can set three colours or all of them. It's also what Claude and plugins are told, so Claude runs in its dark or light colours.
+- **`colors`:** the app's own: `chrome`, `chrome-2`, `chrome-3` (backgrounds, darkest last), `panel`, `panel-2`, `hover`, `hover-strong`, `border`, `border-soft`, `border-strong`, `text`, `text-dim`, `text-faint`, `text-strong`, `focus`, `select`, `select-inactive`, `terminal-bg`, `editor-bg`, the status colours `ok`, `working`, `attention`, `asking`, `danger`, `danger-fill`, Git's `st-m`, `st-a`, `st-d`, `st-r`, `st-u` (modified, added, deleted, renamed, untracked), `graph`, `ref-bg`, `ref-fg`, `ref-head-bg`, `ref-head-fg`, `ref-tag-bg`, `ref-tag-fg`, and `info-bg`, `info-border`, `error-bg`, `error-border`, `pv-warn-bg`, `pv-warn-border`, `ico-folder`, `ico-file`, `scroll-thumb`, `scroll-thumb-hover`, `tab-border-shown`, `tab-border-hover`, `tick`, `tick-active`, `tick-hot`, `card-bg`, `card-border`, `bubble`, `code-fg`, `code-bg`, `well`, `table-head`, `link`, `update-fg`. Colours are `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgb()` or `rgba()`.
+- **`terminal`:** xterm.js's names: `background`, `foreground`, `cursor`, `cursorAccent`, `selectionBackground`, `selectionForeground`, `selectionInactiveBackground`, the sixteen `black` … `white` and `brightBlack` … `brightWhite`, and `overviewRulerBorder`, `scrollbarSliderBackground`, `scrollbarSliderHoverBackground`, `scrollbarSliderActiveBackground`.
+- **`diff`:** `background`, `foreground`, `lineNumber`, `lineNumberActive`, `selection`, `cursor`, `lineHighlightBorder`, `insertedLine`, `insertedText`, `removedLine`, `removedText`, `insertedGutter`, `removedGutter`, `insertedOverview`, `removedOverview`, `diagonalFill`, `scrollbar`, and the syntax colours `comment`, `keyword`, `string`, `number`, `type`; `#rrggbb` or `#rrggbbaa` only.
+- **`accent`** replaces the accent colour while the theme is on: `line` for lines and highlights, `strong` for fills with white text. Leave it out to keep the one picked in *Accent colour*.
+- **`font`** is a font family for the app's own text (not the terminals'); **`glow`** makes text glow faintly in the accent colour.
+
+A theme is only data: the app takes the names above and checks each value, so it can't restyle anything else or load anything. A file it can't use, or a value it leaves out, is listed under *Why?* in the palette menu.
 
 ### Updates
 
