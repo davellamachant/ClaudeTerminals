@@ -420,14 +420,170 @@ const DEFAULT_COMMAND = 'claude';   // each new session gets a conversation of i
 const MAX_WEBGL = 12;
 
 // ------------------------------------------------------------------ theme
-// System (follows Windows' app mode), Light or Dark. The host reports Windows' app mode with the accent colour; until
-// then the browser's own reading of it stands in.
+// System (follows Windows' app mode), Light, Dark, or a theme: a JSON file of colours, shipped in wwwroot/themes
+// (Nerds) or added to the themes folder (see ThemeCatalog). The host reports Windows' app mode with the accent colour;
+// until then the browser's own reading of it stands in. A theme is light or dark underneath (its base): that fills in
+// every colour it leaves out, and is all Claude and plugins are told.
 
 const theme = { pref: store.get('theme', 'system'), windowsLight: null };
-const isLight = () => theme.pref === 'light' ||
-  (theme.pref === 'system' && (theme.windowsLight ?? matchMedia('(prefers-color-scheme: light)').matches));
+// The themes the host found, and why any couldn't be loaded. The theme in use is also kept here, so it paints at once
+// on the next start rather than once the host has listed the themes.
+const themes = { list: [], problems: [], folder: null, names: null, last: store.get('themeLook', null) };
+const BUILT_IN_THEMES = ['system', 'light', 'dark'];
+/** The theme file in use, or null for System, Light and Dark. */
+const currentTheme = () => BUILT_IN_THEMES.includes(theme.pref) ? null
+  : themes.list.find((t) => t.id === theme.pref) ?? (themes.last?.id === theme.pref ? themes.last : null);
+const isLight = () => {
+  const t = currentTheme();
+  if (t) return t.base === 'light';
+  return theme.pref === 'light' || (theme.pref !== 'dark' && (theme.windowsLight ?? matchMedia('(prefers-color-scheme: light)').matches));
+};
 const themeName = () => (isLight() ? 'light' : 'dark');
-document.documentElement.dataset.theme = themeName();
+
+/**
+ * What the theme in use paints with, or null for System, Light and Dark: its own colours, over those built from the
+ * accent colour for a monochrome theme (see monochromeLook). Until the host has listed the themes, the look kept from
+ * last time stands in.
+ */
+function themeLook() {
+  const t = currentTheme();
+  if (!t) return null;
+  if (!themes.list.includes(t)) return t;   // the kept look
+  const made = t.monochrome ? monochromeLook(accentColour(), t.base === 'light') : {};
+  return {
+    id: t.id, name: t.name, base: t.base, font: t.font, glow: t.glow, monochrome: t.monochrome,
+    colors: { ...made.colors, ...t.colors }, terminal: { ...made.terminal, ...t.terminal }, diff: { ...made.diff, ...t.diff },
+    accent: t.accent ?? made.accent ?? null,
+  };
+}
+
+let themeColors = [];   // the colours the theme in use set on the page, to take off again
+/** Marks the page with the theme: data-theme light or dark for the stylesheet, and a theme's own colours, font and glow. */
+function markTheme(look = themeLook()) {
+  const root = document.documentElement;
+  root.dataset.theme = themeName();
+  for (const name of themeColors) root.style.removeProperty(name);
+  themeColors = Object.entries(look?.colors ?? {}).map(([name, value]) => { root.style.setProperty('--' + name, value); return '--' + name; });
+  if (look?.font) root.style.fontFamily = `"${look.font}", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif`;
+  else root.style.removeProperty('font-family');
+  if (look?.glow) root.dataset.glow = '';
+  else delete root.dataset.glow;
+}
+markTheme(themes.last?.id === theme.pref ? themes.last : null);   // the accent isn't known yet: last time's look
+
+/** Reads the themes again (one added to the folder shows without restarting), and puts the one in use on the page. */
+async function loadThemes() {
+  try {
+    const r = await request('themes.list');
+    const before = themeName();
+    Object.assign(themes, { list: r.themes, problems: r.problems, folder: r.folder, names: r.names });
+    // A theme that's gone (its file deleted, or no longer valid) gives way to System.
+    if (!currentTheme() && !BUILT_IN_THEMES.includes(theme.pref)) theme.pref = 'system';
+    applyTheme(before);
+  }
+  catch (e) { console.error('The themes could not be read', e); }
+}
+
+/** The accent colour picked in Accent colour, as #rrggbb. */
+function accentColour() {
+  const c = accent.choice;
+  return c === 'windows' ? accent.palette?.[3] ?? '#7160e8' : /^#[0-9a-f]{6}$/i.test(c) ? c : '#7160e8';
+}
+
+/** A colour's hue (0–360), saturation and lightness (0–100). */
+function hexToHsl(hex) {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), l = (max + min) / 2, d = max - min;
+  if (!d) return [0, 0, l * 100];
+  const s = d / (1 - Math.abs(2 * l - 1));
+  const h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [(h * 60 + 360) % 360, s * 100, l * 100];
+}
+
+/** #rrggbb for a hue, saturation and lightness (the diff editor only takes hex). */
+function hslHex(h, s, l) {
+  s = Math.min(100, Math.max(0, s)) / 100;
+  l = Math.min(100, Math.max(0, l)) / 100;
+  const k = (n) => (n + h / 30) % 12, a = s * Math.min(l, 1 - l);
+  const f = (n) => Math.round((l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)))) * 255);
+  return '#' + [0, 8, 4].map((n) => f(n).toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Every colour of a monochrome theme, in shades of one hue: backgrounds near black (near white on a light base), text and
+ * highlights lighter. What needs telling apart (status, Git's changes, the terminal's sixteen colours, added and removed
+ * lines) differs in how light and how strong its shade is rather than in hue.
+ */
+function monochromeLook(hex, light) {
+  const [h, sAccent] = hexToHsl(hex);
+  // A grey accent makes a grey theme; any other is held to a tint that's neither washed out nor loud.
+  const sat = sAccent < 8 ? 0 : Math.min(90, Math.max(35, sAccent));
+  const L = (l) => (light ? 100 - l : l);
+  const bg = (l) => hslHex(h, sat * 0.5, L(l));      // backgrounds and borders: muted
+  const chrome = bg(4);
+  // Text and marks are picked by how well they read on the chrome, not by lightness, which reads very differently from
+  // one hue to the next (a green is far brighter than a blue of the same lightness). Each level is a lightness on the
+  // scale the colours below are written in, matched to a contrast ratio.
+  const LEVELS = [[30, 2], [36, 3], [42, 3.6], [46, 4.2], [55, 5.8], [62, 7.5], [70, 9.5], [78, 11.5], [85, 13.5], [93, 16], [95, 17]];
+  const ratioFor = (l) => {
+    const i = LEVELS.findIndex(([at]) => at >= l);
+    if (i <= 0) return LEVELS[Math.max(i, 0)][1];
+    const [[l0, r0], [l1, r1]] = [LEVELS[i - 1], LEVELS[i]];
+    return r0 + (r1 - r0) * (l - l0) / (l1 - l0);
+  };
+  const tone = (l, s) => {
+    const want = ratioFor(l);
+    let lo = 0, hi = 100;   // lightness, searched away from the chrome until the shade reads as well as wanted
+    for (let n = 0; n < 16; n++) {
+      const mid = (lo + hi) / 2;
+      const enough = contrast(hslHex(h, s, light ? 100 - mid : mid), chrome) >= want;
+      if (enough) hi = mid; else lo = mid;
+    }
+    return hslHex(h, s, light ? 100 - hi : hi);
+  };
+  const fg = (l) => tone(l, sat);           // text and marks
+  const pale = (l) => tone(l, sat * 0.2);   // what's taken away (removed lines, errors), nearly grey
+  // The accent: a bright shade that reads on the chrome for lines, and a deep one white text reads on for fills.
+  const lineL = 62;
+  let strongL = 48;
+  while (contrast(hslHex(h, sat, strongL), '#ffffff') < 4.5 && strongL > 5) strongL -= 2;
+  return {
+    accent: { line: fg(lineL), strong: hslHex(h, sat, strongL) },
+    colors: {
+      chrome, 'chrome-2': bg(2.6), 'chrome-3': bg(1.6), panel: bg(5.5), 'panel-2': bg(7.5), hover: bg(10), 'hover-strong': bg(14),
+      border: bg(20), 'border-soft': bg(13), 'border-strong': bg(32),
+      text: fg(78), 'text-dim': fg(55), 'text-faint': fg(36), 'text-strong': fg(93),
+      focus: fg(lineL), select: bg(18), 'select-inactive': bg(11), 'terminal-bg': bg(2.2), 'editor-bg': bg(3),
+      ok: fg(66), working: fg(72), attention: fg(84), asking: fg(95), danger: pale(70), 'danger-fill': hslHex(h, sat * 0.3, strongL),
+      'st-m': fg(80), 'st-a': fg(66), 'st-d': pale(52), 'st-r': fg(88), 'st-u': fg(58),
+      'info-bg': bg(9), 'info-border': bg(26), 'error-bg': bg(8), 'error-border': bg(30), 'pv-warn-bg': bg(10), 'pv-warn-border': bg(28),
+      'ico-folder': fg(70), 'ico-file': fg(52), graph: fg(55),
+      'ref-bg': bg(16), 'ref-fg': fg(85), 'ref-head-bg': bg(24), 'ref-head-fg': fg(93), 'ref-tag-bg': bg(12), 'ref-tag-fg': fg(75),
+      'scroll-thumb': bg(20), 'scroll-thumb-hover': bg(30), 'tab-border-shown': bg(30), 'tab-border-hover': bg(40),
+      tick: bg(28), 'tick-active': fg(75), 'tick-hot': fg(95), 'card-bg': bg(6), 'card-border': bg(22), bubble: bg(10),
+      'code-fg': fg(82), 'code-bg': bg(1.6), well: bg(3), 'table-head': bg(9), link: fg(72), 'update-fg': fg(93),
+    },
+    terminal: {
+      background: bg(2.2), foreground: fg(70), cursor: fg(88), cursorAccent: bg(2.2),
+      selectionBackground: bg(24), selectionInactiveBackground: bg(14),
+      black: bg(8), red: pale(56), green: fg(62), yellow: fg(78), blue: fg(46), magenta: fg(56), cyan: fg(70), white: fg(80),
+      brightBlack: fg(36), brightRed: pale(72), brightGreen: fg(74), brightYellow: fg(88), brightBlue: fg(60), brightMagenta: fg(68), brightCyan: fg(82), brightWhite: fg(95),
+      overviewRulerBorder: bg(2.2),
+      scrollbarSliderBackground: bg(30) + '66', scrollbarSliderHoverBackground: bg(40) + '88', scrollbarSliderActiveBackground: fg(60) + '66',
+    },
+    diff: {
+      background: bg(3), foreground: fg(70), lineNumber: fg(34), lineNumberActive: fg(74), selection: bg(24), cursor: fg(88),
+      lineHighlightBorder: bg(9),
+      insertedLine: fg(40) + '33', insertedText: fg(55) + '66', removedLine: pale(30) + '55', removedText: pale(45) + '77',
+      insertedGutter: fg(40) + '66', removedGutter: pale(30) + '88', insertedOverview: fg(66) + 'cc', removedOverview: pale(50) + 'cc',
+      diagonalFill: bg(16) + '80', scrollbar: bg(30) + '66',
+      comment: fg(42), keyword: fg(93), string: fg(76), number: fg(85), type: fg(88),
+    },
+  };
+}
+
+/** The accent changed: a monochrome theme is built from it, so everything is recoloured; otherwise only the accent. */
+const accentChanged = () => (currentTheme()?.monochrome ? applyTheme() : applyAccent());
 
 // How the status dots move (see app.css): picked in Status dots… from the theme menu, and kept per person.
 const DOT_STYLES = [
@@ -456,7 +612,35 @@ const TERM_THEME_LIGHT = {
   overviewRulerBorder: '#ffffff',
   scrollbarSliderBackground: '#64646433', scrollbarSliderHoverBackground: '#64646466', scrollbarSliderActiveBackground: '#00000066',
 };
-const termTheme = () => (isLight() ? TERM_THEME_LIGHT : TERM_THEME_DARK);
+/** The terminals' colours: a theme's own over its base's. */
+const termTheme = (look = themeLook()) => ({ ...(isLight() ? TERM_THEME_LIGHT : TERM_THEME_DARK), ...look?.terminal });
+
+/** The diff editor's theme: a theme's, defined from its colours over its base's, or Light's or Dark's. */
+/** A theme's diff colours (ThemeCatalog.DiffNames) and the diff editor's names for them; the syntax colours are rules. */
+const DIFF_COLOR_IDS = {
+  background: 'editor.background', foreground: 'editor.foreground',
+  lineNumber: 'editorLineNumber.foreground', lineNumberActive: 'editorLineNumber.activeForeground',
+  selection: 'editor.selectionBackground', cursor: 'editorCursor.foreground', lineHighlightBorder: 'editor.lineHighlightBorder',
+  insertedLine: 'diffEditor.insertedLineBackground', insertedText: 'diffEditor.insertedTextBackground',
+  removedLine: 'diffEditor.removedLineBackground', removedText: 'diffEditor.removedTextBackground',
+  insertedGutter: 'diffEditorGutter.insertedLineBackground', removedGutter: 'diffEditorGutter.removedLineBackground',
+  insertedOverview: 'diffEditorOverview.insertedForeground', removedOverview: 'diffEditorOverview.removedForeground',
+  diagonalFill: 'diffEditor.diagonalFill', scrollbar: 'scrollbarSlider.background',
+};
+
+function diffTheme(look = themeLook()) {
+  const t = look;
+  const base = isLight() ? 'vs2026-light' : 'vs2026-dark';
+  if (!t || !window.monaco) return base;
+  const d = t.diff ?? {};
+  const colors = Object.fromEntries(Object.entries(DIFF_COLOR_IDS).filter(([name]) => d[name]).map(([name, id]) => [id, d[name]]));
+  // Syntax colours are rules, which take the colour without its #.
+  const rules = [['', d.foreground], ['comment', d.comment], ['keyword', d.keyword], ['string', d.string], ['number', d.number], ['type', d.type]]
+    .filter(([, v]) => v).map(([token, v]) => ({ token, foreground: v.slice(1, 7) }));
+  const name = 'theme-' + t.id;
+  monaco.editor.defineTheme(name, { base: isLight() ? 'vs' : 'vs-dark', inherit: true, rules, colors: { ...MONACO_COLORS[base], ...colors } });
+  return name;
+}
 
 // ------------------------------------------------------------------ sessions & tiles
 
@@ -929,7 +1113,8 @@ function renderSessionTabs() {
     }, iconEl('plus'));
   };
   if (!state.projects.length) {
-    fill(host, ...tabs, shown.length ? plus(shown, 'like these') : null);   // nothing to group by
+    // Nothing to group by: the sessions are still outlined as one group, as Unknown's would be, but with no name.
+    host.replaceChildren(...(shown.length ? [h('div', { class: 'session-group unknown unnamed' }, tabs, plus(shown, 'like these'))] : []));
   } else {
     const groups = [];
     shown.forEach((s, i) => {
@@ -1168,14 +1353,14 @@ function closeMenu() {
 function showMenu(x, y, items) {
   closeMenu();
   // Pressing on the menu mustn't take focus: after Paste in the terminal's menu, typing has to go on in the terminal.
-  // Items: '-' for a separator, { header } for a section title, or { label, action } with optional kbd, danger, and
+  // Items: '-' for a separator ('~' for a lighter, shorter one within a section), { header } for a section title, or { label, action } with optional kbd, danger, and
   // checked (ticked when true). If any item can be ticked, all get the tick column so their labels line up.
   const ticks = items.some((it) => it && it.checked !== undefined);
   const menu = h('div', {
     class: 'menu', onmousedown: (e) => e.preventDefault(),
     onmousemove: (e) => e.currentTarget.querySelector('.menu-item.active')?.classList.remove('active'),   // the pointer takes over
-  }, items.filter(Boolean).map((it) => it === '-'
-    ? h('div', { class: 'menu-sep' })
+  }, items.filter(Boolean).map((it) => it === '-' || it === '~'
+    ? h('div', { class: 'menu-sep' + (it === '~' ? ' subtle' : '') })
     : it.header
       ? h('div', { class: 'menu-header' }, it.header)
       : h('div', { class: 'menu-item' + (it.danger ? ' danger' : ''), onclick: () => { closeMenu(); it.action(); } },
@@ -3277,6 +3462,46 @@ function panelMenu(p, anchor) {
 
 // ------------------------------------------------------------------ diff document (Monaco)
 
+/** The diff editor's colours for Dark and Light, after Visual Studio 2026's; a theme's own go over its base's. */
+const MONACO_COLORS = {
+  'vs2026-dark': {
+    'editor.background': '#1e1e1e',
+    'editorLineNumber.foreground': '#2b91af',
+    'editorLineNumber.activeForeground': '#2b91af',
+    'editor.selectionBackground': '#264f78',
+    'editor.lineHighlightBackground': '#00000000',
+    'editor.lineHighlightBorder': '#2a2a2a',
+    'diffEditor.insertedLineBackground': '#2d4a1e66',
+    'diffEditor.insertedTextBackground': '#4f7a2c99',
+    'diffEditor.removedLineBackground': '#5a1d1d66',
+    'diffEditor.removedTextBackground': '#9e2a2a99',
+    'diffEditor.diagonalFill': '#3a3a3a80',
+    'diffEditorGutter.insertedLineBackground': '#2d4a1e99',
+    'diffEditorGutter.removedLineBackground': '#5a1d1d99',
+    'diffEditorOverview.insertedForeground': '#57a64acc',
+    'diffEditorOverview.removedForeground': '#d64545cc',
+    'scrollbarSlider.background': '#4a4a4f99',
+  },
+  'vs2026-light': {
+    'editor.background': '#ffffff',
+    'editorLineNumber.foreground': '#237893',
+    'editorLineNumber.activeForeground': '#0b216f',
+    'editor.selectionBackground': '#add6ff',
+    'editor.lineHighlightBackground': '#00000000',
+    'editor.lineHighlightBorder': '#eeeeee',
+    'diffEditor.insertedLineBackground': '#9bb95533',
+    'diffEditor.insertedTextBackground': '#9ccc2c55',
+    'diffEditor.removedLineBackground': '#ff000022',
+    'diffEditor.removedTextBackground': '#ff000044',
+    'diffEditor.diagonalFill': '#22222220',
+    'diffEditorGutter.insertedLineBackground': '#9bb95555',
+    'diffEditorGutter.removedLineBackground': '#ff000033',
+    'diffEditorOverview.insertedForeground': '#4b8b2bcc',
+    'diffEditorOverview.removedForeground': '#c53030cc',
+    'scrollbarSlider.background': '#64646466',
+  },
+};
+
 let monacoReady = null;
 let diffEditor = null;
 const diffState = { spec: null, sessionId: null, sideBySide: store.get('diffSideBySide', true), ignoreWs: store.get('diffIgnoreWs', false), changes: [], seq: 0 };
@@ -3287,54 +3512,10 @@ function loadMonaco() {
     require.config({ paths: { vs: 'lib/monaco/vs' } });
     require(['vs/editor/editor.main'], (m) => {
       window.monaco = window.monaco || m;
-      monaco.editor.defineTheme('vs2026-dark', {
-        base: 'vs-dark',
-        inherit: true,
-        rules: [],
-        colors: {
-          'editor.background': '#1e1e1e',
-          'editorLineNumber.foreground': '#2b91af',
-          'editorLineNumber.activeForeground': '#2b91af',
-          'editor.selectionBackground': '#264f78',
-          'editor.lineHighlightBackground': '#00000000',
-          'editor.lineHighlightBorder': '#2a2a2a',
-          'diffEditor.insertedLineBackground': '#2d4a1e66',
-          'diffEditor.insertedTextBackground': '#4f7a2c99',
-          'diffEditor.removedLineBackground': '#5a1d1d66',
-          'diffEditor.removedTextBackground': '#9e2a2a99',
-          'diffEditor.diagonalFill': '#3a3a3a80',
-          'diffEditorGutter.insertedLineBackground': '#2d4a1e99',
-          'diffEditorGutter.removedLineBackground': '#5a1d1d99',
-          'diffEditorOverview.insertedForeground': '#57a64acc',
-          'diffEditorOverview.removedForeground': '#d64545cc',
-          'scrollbarSlider.background': '#4a4a4f99',
-        },
-      });
-      monaco.editor.defineTheme('vs2026-light', {
-        base: 'vs',
-        inherit: true,
-        rules: [],
-        colors: {
-          'editor.background': '#ffffff',
-          'editorLineNumber.foreground': '#237893',
-          'editorLineNumber.activeForeground': '#0b216f',
-          'editor.selectionBackground': '#add6ff',
-          'editor.lineHighlightBackground': '#00000000',
-          'editor.lineHighlightBorder': '#eeeeee',
-          'diffEditor.insertedLineBackground': '#9bb95533',
-          'diffEditor.insertedTextBackground': '#9ccc2c55',
-          'diffEditor.removedLineBackground': '#ff000022',
-          'diffEditor.removedTextBackground': '#ff000044',
-          'diffEditor.diagonalFill': '#22222220',
-          'diffEditorGutter.insertedLineBackground': '#9bb95555',
-          'diffEditorGutter.removedLineBackground': '#ff000033',
-          'diffEditorOverview.insertedForeground': '#4b8b2bcc',
-          'diffEditorOverview.removedForeground': '#c53030cc',
-          'scrollbarSlider.background': '#64646466',
-        },
-      });
+      for (const [name, colors] of Object.entries(MONACO_COLORS))
+        monaco.editor.defineTheme(name, { base: name === 'vs2026-light' ? 'vs' : 'vs-dark', inherit: true, rules: [], colors });
       diffEditor = monaco.editor.createDiffEditor($('#diffEditor'), {
-        theme: isLight() ? 'vs2026-light' : 'vs2026-dark',
+        theme: diffTheme(),
         automaticLayout: true,
         readOnly: true,
         originalEditable: false,
@@ -4568,6 +4749,12 @@ function contrast(a, b) {
 
 function applyAccent() {
   const root = document.documentElement.style;
+  const own = themeLook()?.accent;   // a theme's own accent, or the one a monochrome theme built
+  if (own) {
+    root.setProperty('--accent-strong', own.strong);
+    root.setProperty('--accent', own.line);
+    return;
+  }
   const c = accent.choice;
   const p = c === 'windows' ? accent.palette : /^#[0-9a-f]{6}$/i.test(c) ? shadesOf(c) : null;   // null: the purple
   if (!p || p.length < 7) {
@@ -4670,12 +4857,15 @@ function showUpdateDialog() {
  */
 function applyTheme(before = null) {
   const name = themeName();
-  document.documentElement.dataset.theme = name;
-  for (const s of state.sessions) s.term.options.theme = termTheme();
-  if (window.monaco) monaco.editor.setTheme(isLight() ? 'vs2026-light' : 'vs2026-dark');
+  const look = themeLook();
+  store.set('themeLook', look);   // so it paints at once on the next start
+  markTheme(look);
+  for (const s of state.sessions) s.term.options.theme = termTheme(look);
+  if (window.monaco) monaco.editor.setTheme(diffTheme(look));
   applyAccent();
   for (const f of pluginFrames.values()) postPluginTheme(f.frame);
-  post({ type: 'theme', light: isLight() });
+  // A theme's window and title bar take its own background; Light and Dark keep Windows' own.
+  post({ type: 'theme', light: isLight(), background: look?.colors.chrome ?? null });
   if (before && before !== name) offerClaudeRestart();
 }
 
@@ -4716,19 +4906,28 @@ function versionMenu(x, y) {
   ]);
 }
 
-/** The theme menu (next to the version number): System, Light or Dark, and the accent colour. */
+/** The theme menu (next to the version number): System, Light, Dark and the themes, and the accent colour. */
 function themeMenu(x, y) {
   const c = accent.choice;
   const colour = c === 'windows' ? accent.palette?.[3] ?? '#7160e8' : c === 'purple' ? '#7160e8' : c;
+  const own = currentTheme();   // a theme with an accent of its own (not a monochrome one: that's built from yours)
   showMenu(x, y, [
     { header: 'Theme' },
     { label: 'System (follows Windows)', checked: theme.pref === 'system', action: () => setThemePref('system') },
     { label: 'Light', checked: theme.pref === 'light', action: () => setThemePref('light') },
     { label: 'Dark', checked: theme.pref === 'dark', action: () => setThemePref('dark') },
+    ...themes.list.map((t) => ({ label: t.name, checked: theme.pref === t.id, kbd: t.builtIn ? '' : 'Yours', action: () => setThemePref(t.id) })),
+    themes.problems.length > 0 && { label: `${themes.problems.length} theme${themes.problems.length === 1 ? '' : 's'} not loaded`, kbd: 'Why?', action: () => toast(themes.problems.join('\n'), true) },
+    '~',
+    { label: 'Save as a new theme…', action: showSaveThemeDialog },
+    { label: 'Open the themes folder', action: () => request('themes.openFolder') },
     '-',
     { header: 'Accent colour' },
-    { label: [h('span', { class: 'accent-dot', style: `background:${colour}` }), c === 'windows' ? 'Windows accent' : c === 'purple' ? 'Original purple' : 'Custom'],
-      kbd: 'Change…', action: showAccentDialog },
+    own?.accent
+      ? { label: [h('span', { class: 'accent-dot', style: `background:${own.accent.line}` }), `${own.name}'s own`],
+        action: () => toast(`${own.name} has an accent colour of its own. Choose another theme to change it.`) }
+      : { label: [h('span', { class: 'accent-dot', style: `background:${colour}` }), c === 'windows' ? 'Windows accent' : c === 'purple' ? 'Original purple' : 'Custom'],
+        kbd: 'Change…', action: showAccentDialog },
     '-',
     { header: 'Status dots' },
     { label: DOT_STYLES.find((d) => d.id === dotStyle.id).name, kbd: 'Change…', action: showDotStyleDialog },
@@ -4742,6 +4941,57 @@ function themeMenu(x, y) {
     plugins.problems.length > 0 && { label: `${plugins.problems.length} couldn't be loaded`, kbd: 'Why?', action: () => toast(plugins.problems.join('\n'), true) },
     { label: plugins.list.length ? 'Open the plugins folder' : 'Add a plugin: open the plugins folder', action: () => request('plugins.openFolder') },
   ]);
+}
+
+/**
+ * Save as a new theme: the theme on screen, whichever it is, written to the themes folder as a file with every colour, to
+ * start a theme of your own from. It's read from what's showing, so it's always complete and matches what you see; a
+ * monochrome theme is saved with the colours your accent gives it now.
+ */
+function showSaveThemeDialog() {
+  const look = themeLook();
+  const now = look?.name ?? (isLight() ? 'Light' : 'Dark');
+  const name = h('input', { type: 'text', value: `My ${now}`, maxlength: '40', spellcheck: 'false' });
+  const save = async () => {
+    const title = name.value.trim();
+    if (!title) { name.focus(); return; }
+    try {
+      const id = await request('themes.save', { theme: themeSnapshot(title) });
+      closeModal();
+      await loadThemes();
+      setThemePref(id);
+      toast(`Saved "${title}" as ${id}.json in your themes folder.`);
+    }
+    catch (e) { toast(e.message, true); }
+  };
+  name.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); });
+  openModal('Save as a new theme', [
+    field('Name', name, `A copy of ${now} as it looks now, with every colour written out, in your themes folder. Change the file to make the theme your own; it shows in this menu.`),
+  ], [
+    h('button', { class: 'btn', onclick: closeModal }, 'Cancel'),
+    h('button', { class: 'btn primary', onclick: save }, 'Save'),
+  ]);
+  setTimeout(() => name.select(), 30);
+}
+
+/** The theme on screen as a theme file (see ThemeCatalog): every colour the page, terminals and diffs are using. */
+function themeSnapshot(title) {
+  const look = themeLook();
+  const css = getComputedStyle(document.documentElement);
+  const value = (name) => css.getPropertyValue('--' + name).trim();
+  const terminal = termTheme(look);
+  const editor = MONACO_COLORS[isLight() ? 'vs2026-light' : 'vs2026-dark'];
+  const diff = { ...Object.fromEntries(Object.entries(DIFF_COLOR_IDS).filter(([, id]) => editor[id]).map(([name, id]) => [name, editor[id]])), ...look?.diff };
+  return {
+    name: title,
+    base: themeName(),
+    ...(look?.font ? { font: look.font } : {}),
+    ...(look?.glow ? { glow: true } : {}),
+    accent: { line: value('accent'), strong: value('accent-strong') },
+    colors: Object.fromEntries(themes.names.colors.map((n) => [n, value(n)]).filter(([, v]) => v)),
+    terminal: Object.fromEntries(themes.names.terminal.filter((n) => terminal[n]).map((n) => [n, terminal[n]])),
+    diff: Object.fromEntries(themes.names.diff.filter((n) => diff[n]).map((n) => [n, diff[n]])),
+  };
 }
 
 /**
@@ -4797,7 +5047,7 @@ function showAccentDialog() {
 
   function pick(c) {
     accent.choice = c;
-    applyAccent();   // preview on the whole app
+    accentChanged();   // preview on the whole app
     windowsBtn.classList.toggle('selected', c === 'windows');
     purpleBtn.classList.toggle('selected', c === 'purple');
     for (const sw of swatches) sw.classList.toggle('selected', sw.title === c);
@@ -4819,14 +5069,14 @@ function showAccentDialog() {
     h('button', { class: 'btn primary', onclick: () => { saved = true; store.set('accentColour', accent.choice); closeModal(); } }, 'OK'),
   ]);
   // Cancel, Esc or a click outside: put back the colour from before.
-  onModalClose = () => { if (!saved) { accent.choice = before; applyAccent(); } };
+  onModalClose = () => { if (!saved) { accent.choice = before; accentChanged(); } };
   pick(before);
 }
 
 $('#btnUpdate').addEventListener('click', showUpdateDialog);
 $('#btnTheme').innerHTML = icon('theme');
 // The plugins folder is read again each time, so a plugin added since is on the menu.
-$('#btnTheme').addEventListener('click', async (e) => { const r = e.currentTarget.getBoundingClientRect(); await loadPlugins(); themeMenu(r.right - 260, r.bottom + 2); });
+$('#btnTheme').addEventListener('click', async (e) => { const r = e.currentTarget.getBoundingClientRect(); await Promise.all([loadPlugins(), loadThemes()]); themeMenu(r.right - 260, r.bottom + 2); });
 request('app.version').then((v) => {
   updates.current ??= v;
   $('#appVersion').replaceChildren(`v${v}`, iconEl('chevD'));   // the chevron says it opens a menu
@@ -5188,6 +5438,7 @@ addEventListener('message', (e) => {
 
 // Side panel plugins kept from last time show once the folder has been read.
 loadPlugins().then(() => renderGit());
+loadThemes();
 
 // ------------------------------------------------------------------ boot
 

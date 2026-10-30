@@ -164,6 +164,10 @@ internal sealed class MainForm : Form
     private static string PanelConfigFolder => Path.Combine(SessionStore.AppDataFolder, "panels");
 
     private static string PluginFolder => Path.Combine(SessionStore.AppDataFolder, "plugins");
+
+    /// <summary>Themes of your own (see <see cref="Themes.ThemeCatalog"/>); the app's own are in wwwroot/themes.</summary>
+    private static string ThemeFolder => Path.Combine(SessionStore.AppDataFolder, "themes");
+    private static string BuiltInThemeFolder => Path.Combine(AppContext.BaseDirectory, "wwwroot", "themes");
     private readonly Dictionary<string, PluginInfo> plugins = [];
 
     /// <summary>
@@ -267,13 +271,21 @@ internal sealed class MainForm : Form
     private void PostAccent() => Post(new { type = "accent", palette = AccentColors.Read(), lightApps = AccentColors.AppsUseLightTheme() });
 
     /// <summary>The window's own colours (title bar, and what shows before the page paints) follow the page's theme.</summary>
-    private void ApplyWindowTheme(bool light)
+    /// <param name="background">The page's background ("#rrggbb"), for a theme with its own.</param>
+    private void ApplyWindowTheme(bool light, string? background = null)
     {
         var dark = light ? 0 : 1;
         Native.DwmSetWindowAttribute(Handle, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, ref dark, sizeof(int));
-        var background = light ? Color.FromArgb(0xee, 0xee, 0xee) : Color.FromArgb(0x1f, 0x1f, 0x1f);
-        webView.DefaultBackgroundColor = background;
-        BackColor = background;
+        var own = background is { Length: 7 } hex && hex[0] == '#' &&
+            int.TryParse(hex[1..], System.Globalization.NumberStyles.HexNumber, null, out var rgb)
+            ? Color.FromArgb(rgb >> 16 & 0xff, rgb >> 8 & 0xff, rgb & 0xff)
+            : (Color?)null;
+        // Such a theme's title bar takes its colour too (Windows 11; earlier versions keep the dark one).
+        var caption = own is { } c ? ColorTranslator.ToWin32(c) : unchecked((int)0xFFFFFFFF) /* DWMWA_COLOR_DEFAULT */;
+        Native.DwmSetWindowAttribute(Handle, 35 /* DWMWA_CAPTION_COLOR */, ref caption, sizeof(int));
+        var color = own ?? (light ? Color.FromArgb(0xee, 0xee, 0xee) : Color.FromArgb(0x1f, 0x1f, 0x1f));
+        webView.DefaultBackgroundColor = color;
+        BackColor = color;
     }
 
     /// <summary>Follows the Windows accent colour when it's changed in Settings.</summary>
@@ -580,7 +592,7 @@ internal sealed class MainForm : Form
                 return null;
             }
             case "theme":
-                ApplyWindowTheme(Bool(msg, "light"));
+                ApplyWindowTheme(Bool(msg, "light"), OptStr(msg, "background"));
                 return null;
             case "stop":
             {
@@ -867,6 +879,23 @@ internal sealed class MainForm : Form
             case "plugins.openFolder":
                 Directory.CreateDirectory(PluginFolder);
                 OpenExternal(PluginFolder);
+                return null;
+
+            // ---- themes
+            case "themes.list":
+            {
+                // Read again each time, so a theme added or changed shows without restarting.
+                var (themes, problems) = Themes.ThemeCatalog.Load(BuiltInThemeFolder, ThemeFolder);
+                // The names a theme can set, for the page to write every one out when it saves a theme.
+                var names = new { colors = Themes.ThemeCatalog.ColorNames, terminal = Themes.ThemeCatalog.TerminalNames, diff = Themes.ThemeCatalog.DiffNames };
+                return new { folder = ThemeFolder, themes, problems, names };
+            }
+            case "themes.save":
+                // A copy of the theme on screen, as a new file in the themes folder.
+                return Themes.ThemeCatalog.Save(ThemeFolder, BuiltInThemeFolder, msg.GetProperty("theme"));
+            case "themes.openFolder":
+                Directory.CreateDirectory(ThemeFolder);
+                OpenExternal(ThemeFolder);
                 return null;
 
             // ---- git
