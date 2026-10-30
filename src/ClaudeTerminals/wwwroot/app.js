@@ -3409,7 +3409,9 @@ function cycleDoc(delta) {
 
 function renderDocTabs() {
   const ex = state.byId.get(state.expandedId);
-  const waiting = visibleSessions().filter(waitingForYou).length;   // hidden projects show theirs on the project tabs
+  // Hidden projects show theirs on the project tabs. While a session is open this tab carries its name, so a count here
+  // would read as that session's; the session tabs' dots show which are waiting instead.
+  const waiting = ex ? 0 : visibleSessions().filter(waitingForYou).length;
   const termTab = h('div', {
     class: 'doc-tab terminal' + (docs.active === 'terminal' ? ' active' : ''),
     title: 'Terminals (Shift+Esc from a diff, Ctrl+PgUp/PgDn to switch tabs)',
