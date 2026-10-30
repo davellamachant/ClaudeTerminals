@@ -389,6 +389,28 @@ svg.ic { width: 16px; height: 16px; flex: none; display: block; }
 #docArea { flex: 1; position: relative; min-height: 0; }
 #termPane { position: absolute; inset: 0; }
 #termPane.behind { visibility: hidden; }
+
+/* A tab shown beside the terminal (or below it): --split is the terminal's share, and a divider sits between them. */
+#docArea.split-right #termPane { right: auto; width: var(--split); }
+#docArea.split-right :is(#diffDoc, #convDoc, #pluginDoc) { left: calc(var(--split) + 5px); }
+#docArea.split-bottom #termPane { bottom: auto; height: var(--split); }
+#docArea.split-bottom :is(#diffDoc, #convDoc, #pluginDoc) { top: calc(var(--split) + 5px); }
+#docArea.split-left #termPane { left: auto; width: var(--split); }
+#docArea.split-left :is(#diffDoc, #convDoc, #pluginDoc) { right: calc(var(--split) + 5px); }
+#docArea.split-top #termPane { top: auto; height: var(--split); }
+#docArea.split-top :is(#diffDoc, #convDoc, #pluginDoc) { bottom: calc(var(--split) + 5px); }
+#docSplitter { display: none; position: absolute; z-index: 21; background: var(--chrome); }
+#docArea.split-right #docSplitter { display: block; top: 0; bottom: 0; left: var(--split); width: 5px; cursor: col-resize; border-left: 1px solid var(--border-soft); }
+#docArea.split-bottom #docSplitter { display: block; left: 0; right: 0; top: var(--split); height: 5px; cursor: row-resize; border-top: 1px solid var(--border-soft); }
+#docArea.split-left #docSplitter { display: block; top: 0; bottom: 0; right: var(--split); width: 5px; cursor: col-resize; border-right: 1px solid var(--border-soft); }
+#docArea.split-top #docSplitter { display: block; left: 0; right: 0; bottom: var(--split); height: 5px; cursor: row-resize; border-bottom: 1px solid var(--border-soft); }
+#docSplitter:hover, #docSplitter.dragging { background: var(--accent-strong); }
+#dockHint {
+  position: absolute; z-index: 30; pointer-events: none; display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--accent) 18%, transparent); border: 2px solid var(--accent); border-radius: 4px;
+  color: var(--text-strong); font-weight: 600;
+}
+#dockHint[hidden] { display: none; }
 #grid { position: absolute; inset: 0; }
 #splitter { width: 5px; flex: none; cursor: col-resize; background: var(--chrome); border-left: 1px solid var(--border-soft); }
 #splitter:hover, #splitter.dragging { background: var(--accent-strong); }
@@ -627,6 +649,7 @@ textarea.commit-msg { resize: vertical; min-height: 54px; height: 54px; user-sel
 }
 .doc-tab:hover { background: var(--hover); color: var(--text); }
 .doc-tab.active { background: var(--accent-strong); color: #fff; }
+.doc-tab.beside { background: var(--hover-strong); color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }   /* on screen beside the active one */
 .doc-tab.preview .doc-title { font-style: italic; }
 .doc-tab.terminal { padding-right: 12px; }
 .doc-tab .doc-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
