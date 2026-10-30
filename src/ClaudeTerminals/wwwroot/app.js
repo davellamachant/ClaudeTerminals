@@ -3376,9 +3376,26 @@ function languageFor(path) {
 
 // ---- document tabs: a pinned Terminal tab followed by diff tabs (VS preview-tab semantics)
 
-const docs = { tabs: [], active: 'terminal' };
+// side: the tab shown beside the terminal (dragged there), or null for one at a time. While it's set, the tab you pick
+// goes beside the terminal, and active is 'terminal' or side, whichever has your attention (Ctrl+W closes only side).
+// dir and at: which side of the terminal the tab goes (a DOCK_SIDES key) and the terminal's share of the area.
+const docs = {
+  tabs: [], active: 'terminal', side: null, shown: null,
+  dir: store.get('docSplitDir', 'right'), at: store.get('docSplitAt', 0.5),
+};
+/** The sides of the terminal a tab can go, in words, with the side across from each. */
+const DOCK_SIDES = {
+  right: { label: 'Right of the terminal', across: 'left' },
+  left: { label: 'Left of the terminal', across: 'right' },
+  top: { label: 'Above the terminal', across: 'bottom' },
+  bottom: { label: 'Below the terminal', across: 'top' },
+};
 const docKey = (sessionId, spec) => [sessionId, spec.mode, spec.commit || '', spec.path].join('|');
 const activeTab = () => docs.tabs.find((t) => t.key === docs.active) || null;
+const sideTab = () => (docs.side && docs.tabs.find((t) => t.key === docs.side && tabShown(t))) || null;
+/** The tab whose page is on screen: the one you're on, else the one beside the terminal. */
+const shownDoc = () => activeTab() || sideTab();
+const canSplit = (t) => !!t && !isProjectTab(t);   // a Project view stands alone
 
 /**
  * Diff and Conversation tabs belong to their session's project, and only the current session's project's tabs are
@@ -3399,7 +3416,7 @@ const shownTabs = () => docs.tabs.filter(tabShown);
 function syncDocTabs() {
   const t = activeTab();
   if (t && !tabShown(t)) showTerminalDoc();
-  else renderDocTabs();
+  else showDocs();   // the tab beside the terminal may have come or gone with the project
 }
 
 /** Single-click opens the reusable (italic) preview tab; pin=true opens or keeps a permanent tab. */
@@ -3418,52 +3435,88 @@ function openDiff(s, spec, pin = false) {
 }
 
 function activateDoc(key) {
-  const prev = activeTab();
-  if (prev && prev.key !== key) {
-    if (isConvTab(prev)) prev.scrollTop = $('#convBody').scrollTop;
-    else if (isProjectTab(prev)) prev.scrollTop = $('#projectBody').scrollTop;
-    else if (diffEditor) prev.viewState = diffEditor.saveViewState();
-  }
   // A Project tab is a place of its own, like a session: opening it closes the open session, and anything else leaves it.
   const target = docs.tabs.find((t) => t.key === key);
   state.projectViewOf = isProjectTab(target) ? target.projectId : null;
   if (state.projectViewOf != null) collapse();
   docs.active = docs.tabs.some((t) => t.key === key && tabShown(t)) ? key : 'terminal';
-  const tab = activeTab();
-  $('#diffDoc').hidden = !tab || isConvTab(tab) || isProjectTab(tab) || isPluginTab(tab);
-  $('#convDoc').hidden = !isConvTab(tab);
-  $('#projectDoc').hidden = !isProjectTab(tab);
-  $('#pluginDoc').hidden = !isPluginTab(tab);
-  $('#termPane').classList.toggle('behind', !!tab);
-  hideRailCard();
-  renderDocTabs();
-  if (tab) {
-    if (prev !== tab) {
-      if (isConvTab(tab)) showConversation(tab);
-      else if (isProjectTab(tab)) showProjectView(tab);
-      else if (isPluginTab(tab)) showPlugin(tab);
-      else loadDiff(tab);
-    }
-  } else {
-    diffState.seq++;
+  if (docs.side && canSplit(activeTab())) {
+    docs.side = docs.active;   // split: the tab you pick goes beside the terminal, and takes the keyboard from it
+    if ($('#termPane').contains(document.activeElement)) document.activeElement.blur();
+  }
+  showDocs();
+  if (!activeTab()) {
     const s = state.byId.get(state.expandedId);
     if (s) setTimeout(() => s.term.focus(), 0);
   }
 }
 
+/** Puts the shown tab's page on screen (beside the terminal when split), keeping the view of the one it replaces. */
+function showDocs() {
+  const prev = docs.shown;
+  const tab = shownDoc();
+  if (prev && prev !== tab && docs.tabs.includes(prev)) {   // not a tab being closed
+    if (isConvTab(prev)) prev.scrollTop = $('#convBody').scrollTop;
+    else if (isProjectTab(prev)) prev.scrollTop = $('#projectBody').scrollTop;
+    else if (!isPluginTab(prev) && diffEditor) prev.viewState = diffEditor.saveViewState();
+  }
+  docs.shown = tab;
+  const split = !!tab && tab === sideTab();
+  $('#diffDoc').hidden = !tab || isConvTab(tab) || isProjectTab(tab) || isPluginTab(tab);
+  $('#convDoc').hidden = !isConvTab(tab);
+  $('#projectDoc').hidden = !isProjectTab(tab);
+  $('#pluginDoc').hidden = !isPluginTab(tab);
+  $('#termPane').classList.toggle('behind', !!tab && !split);
+  const area = $('#docArea');
+  for (const dir in DOCK_SIDES) area.classList.toggle('split-' + dir, split && docs.dir === dir);
+  area.style.setProperty('--split', docs.at * 100 + '%');
+  hideRailCard();
+  renderDocTabs();
+  if (tab && prev !== tab) {
+    if (isConvTab(tab)) showConversation(tab);
+    else if (isProjectTab(tab)) showProjectView(tab);
+    else if (isPluginTab(tab)) showPlugin(tab);
+    else loadDiff(tab);
+  } else if (!tab) {
+    diffState.seq++;
+  }
+}
+
+/** Shows tab `key` on a side of the terminal (a DOCK_SIDES key), or on its own again (dir null). */
+function splitDoc(key, dir) {
+  if (dir) {
+    docs.dir = dir;
+    store.set('docSplitDir', dir);
+  }
+  docs.side = dir ? key : null;
+  activateDoc(key);
+}
+
 const showTerminalDoc = () => activateDoc('terminal');
+
+/** While split, whichever side you click or move focus into has your attention (so Ctrl+W closes only the tab's side). */
+function attend(key) {
+  if (!sideTab() || docs.active === key) return;
+  docs.active = key;
+  renderDocTabs();
+}
 
 function closeDoc(key) {
   const i = docs.tabs.findIndex((t) => t.key === key);
   if (i < 0) return;
   const wasActive = docs.active === key;
+  const wasSide = docs.side === key;
   if (isPluginTab(docs.tabs[i])) closePluginFrame(docs.tabs[i].pluginId);
   docs.tabs.splice(i, 1);
+  // The nearest shown tab after it, else before it, that `ok` accepts.
+  const near = (ok) => docs.tabs.slice(i).find((t) => tabShown(t) && ok(t)) || docs.tabs.slice(0, i).reverse().find((t) => tabShown(t) && ok(t));
+  if (wasSide) docs.side = near(canSplit)?.key ?? null;   // another tab takes its place beside the terminal
   if (wasActive) {
-    docs.active = 'terminal';   // don't save view state for the tab being closed
-    const shown = docs.tabs.map(tabShown);
-    const next = docs.tabs.slice(i).find((_, k) => shown[i + k]) || docs.tabs.slice(0, i).reverse().find((_, k) => shown[i - 1 - k]);
+    docs.active = 'terminal';
+    const next = docs.side ? sideTab() : near(() => true);
     activateDoc(next ? next.key : 'terminal');
+  } else if (wasSide) {
+    showDocs();
   } else {
     renderDocTabs();
   }
@@ -3483,7 +3536,8 @@ function renderDocTabs() {
   const waiting = ex ? 0 : visibleSessions().filter(waitingForYou).length;
   const termTab = h('div', {
     class: 'doc-tab terminal' + (docs.active === 'terminal' ? ' active' : ''),
-    title: 'Terminals (Shift+Esc from a diff, Ctrl+PgUp/PgDn to switch tabs)',
+    'data-id': 'terminal',
+    title: 'Terminals (Shift+Esc from a diff, Ctrl+PgUp/PgDn to switch tabs)\nDrag to a side of the area to show a tab beside it',
     onclick: showTerminalDoc,
   }, iconEl('terminal'), h('span', { class: 'doc-title' }, ex ? ex.name : 'All sessions'), ex ? projectTag(ex) : null,
   waiting ? h('span', { class: 'badge', title: `${waiting} session(s) waiting for you` }, String(waiting)) : null);
@@ -3540,6 +3594,11 @@ function renderDocTabs() {
     h('button', { class: 'icon-btn small', title: 'Close (Ctrl+W)', onclick: () => closeDoc(t.key) }, iconEl('close')));
   });
   fill($('#docTabs'), state.projectViewOf != null ? null : termTab, tabs);   // a Project view stands alone
+  // Split: the terminal and the tab beside it are both on screen; the one without your attention is marked "beside".
+  const side = sideTab();
+  for (const el of $('#docTabs').querySelectorAll('.doc-tab')) {
+    el.classList.toggle('beside', !!side && !el.classList.contains('active') && (el.classList.contains('terminal') || el.dataset.id === side.key));
+  }
   revealActive($('#docTabs'), '.doc-tab.active');
   // The project label in the session tab row looks selected while its Project view is showing.
   for (const label of document.querySelectorAll('.session-group-label')) label.classList.toggle('active', projectViewShowing(label.dataset.project));
@@ -3633,7 +3692,7 @@ function goToChange(dir, absolute = false) {
 
 /** Keeps the visible diff live while the session edits the file. */
 function refreshOpenDiff(s) {
-  const t = activeTab();
+  const t = shownDoc();
   if (!t || isConvTab(t) || t.sessionId !== s.id || t.spec.mode === 'commit') return;
   loadDiff(t, true);
 }
@@ -3651,7 +3710,7 @@ $('#diffNext').addEventListener('click', () => goToChange(1));
 $('#diffMode').addEventListener('click', () => { diffState.sideBySide = !diffState.sideBySide; store.set('diffSideBySide', diffState.sideBySide); applyDiffOptions(); });
 $('#diffWs').addEventListener('click', () => { diffState.ignoreWs = !diffState.ignoreWs; store.set('diffIgnoreWs', diffState.ignoreWs); applyDiffOptions(); });
 $('#diffOpenFile').addEventListener('click', () => {
-  const t = activeTab();
+  const t = shownDoc();
   if (t && !isConvTab(t)) request('openFile', { id: t.sessionId, path: t.spec.path }).catch((e) => toast(e.message, true));
 });
 $('#diffDoc').addEventListener('keydown', (e) => {
@@ -3698,11 +3757,12 @@ async function loadConversation(s, full) {
 
 setInterval(async () => {
   if (document.hidden) return;
-  const tab = activeTab();
+  const tab = shownDoc();
   if (isConvTab(tab)) {
     const s = state.byId.get(tab.sessionId);
-    if (s?.running && await loadConversation(s, true) && docs.active === tab.key) renderConversation(s, tab);
-  } else if (!tab) {
+    if (s?.running && await loadConversation(s, true) && docs.shown === tab) renderConversation(s, tab);
+  }
+  if (!tab || tab === sideTab()) {   // the terminal is on screen
     const s = state.byId.get(state.expandedId);
     if (s?.running) refreshTermRail(s);
   }
@@ -3833,7 +3893,7 @@ function openConversation(s, index = null) {
     docs.tabs.push(tab);
   }
   tab.pendingTurn = index;
-  if (docs.active === key) {
+  if (docs.shown === tab) {
     if (index != null && convView.key === key && convView.els[index]) { tab.pendingTurn = null; scrollToTurn(index); }
   } else {
     activateDoc(key);
@@ -3854,7 +3914,7 @@ async function showConversation(tab) {
   if (s.convFull) renderConversation(s, tab);
   else $('#convSummary').textContent = 'Loading…';
   if (s.running) await loadConversation(s, true);
-  if (docs.active === tab.key) renderConversation(s, tab);
+  if (docs.shown === tab) renderConversation(s, tab);
   $('#convBody').focus({ preventScroll: true });   // so the keyboard scrolls it
 }
 
@@ -3990,7 +4050,7 @@ function turnInView() {
 }
 
 $('#convBody').addEventListener('scroll', debounce(() => {
-  if (isConvTab(activeTab())) markRailActive($('#convRail'), turnInView());
+  if (isConvTab(shownDoc())) markRailActive($('#convRail'), turnInView());
 }, 50));
 attachRail($('#convRail'));
 
@@ -4813,23 +4873,27 @@ function makeScrollable(row, extraClass = '') {
  * Drag-to-reorder for a tab row. Items matching `item` carry `data-id`; `canDrag(id)` vetoes pinned ones. While
  * dragging, the item under the pointer shows which side the drop lands on, and the row scrolls near its edges.
  * `onDrop(draggedId, targetId, before)` is told where to put it. Listeners sit on the row itself, so its contents can
- * be re-rendered freely.
+ * be re-rendered freely. With `outside`, a tab can also be dragged out below the row: `outside.over(id, x, y)` shows
+ * where it would land and returns that place (or null), `outside.over(null)` hides it, and `outside.drop(id, place)`
+ * puts it there. `fixed(id)` items stay where they are: only dragged out, and never a place to drop beside.
  *
  * Built on pointer events rather than HTML5 drag and drop: in WebView2 an HTML5 drag runs through the operating
  * system's drag loop, which AllowExternalDrop = false (set so dropped files can't navigate the page) also blocks.
  */
-function enableTabDrag(row, { item, canDrag = () => true, onDrop }) {
+function enableTabDrag(row, { item, canDrag = () => true, onDrop, outside = null, fixed = () => false }) {
   const THRESHOLD = 8;   // pixels the pointer must move before a press becomes a drag (a hurried click can move ~5)
   let press = null;      // { id, el, x, pointerId } from pointerdown until pointerup
   let dragging = false;
+  let place = null;      // where outside.over says a drop below the row lands
 
   const clear = () => row.querySelectorAll('.drop-before, .drop-after').forEach((el) => el.classList.remove('drop-before', 'drop-after'));
 
   /** The item nearest the pointer (other than the dragged one), and which side of it the drop lands on. */
   const targetAt = (x) => {
+    if (fixed(press.id)) return null;
     let best = null;
     for (const el of row.querySelectorAll(item)) {
-      if (el.dataset.id === press.id) continue;
+      if (el.dataset.id === press.id || fixed(el.dataset.id)) continue;
       const r = el.getBoundingClientRect();
       const d = x < r.left ? r.left - x : x > r.right ? x - r.right : 0;
       if (!best || d < best.d) best = { el, before: x < r.left + r.width / 2, d };
@@ -4839,6 +4903,8 @@ function enableTabDrag(row, { item, canDrag = () => true, onDrop }) {
 
   const finish = () => {
     clear();
+    if (place != null) outside.over(null);
+    place = null;
     press?.el.classList.remove('dragging');
     document.body.classList.remove('tab-dragging');
     press = null;
@@ -4851,7 +4917,7 @@ function enableTabDrag(row, { item, canDrag = () => true, onDrop }) {
     if (e.button !== 0) return;
     const el = e.target.closest(item);
     if (!el || !row.contains(el) || !canDrag(el.dataset.id) || e.target.closest('.tab-close, .icon-btn')) return;
-    press = { id: el.dataset.id, el, x: e.clientX, pointerId: e.pointerId };
+    press = { id: el.dataset.id, el, x: e.clientX, y: e.clientY, pointerId: e.pointerId };
   });
 
   row.addEventListener('pointermove', (e) => {
@@ -4860,13 +4926,20 @@ function enableTabDrag(row, { item, canDrag = () => true, onDrop }) {
     // than letting plain mouse movement start a drag that eats the next click.
     if ((e.buttons & 1) === 0) { if (dragging) finish(); else press = null; return; }
     if (!dragging) {
-      if (Math.abs(e.clientX - press.x) < THRESHOLD) return;
+      // Along the row only, unless a tab can be dragged out of it: then down counts too (the row loses the pointer once it's
+      // out, so a drag must start before then).
+      const moved = outside ? Math.hypot(e.clientX - press.x, e.clientY - press.y) : Math.abs(e.clientX - press.x);
+      if (moved < THRESHOLD) return;
       dragging = true;
       row.setPointerCapture(e.pointerId);   // keep receiving moves even when the pointer leaves the row
       press.el.classList.add('dragging');
       document.body.classList.add('tab-dragging');
     }
     const r = row.getBoundingClientRect();
+    if (outside) {
+      place = e.clientY > r.bottom + 6 ? outside.over(press.id, e.clientX, e.clientY) : (place != null && outside.over(null), null);
+      if (place != null) { clear(); return; }
+    }
     if (e.clientX < r.left + 30) row.scrollLeft -= 12;
     else if (e.clientX > r.right - 30) row.scrollLeft += 12;
     const t = targetAt(e.clientX);
@@ -4889,12 +4962,14 @@ function enableTabDrag(row, { item, canDrag = () => true, onDrop }) {
     }
     const t = targetAt(e.clientX);
     const id = press.id;
+    const out = place;
     finish();
     // The click that follows this pointerup would also switch tabs; swallow it.
     const swallow = (c) => { c.stopPropagation(); c.preventDefault(); };
     window.addEventListener('click', swallow, { capture: true, once: true });
     setTimeout(() => window.removeEventListener('click', swallow, { capture: true }), 0);
-    if (t) onDrop(id, t.el.dataset.id, t.before);
+    if (out != null) outside.drop(id, out);
+    else if (t) onDrop(id, t.el.dataset.id, t.before);
   });
 
   row.addEventListener('pointercancel', finish);
@@ -5171,15 +5246,118 @@ enableTabDrag($('#projectTabs'), {
   },
 });
 
-// Diff tabs; the Terminal tab isn't an item, so it stays first.
+// Diff tabs. The Terminal tab stays first, but can be dragged to a side of the area like them.
 enableTabDrag($('#docTabs'), {
-  item: '.doc-tab:not(.terminal)',
+  item: '.doc-tab',
+  fixed: (key) => key === 'terminal',
   onDrop: (key, targetKey, before) => {
     const order = moveId(docs.tabs.map((t) => t.key), key, targetKey, before);
     docs.tabs.sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key));
     renderDocTabs();
   },
+  outside: { over: dockHint, drop: (key, dir) => (key === 'terminal' ? splitTerminal(dir) : splitDoc(key, dir || null)) },
 });
+
+/**
+ * Where a tab dragged into the area would go: near an edge puts it on that side of the terminal, anywhere else on its
+ * own ('' then). Shows that place, or hides it for key null. A Project tab only goes on its own.
+ */
+function dockHint(key, x, y) {
+  const hint = $('#dockHint');
+  const r = $('#docArea').getBoundingClientRect();
+  const term = key === 'terminal';
+  const t = term ? terminalPartner() : key && docs.tabs.find((d) => d.key === key);
+  if (!t || x < r.left || x > r.right || y < r.top || y > r.bottom) { hint.hidden = true; return null; }
+  const rx = (x - r.left) / r.width, ry = (y - r.top) / r.height;
+  // How far into each edge's band (its outer 40%) the pointer is; the deepest wins.
+  const [edge, depth] = Object.entries({ left: 0.4 - rx, right: rx - 0.6, top: 0.4 - ry, bottom: ry - 0.6 }).sort((a, b) => b[1] - a[1])[0];
+  const dir = canSplit(t) && depth > 0 ? edge : '';
+  // The part the dragged tab would take: a file tab what the terminal leaves it, the terminal its own share.
+  const inset = { left: '0', top: '0', right: '0', bottom: '0' };
+  if (dir) inset[DOCK_SIDES[dir].across] = (term ? 1 - docs.at : docs.at) * 100 + '%';
+  Object.assign(hint.style, inset);
+  hint.textContent = !dir ? 'On its own' : term ? TERMINAL_SIDES[dir] : DOCK_SIDES[dir].label;
+  hint.hidden = false;
+  return dir;
+}
+
+/** The terminal dragged to a side (a DOCK_SIDES key): the file tab goes across from it. '' shows it on its own. */
+const TERMINAL_SIDES = { right: 'Terminal on the right', left: 'Terminal on the left', top: 'Terminal on top', bottom: 'Terminal below' };
+
+/** The file tab the terminal shares the area with: the one on screen, else the last one open. */
+const terminalPartner = () => [shownDoc(), ...shownTabs().reverse()].find(canSplit) || null;
+
+function splitTerminal(dir) {
+  const t = terminalPartner();
+  if (dir && t) splitDoc(t.key, DOCK_SIDES[dir].across);
+  else docs.side = null;
+  showTerminalDoc();
+}
+
+$('#docTabs').addEventListener('contextmenu', (e) => {
+  if (e.target.closest('.doc-tab.terminal')) {
+    const partner = terminalPartner();
+    if (!partner) return;
+    e.preventDefault();
+    const split = sideTab() && docs.side === partner.key;
+    showMenu(e.clientX, e.clientY, [
+      { header: 'Beside ' + (isConvTab(partner) ? 'the Conversation' : isPluginTab(partner) ? pluginCaption(partner.pluginId) : partner.spec.path.split('/').pop()) },
+      ...Object.entries(TERMINAL_SIDES).map(([dir, label]) => ({
+        label, checked: !!split && DOCK_SIDES[docs.dir].across === dir, action: () => splitTerminal(dir),
+      })),
+      { label: 'On its own', checked: !split, action: () => splitTerminal('') },
+    ]);
+    return;
+  }
+  const el = e.target.closest('.doc-tab');
+  const t = el && docs.tabs.find((d) => d.key === el.dataset.id);
+  if (!t) return;
+  e.preventDefault();
+  const beside = docs.side === t.key;
+  showMenu(e.clientX, e.clientY, [
+    ...Object.entries(DOCK_SIDES).map(([dir, side]) => canSplit(t) && { label: side.label, checked: beside && docs.dir === dir, action: () => splitDoc(t.key, dir) }),
+    canSplit(t) && { label: 'On its own', checked: !beside, action: () => splitDoc(t.key, null) },
+    canSplit(t) && '-',
+    { label: 'Close', kbd: 'Ctrl+W', action: () => closeDoc(t.key) },
+  ]);
+});
+
+// While split, the side you click or tab into has your attention (see attend).
+for (const id of ['#diffDoc', '#convDoc', '#pluginDoc']) {
+  for (const type of ['pointerdown', 'focusin']) $(id).addEventListener(type, () => attend(docs.side), true);
+}
+for (const type of ['pointerdown', 'focusin']) $('#termPane').addEventListener(type, () => attend('terminal'), true);
+
+// The divider between the terminal and the tab beside it; double-click evens them up.
+(() => {
+  const sp = $('#docSplitter');
+  const set = (at) => {
+    docs.at = Math.max(0.2, Math.min(0.8, at));
+    $('#docArea').style.setProperty('--split', docs.at * 100 + '%');
+  };
+  sp.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    sp.setPointerCapture(e.pointerId);   // keeps the moves coming over a plugin's frame too
+    sp.classList.add('dragging');
+    const move = (ev) => {
+      const r = $('#docArea').getBoundingClientRect();
+      set({
+        right: (ev.clientX - r.left) / r.width, left: (r.right - ev.clientX) / r.width,
+        bottom: (ev.clientY - r.top) / r.height, top: (r.bottom - ev.clientY) / r.height,
+      }[docs.dir]);
+    };
+    const up = () => {
+      sp.classList.remove('dragging');
+      store.set('docSplitAt', docs.at);
+      sp.removeEventListener('pointermove', move);
+      sp.removeEventListener('lostpointercapture', up);
+    };
+    sp.addEventListener('pointermove', move);
+    sp.addEventListener('lostpointercapture', up);
+  });
+  sp.addEventListener('dblclick', () => { set(0.5); store.set('docSplitAt', docs.at); });
+})();
 
 applyGitVisibility();
 applyDiffOptions();
