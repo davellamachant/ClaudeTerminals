@@ -1,6 +1,6 @@
 # Claude Terminals
 
-One window for many local Claude Code sessions, with a Visual Studio–style Git Changes / Git Repository view and diff viewer for each session's worktree.
+One window for many local Claude Code and Codex sessions, with a Visual Studio–style Git Changes / Git Repository view and diff viewer for each session's worktree.
 
 ![Sessions grouped by project, with Git Changes for the selected worktree](docs/images/overview.png)
 
@@ -29,13 +29,14 @@ One window for many local Claude Code sessions, with a Visual Studio–style Git
 
 ## What it does
 
-- **All your sessions in one window.** Every Claude Code session runs in its own real terminal, shown side by side as live tiles. Click one to work in it full-size; status dots show which are working, which are waiting for you and which need an answer before Claude can carry on.
+- **All your sessions in one window.** Every Claude Code or Codex session runs in its own real terminal, shown side by side as live tiles. Click one to work in it full-size; status dots show which are working, which are waiting for you and which need an answer before Claude can carry on.
 - **Projects.** Group sessions (for example one product's worktrees) and show or hide each group; hidden sessions keep running and still tell you when they need you.
 - **Git, Visual Studio style.** Each session's worktree gets Git Changes (stage, commit, Undo Changes, fetch, pull, push) and Git Repository (history, outgoing commits), with side-by-side diffs that update as Claude edits. **Suggest** writes the commit message for you, and a chip links the branch's pull request on GitHub or Azure DevOps.
 - **Look back through a conversation.** A rail of ticks beside the terminal, one per prompt; hover for a preview, click to read the whole conversation in its own tab. Works even in Claude's full-screen mode.
 - **Panels from Claude.** Claude can show your task list, an error summary or notes as a tab beside the Git panel, through a small MCP server built into the app; buttons on them only ever fill in a prompt for you. A ready-made example skill gets you started.
 - **Arrange the side panel.** Drag tabs into groups stacked one above the other (Git Changes on top, your panels below, say), resize them, and fold any group down to its tabs.
-- **Picks up where you left off.** Each session has a conversation of its own and reopens it when the app restarts, following you through `/clear`; you can also resume any saved conversation.
+- **Claude Code and Codex, side by side.** Run either in any session, or both in the same project: each gets its own conversation, the conversation rail, panels, the *needs your answer* dot and **Suggest**. See [Claude Code and Codex](#claude-code-and-codex) for what each supports.
+- **Picks up where you left off.** Each session has a conversation of its own and reopens it when the app restarts, following you through `/clear` (or Codex's `/new`); you can also resume any saved conversation.
 - **Light or dark, in your colours.** Follows Windows' light/dark mode and accent colour, or choose your own; Claude itself is started in matching colours.
 - **Keeps itself up to date.** Tells you when a new version is out and installs it in a click; your sessions carry on afterwards.
 
@@ -114,13 +115,56 @@ With Windows' animation effects turned off the dots stay still, and in every sty
 
 **Resuming:** the picker reads Claude Code's saved conversations from `~/.claude/projects`. Picking one (in New session, or *Resume a different conversation…*) makes it the session's conversation; *New conversation* gives the session a fresh one. Close the conversation in any other terminal first. Conversations updated in the last few minutes are tagged *active now* as a reminder.
 
-**Codex sessions:** make the command `codex` (plus any options). Codex can't be told which conversation id to use, so a new session learns its conversation once Codex has saved it (the latest one started in its folder since the session started, not counting `codex exec` runs) and reopens it with `codex resume <id>` from then on. It follows Codex to a new conversation after `/new`, and to one you pick with `/resume` once you send a prompt in it (from Codex's prompt history, `~/.codex/history.jsonl`). Codex sessions start when you first open them, appear in the resume picker (tagged *Codex*, read from `~/.codex/sessions`, or `CODEX_HOME`), and can show panels: the app adds its MCP server with `-c mcp_servers.claude-terminals.…`, passing the token in an environment variable. The conversation rail and Conversation tab show its conversation too, and the *needs your answer* dot shows while Codex waits for an approval or an answer (Codex reports it in the terminal), or on its folder trust check. **Suggest** asks Codex for the message (`codex exec`, not saved). Not yet for Codex: matching colours.
+**Codex sessions** work the same way, with a few differences: see [Claude Code and Codex](#claude-code-and-codex).
 
 **Closing the app** stops the sessions but loses nothing: Claude keeps every conversation, and the sessions come back with the app. The closing prompt says which pick up where they left off (those that continue or resume) and which start a new conversation.
 
 **Starting when opened:** when the app starts, a Claude session it brings back waits until you first open it (its tile says *Starts when you open it*; pressing Enter in it works too). Claude's start-up context, such as hooks, the date and Git status, is then fresh when you use the session, and one you don't open runs nothing. New sessions, and sessions running any other command (a dev server, say), start straight away.
 
 Sessions are saved in `%APPDATA%\ClaudeTerminals\sessions.json`. Set `CLAUDE_TERMINALS_DATA` to use a different folder (separate profiles, testing). Only one copy runs per profile; launching again brings the existing window forward.
+
+### Claude Code and Codex
+
+A session's command decides what it runs: `claude` for [Claude Code](https://docs.anthropic.com/en/docs/claude-code), `codex` for OpenAI's [Codex CLI](https://github.com/openai/codex) (each with any options you add), or anything else, such as a shell or a dev server. Claude Code and Codex sessions can sit side by side, in the same project or even the same folder.
+
+| | Claude Code | Codex | Any other command |
+|---|---|---|---|
+| **Sessions and window** | | | |
+| Terminal tiles, tabs, projects, shortcuts | ✓ | ✓ | ✓ |
+| Status: working, waiting for you, idle, not running | ✓ | ✓ | ✓ |
+| Status: *needs your answer* | ✓ Permissions, questions, plans, the folder trust check | ✓ Approvals and questions (Codex reports them), the folder trust check | — |
+| Starts when you first open it, after the app restarts | ✓ | ✓ | — starts straight away |
+| **Conversations** | | | |
+| A conversation of its own, even several in one folder | ✓ the app picks its id | ✓ learned once Codex saves it | — |
+| Reopens it when the app or the session restarts | ✓ `--resume <id>` | ✓ `codex resume <id>` | — |
+| Follows you to another conversation | ✓ `/clear`, `/resume` | ✓ `/new`; `/resume` once you send a prompt in it | — |
+| Resume picker | ✓ | ✓ tagged *Codex* | — |
+| Conversation title on hover, and in the closing prompt | ✓ | ✓ | — |
+| **Conversation rail and tab** | | | |
+| Rail of prompts and the Conversation tab | ✓ | ✓ | — |
+| Works in full-screen mode | ✓ | ✓ | — |
+| Project view: latest prompt and answer | ✓ | ✓ | status only |
+| **Panels** | | | |
+| Panels beside the terminal, and their buttons | ✓ | ✓ | — |
+| **Theme** | | | |
+| App, terminal and diff colours, accent, themes | ✓ | ✓ | ✓ |
+| The agent itself started in matching light or dark colours | ✓ | not yet | — |
+| **Git** | | | |
+| Git Changes, Git Repository, diffs, fetch/pull/push, pull requests, Project view | ✓ | ✓ | ✓ |
+| **Suggest** writes the commit message | ✓ Claude Code | ✓ Codex | ✓ Claude Code, if installed |
+| **App** | | | |
+| Plugins | ✓ | ✓ | ✓ |
+| Updates: sessions carry on in their conversations | ✓ | ✓ | restarted |
+
+How Codex sessions do it:
+
+- **Its own conversation.** Codex can't be told which conversation id to use, so a new session learns its conversation once Codex has saved it: the latest one started in its folder since the session started, not counting `codex exec` runs. From then on it's reopened with `codex resume <id>`. A Guardian review thread Codex starts under a conversation opens that conversation.
+- **Following you.** After `/new` the session moves to the new conversation once Codex has saved it. After `/resume` it moves to the conversation you picked once you send a prompt in it, read from Codex's prompt history (`~/.codex/history.jsonl`); with `history.persistence = "none"` in Codex's config, `/resume` isn't followed.
+- **Saved conversations** are read from `~/.codex/sessions`, or `CODEX_HOME` when it's set.
+- **Panels:** the app adds its MCP server to Codex's command line (`-c mcp_servers.claude-terminals.…`), passing the session's token in an environment variable rather than on the command line. A command that sets that server itself is left alone.
+- **Needs your answer:** Codex reports in the terminal when it's waiting on you (an `OSC 7501` sequence with `state=blocked`), so the dot doesn't depend on reading its screen. Any program that reports its state that way gets the dot too.
+- **Suggest** runs `codex exec --ephemeral -s read-only` with low reasoning: read-only and not saved as a conversation, using a little of your Codex plan.
+- **Commands that choose for themselves:** `codex resume …` and `codex fork …` keep their own choice of conversation, and Codex's other subcommands (`codex exec`, say) run as they are.
 
 ### Projects
 
