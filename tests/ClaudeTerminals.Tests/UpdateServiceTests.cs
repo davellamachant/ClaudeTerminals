@@ -91,7 +91,7 @@ public sealed class UpdateServiceTests
     [InlineData("pwsh", "pwsh")]                                       // not Claude
     [InlineData("node fake.mjs", "node fake.mjs")]
     public void After_an_update_a_claude_session_resumes_its_conversation(string command, string expected) =>
-        Assert.Equal(expected, TerminalSession.PrepareCommand(command, "abc-123", () => true));
+        Assert.Equal(expected, ClaudeAgent.PrepareCommand(command, "abc-123", () => true));
 
     [Theory]
     [InlineData(null)]
@@ -99,7 +99,7 @@ public sealed class UpdateServiceTests
     [InlineData("abc&calc")]
     [InlineData("\"quoted\"")]
     public void Only_a_plain_conversation_id_is_ever_added(string? id) =>
-        Assert.Equal("claude", TerminalSession.PrepareCommand("claude", id, () => true));
+        Assert.Equal("claude", ClaudeAgent.PrepareCommand("claude", id, () => true));
 
     [Theory]
     [InlineData("claude --continue", true, "claude --continue")]
@@ -110,7 +110,7 @@ public sealed class UpdateServiceTests
     [InlineData("claude --resume abc", false, "claude --resume abc")]
     [InlineData("node fake.mjs --continue", false, "node fake.mjs --continue")]   // not Claude
     public void Continue_is_dropped_only_when_the_folder_has_no_conversation(string command, bool has, string expected) =>
-        Assert.Equal(expected, TerminalSession.PrepareCommand(command, null, () => has));
+        Assert.Equal(expected, ClaudeAgent.PrepareCommand(command, null, () => has));
 
     [Theory]
     [InlineData("claude", "claude --settings \"T.json\"")]
@@ -121,22 +121,22 @@ public sealed class UpdateServiceTests
     [InlineData("claude -p hello", "claude -p hello")]                                  // no interface to theme
     [InlineData("pwsh", "pwsh")]
     public void Claude_is_started_in_the_theme_of_its_terminal(string command, string expected) =>
-        Assert.Equal(expected, TerminalSession.PrepareCommand(command, null, () => true, "T.json"));
+        Assert.Equal(expected, ClaudeAgent.PrepareCommand(command, null, () => true, "T.json"));
 
     [Fact]
     public void A_theme_restart_resumes_the_conversation_and_sets_the_theme()
     {
-        Assert.Equal("claude --resume abc-123 --settings \"T.json\"", TerminalSession.PrepareCommand("claude --continue", "abc-123", () => true, "T.json"));
-        Assert.Null(TerminalSession.ThemeSettingsFile("solarized"));
-        Assert.Null(TerminalSession.ThemeSettingsFile(null));
+        Assert.Equal("claude --resume abc-123 --settings \"T.json\"", ClaudeAgent.PrepareCommand("claude --continue", "abc-123", () => true, "T.json"));
+        Assert.Null(ClaudeAgent.ThemeSettingsFile("solarized"));
+        Assert.Null(ClaudeAgent.ThemeSettingsFile(null));
     }
 
     [Fact]
     public void The_folder_is_only_checked_when_the_command_continues()
     {
         var checkedFolder = false;
-        TerminalSession.PrepareCommand("claude --model opus", null, () => checkedFolder = true);
-        TerminalSession.PrepareCommand("pwsh", null, () => checkedFolder = true);
+        ClaudeAgent.PrepareCommand("claude --model opus", null, () => checkedFolder = true);
+        ClaudeAgent.PrepareCommand("pwsh", null, () => checkedFolder = true);
         Assert.False(checkedFolder);
     }
 }

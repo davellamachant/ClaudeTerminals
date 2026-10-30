@@ -28,15 +28,19 @@ internal sealed class ConversationTurn
 /// <summary>A parsed conversation file. <see cref="Version"/> changes whenever a prompt or answer is added.</summary>
 internal sealed record Conversation(string SessionId, string Path, long Version, IReadOnlyList<ConversationTurn> Turns);
 
+/// <summary>Adds what one line of an agent's transcript says to the turns: a new prompt, or items of the answer to the last one.</summary>
+internal delegate void TranscriptParser(JsonElement line, List<ConversationTurn> turns);
+
 /// <summary>
 /// Finds the conversation a session's terminal is showing and reads it into prompts and answers.
 /// Claude Code writes ~/.claude/sessions/&lt;pid&gt;.json for each interactive process, naming the conversation it is in;
 /// the conversation itself is an append-only JSONL file, so after the first read only the new lines are parsed.
+/// <see cref="Read"/> does that for any agent whose transcript is JSONL, given its <see cref="TranscriptParser"/>.
 /// </summary>
 internal static partial class ConversationReader
 {
-    private const int MaxTextChars = 100_000;
-    private const int MaxToolChars = 200;
+    internal const int MaxTextChars = 100_000;
+    internal const int MaxToolChars = 200;
 
     private sealed class Cached
     {
@@ -149,7 +153,8 @@ internal static partial class ConversationReader
         }
     }
 
-    internal static Conversation Read(string sessionId, string path)
+    /// <param name="parse">How the agent's lines read; Claude's by default.</param>
+    internal static Conversation Read(string sessionId, string path, TranscriptParser? parse = null)
     {
         var c = Cache.GetOrAdd(path, _ => new Cached());
         lock (c.Gate)
@@ -166,7 +171,7 @@ internal static partial class ConversationReader
                 if (stream.Length > c.Offset)
                 {
                     stream.Seek(c.Offset, SeekOrigin.Begin);
-                    c.Offset += ReadLines(stream, c.Turns);
+                    c.Offset += ReadLines(stream, c.Turns, parse ?? ClaudeLine);
                 }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -180,7 +185,7 @@ internal static partial class ConversationReader
     }
 
     /// <summary>Parses complete lines from the stream into the turns. Returns the bytes consumed (a half-written last line is left for next time).</summary>
-    private static long ReadLines(Stream stream, List<ConversationTurn> turns)
+    private static long ReadLines(Stream stream, List<ConversationTurn> turns, TranscriptParser parse)
     {
         long consumed = 0;
         var buffer = new MemoryStream();
@@ -194,7 +199,7 @@ internal static partial class ConversationReader
                 if (chunk[i] != (byte)'\n') continue;
                 buffer.Write(chunk, start, i - start);
                 consumed += buffer.Length + 1;
-                AddLine(buffer.GetBuffer().AsSpan(0, (int)buffer.Length), turns);
+                AddLine(buffer.GetBuffer().AsSpan(0, (int)buffer.Length), turns, parse);
                 buffer.SetLength(0);
                 start = i + 1;
             }
@@ -203,7 +208,7 @@ internal static partial class ConversationReader
         return consumed;
     }
 
-    internal static void AddLine(ReadOnlySpan<byte> line, List<ConversationTurn> turns)
+    private static void AddLine(ReadOnlySpan<byte> line, List<ConversationTurn> turns, TranscriptParser parse)
     {
         if (line.Length < 2) return;
         JsonDocument doc;
@@ -217,38 +222,43 @@ internal static partial class ConversationReader
         }
         using (doc)
         {
-            var e = doc.RootElement;
-            if (e.ValueKind != JsonValueKind.Object || Bool(e, "isSidechain")) return;
-            switch (Str(e, "type"))
-            {
-                case "user":
-                    if (Bool(e, "isMeta") || Bool(e, "isCompactSummary")) return;
-                    if (PromptText(e) is { } prompt)
-                        turns.Add(new ConversationTurn
-                        {
-                            Index = turns.Count,
-                            Prompt = Clip(prompt, MaxTextChars),
-                            Time = e.TryGetProperty("timestamp", out var ts) && ts.TryGetDateTime(out var t) ? t : null,
-                        });
-                    break;
-                case "assistant":
-                    if (turns.Count == 0 || !e.TryGetProperty("message", out var m) ||
-                        !m.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array) return;
-                    var items = turns[^1].Items;
-                    foreach (var part in content.EnumerateArray())
+            if (doc.RootElement.ValueKind == JsonValueKind.Object) parse(doc.RootElement, turns);
+        }
+    }
+
+    /// <summary>A line of Claude Code's transcript.</summary>
+    private static void ClaudeLine(JsonElement e, List<ConversationTurn> turns)
+    {
+        if (Bool(e, "isSidechain")) return;
+        switch (Str(e, "type"))
+        {
+            case "user":
+                if (Bool(e, "isMeta") || Bool(e, "isCompactSummary")) return;
+                if (PromptText(e) is { } prompt)
+                    turns.Add(new ConversationTurn
                     {
-                        switch (Str(part, "type"))
-                        {
-                            case "text" when Str(part, "text") is { } text && !string.IsNullOrWhiteSpace(text):
-                                items.Add(new ConversationItem("text", Clip(text.Trim(), MaxTextChars)));
-                                break;
-                            case "tool_use":
-                                items.Add(new ConversationItem("tool", ToolDetail(part), Str(part, "name") ?? "tool"));
-                                break;
-                        }
+                        Index = turns.Count,
+                        Prompt = Clip(prompt, MaxTextChars),
+                        Time = e.TryGetProperty("timestamp", out var ts) && ts.TryGetDateTime(out var t) ? t : null,
+                    });
+                break;
+            case "assistant":
+                if (turns.Count == 0 || !e.TryGetProperty("message", out var m) ||
+                    !m.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array) return;
+                var items = turns[^1].Items;
+                foreach (var part in content.EnumerateArray())
+                {
+                    switch (Str(part, "type"))
+                    {
+                        case "text" when Str(part, "text") is { } text && !string.IsNullOrWhiteSpace(text):
+                            items.Add(new ConversationItem("text", Clip(text.Trim(), MaxTextChars)));
+                            break;
+                        case "tool_use":
+                            items.Add(new ConversationItem("tool", ToolDetail(part), Str(part, "name") ?? "tool"));
+                            break;
                     }
-                    break;
-            }
+                }
+                break;
         }
     }
 
@@ -306,7 +316,7 @@ internal static partial class ConversationReader
         return "";
     }
 
-    private static string Clip(string s, int max) => s.Length <= max ? s : s[..max] + "…";
+    internal static string Clip(string s, int max) => s.Length <= max ? s : s[..max] + "…";
 
     private static string? Str(JsonElement e, string name) =>
         e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
