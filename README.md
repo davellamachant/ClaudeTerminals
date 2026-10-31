@@ -219,7 +219,7 @@ plugins\
   - `"sessionTab"`: a session tab's right-click menu.
 
   In the project and session menus, plugins' items are under a **Plugins** heading at the end, each with its plugin's name beside it.
-- **`access`:** what it asks to see beyond its own page, one or a list. There's one kind, `"sessions"` (see **Seeing your sessions** below). Leave it out and it sees nothing.
+- **`access`:** what it asks for beyond its own page, one or a list: `"sessions"` (to see them), `"ask"` (to put questions about them to Claude) and `"type"` (to type into them); see **Seeing your sessions** below. Leave it out and it gets nothing.
 - **`toolbar`:** a button in the title bar, after New Session and Git Changes, set apart from them. **`icon`** is an image file in the plugin's folder (SVG, PNG, ICO, GIF, JPEG or WebP, up to 64 KB); the button shows only the icon, never text, so it can't pass for one of the app's own buttons. Its tooltip is the plugin's name, then **`tooltip`** if given. Clicking it opens the plugin and sends **`command`**, if given, with the open session as context. The plugin's badge shows on its button too. Right-click the button › **Hide this button** to hide it; the plugin's **Show its title bar button** in the palette menu brings it back.
 
 **Talking to the app.** A plugin and the app exchange a few messages, each `{ type: 'claude-terminals:<name>', … }`. Listen with `addEventListener('message', …)`; send with `parent.postMessage(…, '*')`.
@@ -256,6 +256,20 @@ Without `access`, that's all a plugin learns. The session id tells clicks on dif
 | `showSession` `{ sessionId }` | Opens the session, as clicking its tab would. |
 
 [`samples/plugins/floor-plan`](samples/plugins/floor-plan) is a plugin that uses them: a project's sessions on a map of its code, each top-level folder a room and each session standing at the file it's working on, with a slider to rewind. To try it, copy the folder into your plugins folder.
+
+**Asking Claude about your sessions.** A plugin with `"access": ["sessions", "ask"]` can also put a question about your sessions to an agent. You're asked separately before it may, because each question runs Claude once, headless, with your own sign-in, the way *Suggest a commit message* does, and counts against your usage. The agent is the sessions' own when they all share one that can answer this way (Codex, say), otherwise Claude; it runs with no tools and saves no conversation, so it can't change anything. The question goes with the conversations of the sessions named: your prompts, what the agent answered and the tools it used, each session's newest turns first within a fixed budget, so an old or long conversation is cut short at the top. The plugin sees the answers. **Stop it asking Claude about your sessions** in the palette menu takes it away again.
+
+| Request | Answer |
+|---|---|
+| `ask` `{ question, ids, history }` | `{ answer, writer, sessions }`: the agent's answer (light Markdown), the name of the agent that wrote it, and the ids of the sessions it was about. `ids` names the sessions to ask about (stopped ones too: their saved conversations are read); `history` is earlier `[{ question, answer }]` of the same chat, the last eight, so a follow-up makes sense. |
+
+**Typing into your sessions.** A plugin with `"access": ["type"]` can type into a session's terminal, as if you had pasted the text, and press Enter for you when it says so. You're asked before it may, since what it types reaches the agent there as a prompt; a toast says each time it types. It can't type into a session that has stopped at a question needing your answer, so it can never answer one for you. Text with several lines is pasted as one piece into Claude and Codex, which take a bracketed paste; a plain shell runs each line as it arrives, so a plugin should keep what it types into one to a single line. **Stop it typing into your sessions** in the palette menu takes it away again.
+
+| Request | Answer |
+|---|---|
+| `type` `{ sessionId, text, send }` | Types `text` (up to 20,000 characters) into the running session, and presses Enter when `send` is true: `{ sent }`. An error names why not: the session isn't running, or is waiting for your answer. |
+
+[`samples/plugins/ask`](samples/plugins/ask) uses all three: a chat in a tab (drag it beside a terminal) where you ask what each session is doing or waiting on, which one touched a file, or for a message to send one; each answer names the sessions it drew on, and can be typed into any running session, for you to send or sent straight away. Its title bar button and the **Ask about this session** item on a session's menu open it on that session. To try it, copy the folder into your plugins folder.
 
 **What a plugin can't do.** A plugin is only a page. It's given no terminals, files or Git, no sessions unless you allowed it to see them, and it can't reach the app:
 - it runs in a sandboxed frame with an origin of its own, so it can't read or change the app's page, or another plugin's;

@@ -4937,8 +4937,8 @@ function themeMenu(x, y) {
       { label: p.title, kbd: p.placement === 'panel' ? 'Side panel' : '', action: () => openPlugin(p.id) },
       ...p.menu.filter((m) => m.where.includes('palette')).map((m) => ({ label: [h('span', { class: 'menu-indent' }), m.label], action: () => openPlugin(p.id, m.command, { menu: 'palette' }) })),
       p.toolbar && hiddenPluginButtons.has(p.id) && { label: [h('span', { class: 'menu-indent' }), 'Show its title bar button'], action: () => setPluginButton(p.id, true) },
-      p.access.includes('sessions') && { label: [h('span', { class: 'menu-indent' }), pluginMayHave(p, 'sessions') ? 'Stop it seeing your sessions' : 'Let it see your sessions'],
-        action: () => setPluginAccess(p, 'sessions', !pluginMayHave(p, 'sessions')) },
+      ...p.access.filter((kind) => PLUGIN_ACCESS[kind]).map((kind) => ({ label: [h('span', { class: 'menu-indent' }), pluginMayHave(p, kind) ? PLUGIN_ACCESS[kind].stop : PLUGIN_ACCESS[kind].let],
+        action: () => setPluginAccess(p, kind, !pluginMayHave(p, kind)) })),
     ]),
     plugins.problems.length > 0 && { label: `${plugins.problems.length} couldn't be loaded`, kbd: 'Why?', action: () => toast(plugins.problems.join('\n'), true) },
     { label: plugins.list.length ? 'Open the plugins folder' : 'Add a plugin: open the plugins folder', action: () => request('plugins.openFolder') },
@@ -5426,8 +5426,45 @@ function renderPluginButtons() {
 
 // ---- access: what a plugin can see beyond its own page
 
+/** Each kind of access a plugin can ask for (PluginCatalog.AccessKinds): what the dialog says it would let the plugin do, and its palette menu items. */
+const PLUGIN_ACCESS = {
+  sessions: {
+    verb: 'see your sessions', let: 'Let it see your sessions', stop: 'Stop it seeing your sessions',
+    dialog: (p) => [
+      h('p', {}, `${p.title} is a plugin, from ${plugins.folder}\\${p.id}. It asks to see:`),
+      h('ul', {},
+        h('li', {}, 'your sessions: their names, projects and folders, and whether each is working or waiting for you;'),
+        h('li', {}, 'what Claude did in each: your prompts, the files it read and edited, the commands it ran and the questions it asked;'),
+        h('li', {}, 'how many files each top-level folder of their repositories holds.')),
+      h('p', {}, 'It can’t type into a session or change a file. But like any web page it could send what it sees to a website, so allow only a plugin you trust. The palette menu can stop it seeing them later.'),
+    ],
+  },
+  ask: {
+    verb: 'ask Claude about your sessions', let: 'Let it ask Claude about your sessions', stop: 'Stop it asking Claude about your sessions',
+    dialog: (p) => [
+      h('p', {}, `${p.title} is a plugin, from ${plugins.folder}\\${p.id}. It asks to put questions about your sessions to Claude:`),
+      h('ul', {},
+        h('li', {}, 'each question runs Claude (or a session’s own agent) once, headless, with your own sign-in, the way Suggest a commit message does, and counts against your usage;'),
+        h('li', {}, 'the question goes with the sessions’ conversations: your prompts, what the agent answered and the tools it used;'),
+        h('li', {}, 'the agent runs with no tools and saves no conversation, so it can’t change anything.')),
+      h('p', {}, 'The plugin sees the answers. Allow only a plugin you trust; the palette menu can stop it later.'),
+    ],
+  },
+  type: {
+    verb: 'type into your sessions', let: 'Let it type into your sessions', stop: 'Stop it typing into your sessions',
+    dialog: (p) => [
+      h('p', {}, `${p.title} is a plugin, from ${plugins.folder}\\${p.id}. It asks to type into your sessions:`),
+      h('ul', {},
+        h('li', {}, 'text goes into a running session’s terminal as if you had pasted it, for you to send, or sent for you (Enter pressed) when the plugin says so;'),
+        h('li', {}, 'what it types reaches the agent there as a prompt, so it can set a session to work;'),
+        h('li', {}, 'it can’t type into a session that has stopped at a question needing your answer.')),
+      h('p', {}, 'A toast says each time it types. Allow only a plugin you trust; the palette menu can stop it later.'),
+    ],
+  },
+};
+
 /**
- * The access you allowed each plugin, by plugin id (["sessions"]), kept; access you refused is only until the app
+ * The access you allowed each plugin, by plugin id (["sessions", "ask", "type"]), kept; access you refused is only until the app
  * restarts, so the plugin asks again then. A plugin is asked about only for what its plugin.json's "access" names.
  */
 const pluginAccess = store.get('pluginAccess', {});
@@ -5464,13 +5501,7 @@ function askPluginAccess(p, kind) {
       setPluginAccess(p, kind, yes);
       resolve(yes);
     };
-    openModal(`Let ${p.title} see your sessions?`, h('div', {},
-      h('p', {}, `${p.title} is a plugin, from ${plugins.folder}\\${p.id}. It asks to see:`),
-      h('ul', {},
-        h('li', {}, 'your sessions: their names, projects and folders, and whether each is working or waiting for you;'),
-        h('li', {}, 'what Claude did in each: your prompts, the files it read and edited, the commands it ran and the questions it asked;'),
-        h('li', {}, 'how many files each top-level folder of their repositories holds.')),
-      h('p', {}, 'It can’t type into a session or change a file. But like any web page it could send what it sees to a website, so allow only a plugin you trust. The palette menu can stop it seeing them later.')), [
+    openModal(`Let ${p.title} ${PLUGIN_ACCESS[kind].verb}?`, h('div', {}, ...PLUGIN_ACCESS[kind].dialog(p)), [
       h('button', { class: 'btn', 'data-autofocus': true, onclick: () => { answer(false); closeModal(); } }, 'Don’t allow'),
       h('button', { class: 'btn primary', onclick: () => { answer(true); closeModal(); } }, 'Allow'),
     ]);
@@ -5493,6 +5524,13 @@ const pluginSessionInfo = (s) => ({
  *                          version } that the plugin already has, so only what's new comes back
  *   folders { sessionId } → { root, folders: [{ name, files }] }, the session's repository's top-level folders, or null
  *   showSession { sessionId } → opens the session, as clicking its tab would
+ * With "ask" access (and "sessions"):
+ *   ask { question, ids, history } → { answer, writer, sessions }: an agent run headless (the sessions' own, or Claude)
+ *                          answers the question from the conversations of the sessions named; history is earlier
+ *                          [{ question, answer }] of the same chat, so a follow-up makes sense
+ * With "type" access:
+ *   type { sessionId, text, send } → types text into the session's terminal as if pasted, and presses Enter when send
+ *                          is true; refused while the session is stopped at a question needing your answer
  */
 async function pluginRequest(p, m) {
   const sessionArg = () => {
@@ -5500,11 +5538,11 @@ async function pluginRequest(p, m) {
     if (!s) throw new Error('There is no such session.');
     return s;
   };
-  const NEEDS = { sessions: 'sessions', activity: 'sessions', folders: 'sessions', showSession: 'sessions' };
+  const NEEDS = { sessions: 'sessions', activity: 'sessions', folders: 'sessions', showSession: 'sessions', ask: 'ask', type: 'type' };
   const kind = NEEDS[m.name];
   if (!kind) throw new Error(`There is no request "${m.name}".`);
   if (!p.access.includes(kind)) throw new Error(`Its plugin.json doesn't ask for "${kind}" access.`);
-  if (!await pluginAllowed(p, kind)) throw new Error(`It isn't allowed to see your ${kind}.`);
+  if (!await pluginAllowed(p, kind)) throw new Error(`It isn't allowed to ${PLUGIN_ACCESS[kind].verb}.`);
   switch (m.name) {
     case 'sessions': return state.sessions.map(pluginSessionInfo);
     case 'activity': {
@@ -5521,6 +5559,30 @@ async function pluginRequest(p, m) {
       showTerminalDoc();
       expand(s.id);
       return null;
+    }
+    case 'ask': {
+      if (!p.access.includes('sessions') || !await pluginAllowed(p, 'sessions')) throw new Error('Asking about sessions needs "sessions" access as well.');
+      const question = typeof m.question === 'string' ? m.question.trim().slice(0, 4000) : '';
+      if (!question) throw new Error('There is no question.');
+      const ids = (Array.isArray(m.ids) ? m.ids : []).filter((id) => typeof id === 'string' && state.byId.has(id)).slice(0, 50);
+      if (!ids.length) throw new Error('There are no sessions to ask about.');
+      const history = (Array.isArray(m.history) ? m.history : []).slice(-8)
+        .filter((x) => x && typeof x.question === 'string' && typeof x.answer === 'string')
+        .map((x) => ({ question: x.question.slice(0, 4000), answer: x.answer.slice(0, 4000) }));
+      const about = ids.map((id) => { const i = pluginSessionInfo(state.byId.get(id)); return { id, name: i.name, project: i.project, status: i.status }; });
+      return request('plugins.ask', { question, history, sessions: about });
+    }
+    case 'type': {
+      const s = sessionArg();
+      const text = typeof m.text === 'string' ? m.text.slice(0, 20000) : '';
+      if (!text) throw new Error('There is nothing to type.');
+      if (s.startsOnOpen || !s.running) throw new Error(`"${s.name}" isn't running.`);
+      if (s.asking) throw new Error(`"${s.name}" is waiting for your answer to a question, so nothing is typed into it.`);
+      const send = m.send === true;
+      s.term.paste(text);
+      if (send) setTimeout(() => post({ type: 'input', id: s.id, data: '\r' }), 150);
+      toast(`${p.title} typed into "${s.name}"${send ? ' and sent it' : ''}.`);
+      return { sent: send };
     }
   }
 }

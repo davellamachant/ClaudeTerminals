@@ -167,4 +167,13 @@ public class PluginCatalogTests : IDisposable
     [Fact]
     public void No_plugins_folder_means_no_plugins() =>
         Assert.Empty(PluginCatalog.Load(Path.Combine(folder, "none")).Plugins);
+
+    [Fact]
+    public void A_plugin_can_ask_for_asking_and_typing_too()
+    {
+        Plugin("ask", """{ "access": ["type", "ask", "sessions"] }""", "index.html");
+        var (plugins, problems) = PluginCatalog.Load(folder);
+        Assert.Empty(problems);
+        Assert.Equal(["sessions", "ask", "type"], plugins.Single().Access);   // in the catalog's order
+    }
 }

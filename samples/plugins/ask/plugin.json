@@ -1,0 +1,12 @@
+{
+  "title": "Ask",
+  "description": "A chat beside your sessions: ask what each is doing or waiting on, have a message drafted, and type it into any session",
+  "entry": "index.html",
+  "access": ["sessions", "ask", "type"],
+  "toolbar": { "icon": "ask.svg", "tooltip": "ask about your sessions", "command": "open" },
+  "menu": [
+    { "label": "Ask about your sessions", "command": "open", "where": ["palette"] },
+    { "label": "Ask about this session", "command": "open", "where": ["session", "sessionTab"] },
+    { "label": "Ask about this project", "command": "open", "where": ["project"] }
+  ]
+}

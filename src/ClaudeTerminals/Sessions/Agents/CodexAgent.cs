@@ -121,4 +121,6 @@ internal sealed partial class CodexAgent : AgentProfile
     /// <summary>The session's own conversation, which the app follows (Codex names no conversation for its process).</summary>
     public override Conversation? ReadConversation(TerminalSession session, int[] processIds) =>
         session.Info.Conversation is { } id ? CodexConversations.Read(id) : null;
+
+    public override Conversation? ReadSavedConversation(TerminalSession session) => ReadConversation(session, []);
 }

@@ -150,6 +150,9 @@ internal sealed partial class ClaudeAgent : AgentProfile
     /// <summary>The one Claude names for its process (it can be in another than the session's own until it has saved it).</summary>
     public override Conversation? ReadConversation(TerminalSession session, int[] processIds) => ConversationReader.ForProcesses(processIds);
 
+    public override Conversation? ReadSavedConversation(TerminalSession session) =>
+        session.Info.Conversation is { } id && ConversationReader.FindTranscript(id, session.Info.Directory) is { } path ? ConversationReader.Read(id, path) : null;
+
     private static string WithoutContinue(string command) => ContinueFlag().Replace(command.Trim(), "");
 
     [GeneratedRegex(@"\s+(?:-c|--continue)(?=\s|$)", RegexOptions.IgnoreCase)]

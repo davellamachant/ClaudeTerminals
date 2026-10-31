@@ -105,7 +105,7 @@ public sealed class CommitMessageServiceTests : IDisposable
     [InlineData("C:\\tools\\claude.exe -p", "C:\\tools\\claude.exe", "-p")]
     [InlineData("C:\\Windows\\system32\\cmd.exe /d /s /c \"\"C:\\npm\\claude.cmd\" -p\"", "C:\\Windows\\system32\\cmd.exe", "/d /s /c \"\"C:\\npm\\claude.cmd\" -p\"")]
     public void The_resolved_command_line_splits_into_program_and_arguments(string line, string program, string arguments) =>
-        Assert.Equal((program, arguments), CommitMessageService.SplitProgram(line));
+        Assert.Equal((program, arguments), Sessions.HeadlessAgent.SplitProgram(line));
 
     [Theory]
     [InlineData("codex", "codex")]
