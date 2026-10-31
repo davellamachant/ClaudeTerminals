@@ -354,7 +354,7 @@ Each notice in the file:
 - **id**: lowercase letters, digits, `.`, `_` and `-`; closing a notice remembers its id, so a changed notice needs a new one.
 - **text**: up to 400 characters. It wraps to fit the window; `\n` starts a new line (up to 4 lines).
 - **kind**: `tip` (the default), `offer` or `news`.
-- **color**: `accent` (the default), `blue`, `green`, `amber`, `red`, `purple`, `pink`, `grey`, or a `#rrggbb` of its own. It tints the line and colours the label and link; the text keeps the theme's colour.
+- **color**: `accent` (the default), `blue`, `green`, `amber`, `orange`, `red`, `purple`, `pink`, `grey`, or a `#rrggbb` of its own. It tints the line and colours the label and link; the text keeps the theme's colour.
 - **link** (optional): an `https` address; the label defaults to *Learn more*.
 - **from**, **until**, **minVersion**, **maxVersion** (optional): the first and last day (UTC) and the versions it shows for.
 

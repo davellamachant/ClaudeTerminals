@@ -40,6 +40,7 @@ public sealed class NoticeServiceTests
     [Theory]
     [InlineData("""{ "id": "a", "text": "Hi" }""", "accent")]
     [InlineData("""{ "id": "a", "text": "Hi", "color": "Amber" }""", "amber")]
+    [InlineData("""{ "id": "a", "text": "Hi", "color": "orange" }""", "orange")]
     [InlineData("""{ "id": "a", "text": "Hi", "color": "#1E90FF" }""", "#1e90ff")]
     public void A_notice_is_in_the_accent_colour_unless_it_names_another_or_its_own(string notice, string color) =>
         Assert.Equal(color, Assert.Single(Parse(notice)).Color);

@@ -1157,6 +1157,7 @@ svg.sparkline circle { fill: var(--accent); }
 :is(.notice-bar, .notice-row)[data-color="blue"] { --notice: #3b8eea; }
 :is(.notice-bar, .notice-row)[data-color="green"] { --notice: #2ea043; }
 :is(.notice-bar, .notice-row)[data-color="amber"] { --notice: #d29922; }
+:is(.notice-bar, .notice-row)[data-color="orange"] { --notice: #e8762d; }
 :is(.notice-bar, .notice-row)[data-color="red"] { --notice: #e5534b; }
 :is(.notice-bar, .notice-row)[data-color="purple"] { --notice: #8957e5; }
 :is(.notice-bar, .notice-row)[data-color="pink"] { --notice: #db61a2; }

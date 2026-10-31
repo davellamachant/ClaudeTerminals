@@ -40,7 +40,7 @@ internal static partial class NoticeService
     private const int MaxLines = 4;   // written as lines; a long one may wrap to more on a narrow window
 
     /// <summary>The colours the page has light and dark tones for.</summary>
-    internal static readonly string[] Colors = ["accent", "blue", "green", "amber", "red", "purple", "pink", "grey"];
+    internal static readonly string[] Colors = ["accent", "blue", "green", "amber", "orange", "red", "purple", "pink", "grey"];
 
     private static readonly HttpClient Http = CreateClient();
 

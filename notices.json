@@ -1,3 +1,28 @@
 {
-  "notices": []
+  "notices": [
+    {
+      "id": "llamalogger-lite-free-2026",
+      "kind": "offer",
+      "color": "orange",
+      "text": "Track exceptions in one place where your agent can find them - Check out Llama Logger.\nThrough Claude Terminals, you can get a Lite subscription free for 1 year.",
+      "link": {
+        "label": "Get Llama Logger Free for 1 Year",
+        "url": "https://buy.stripe.com/14AeVc5hQeBc2bDb4l9EI02?prefilled_promo_code=claudeterminals1002026"
+      },
+      "from": "2026-11-01",
+      "until": "2027-10-31",
+      "minVersion": "1.1.5"
+    },
+    {
+      "id": "tip-split-view",
+      "text": "Drag a tab to the side of a terminal to see both at once."
+    },
+    {
+      "id": "tip-side-panels",
+      "text": "Ask your agent to create a side panel with custom content."
+    }
+  ]
 }
+
+
+
