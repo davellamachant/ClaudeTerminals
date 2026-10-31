@@ -1,0 +1,72 @@
+# Signs notices.json (the tips and offers along the top of the app) on the agent that holds the company's SafeNet code
+# signing token, and uploads it with its signature, notices.json.p7s, to the downloads container of our public storage
+# account, under TerminalsData/, where the app reads them. The app shows notices only with a signature by our
+# certificate over exactly that file, so a notices.json changed in storage, or put there unsigned, shows nothing.
+#
+# Run by hand (Run pipeline) on main after changing notices.json there. Untick "Upload" for a trial run that only
+# signs, keeping both files on the run (Artifacts › notices).
+#
+# One-time setup in Azure DevOps:
+#   - A second pipeline, created from the GitHub repository with this file
+#     (Existing Azure Pipelines YAML file › /azure-pipelines-notices.yml).
+#   - A pipeline variable StorageAccount: the public storage account (as in azure-pipelines.yml, which builds it
+#     into the app). It's kept out of the repository.
+#   - The Azure Resource Manager service connection named in azureConnection below, permitted for this pipeline, whose
+#     identity has the Storage Blob Data Contributor role on the storage account.
+# The agent needs the .NET 10 SDK.
+
+trigger: none
+pr: none
+
+parameters:
+  - name: upload
+    displayName: 'Upload to storage (untick to only sign)'
+    type: boolean
+    default: true
+
+variables:
+  azureConnection: 'ClaudeTerminals-Storage' # the Azure service connection (Project settings › Service connections)
+
+pool:
+  name: 'SelfHostedPool'                     # the pool with the code signing agent (SafeNet token)
+
+steps:
+  - checkout: self
+    clean: true
+
+  - task: UseDotNet@2
+    displayName: '.NET 10 SDK'
+    inputs:
+      packageType: sdk
+      version: '10.x'
+
+  - task: PowerShell@2
+    displayName: 'Sign notices.json'
+    inputs:
+      pwsh: false   # Windows PowerShell: always on the agent
+      targetType: inline
+      script: |
+        $out = Join-Path '$(Build.ArtifactStagingDirectory)' 'notices'
+        New-Item -ItemType Directory -Force $out | Out-Null
+        Copy-Item notices.json $out
+        dotnet run tools/sign-notices.cs -- (Join-Path $out 'notices.json')
+        if ($LASTEXITCODE) { throw 'Signing notices.json failed.' }
+
+  - task: PublishPipelineArtifact@1
+    displayName: 'Keep the signed notices on the run'
+    inputs:
+      targetPath: '$(Build.ArtifactStagingDirectory)/notices'
+      artifact: 'notices'
+
+  # Both files as they are (AzCopy, signed in as the service connection), replacing the ones there. Until both have
+  # landed the app may see a file and a signature that don't match, and shows nothing until its next check.
+  - ${{ if parameters.upload }}:
+    - task: AzureFileCopy@6
+      displayName: 'Upload to downloads/TerminalsData'
+      inputs:
+        azureSubscription: '${{ variables.azureConnection }}'
+        SourcePath: '$(Build.ArtifactStagingDirectory)/notices/*'
+        Destination: AzureBlob
+        storage: '$(StorageAccount)'
+        ContainerName: 'downloads'
+        BlobPrefix: 'TerminalsData/'

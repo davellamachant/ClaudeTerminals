@@ -10,7 +10,10 @@ param(
     # The certificate is picked from the Windows certificate store by subject (on the agent the SafeNet token provides it).
     [string]$CertificateSubject = 'Llamachant Technology Ltd',
     # An RFC 3161 timestamp server, so signatures stay valid after the certificate expires.
-    [string]$TimestampServer
+    [string]$TimestampServer,
+    # The public storage account the app reads its notices from (the release pipeline's StorageAccount variable).
+    # Without it the app shows no notices.
+    [string]$NoticesStorageAccount
 )
 
 $ErrorActionPreference = 'Stop'
@@ -58,8 +61,10 @@ if (-not (Test-Path (Join-Path $root 'web\node_modules\monaco-editor'))) {
 }
 
 if (Test-Path $publishDir) { Remove-Item $publishDir -Recurse -Force }
+if ($NoticesStorageAccount) { Write-Host "Notices from the storage account $NoticesStorageAccount" }
+else { Write-Warning 'No -NoticesStorageAccount: this build shows no notices.' }
 dotnet publish $project -c Release -r win-x64 --self-contained true `
-    -p:PublishReadyToRun=true -p:DebugType=None -p:DebugSymbols=false -o $publishDir
+    -p:PublishReadyToRun=true -p:DebugType=None -p:DebugSymbols=false "-p:NoticesStorageAccount=$NoticesStorageAccount" -o $publishDir
 if ($LASTEXITCODE) { throw 'dotnet publish failed' }
 
 if ($Sign) {

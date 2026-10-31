@@ -1143,6 +1143,42 @@ svg.sparkline circle { fill: var(--accent); }
 }
 .field textarea.first-prompt:focus { border-color: var(--focus); }
 
+/* ---------------------------------------------------------------- notices */
+/* A suggestion under the title bar: quiet, one line, closed with the ×. Its colour is the accent unless the notice
+   names another (data-color) or brings a #rrggbb of its own (--notice, set on the element); the text stays the
+   theme's, with the label and link mixed towards it so they read on light and dark. */
+.notice-bar {
+  flex: none; display: flex; align-items: center; gap: 10px; min-height: 30px; padding: 0 4px 0 12px;
+  background: color-mix(in srgb, var(--notice) 12%, var(--chrome-2)); border-bottom: 1px solid var(--border-soft);
+  box-shadow: inset 3px 0 0 var(--notice); color: var(--text-dim); font-size: 12px;
+}
+:is(.notice-bar, .notice-row) { --notice: var(--accent); --notice-ink: color-mix(in srgb, var(--notice) 70%, var(--text)); }
+:is(.notice-bar, .notice-row)[data-color="accent"] { --notice-ink: var(--accent-strong); }
+:is(.notice-bar, .notice-row)[data-color="blue"] { --notice: #3b8eea; }
+:is(.notice-bar, .notice-row)[data-color="green"] { --notice: #2ea043; }
+:is(.notice-bar, .notice-row)[data-color="amber"] { --notice: #d29922; }
+:is(.notice-bar, .notice-row)[data-color="red"] { --notice: #e5534b; }
+:is(.notice-bar, .notice-row)[data-color="purple"] { --notice: #8957e5; }
+:is(.notice-bar, .notice-row)[data-color="pink"] { --notice: #db61a2; }
+:is(.notice-bar, .notice-row)[data-color="grey"] { --notice: #8b949e; }
+/* The list of every notice (Tips and offers…): each in its colour, the closed ones faded. */
+.notice-rows { display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; }
+.notice-row {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 8px 10px; border-radius: 6px;
+  background: color-mix(in srgb, var(--notice) 10%, transparent); box-shadow: inset 3px 0 0 var(--notice);
+}
+.notice-row.closed { opacity: .7; }
+.notice-row-head { align-self: stretch; display: flex; align-items: center; gap: 8px; min-height: 26px; }
+.notice-row-text { user-select: text; white-space: pre-line; }
+.notice-bar[hidden] { display: none; }
+.notice-kind { flex: none; display: inline-flex; align-items: center; gap: 5px; color: var(--notice-ink); font-weight: 600; }
+/* Wraps rather than cutting off; the notice's own \n start new lines. */
+.notice-text { flex: 0 1 auto; min-width: 0; padding: 6px 0; white-space: pre-line; overflow-wrap: anywhere; line-height: 1.45; color: var(--text); }
+.notice-link { flex: none; display: inline-flex; align-items: center; gap: 2px; color: var(--notice-ink); text-decoration: none; white-space: nowrap; }
+.notice-link:hover { text-decoration: underline; }
+.notice-link .ic { width: 12px; height: 12px; }
+.notice-close { flex: none; margin-left: auto; height: 24px; min-width: 24px; color: var(--text-dim); }
+
 /* ---------------------------------------------------------------- updates */
 .tb-btn.update-btn { color: var(--update-fg); background: color-mix(in srgb, var(--ok) 28%, transparent); border-radius: 4px; gap: 4px; }
 .tb-btn.update-btn:hover { background: color-mix(in srgb, var(--ok) 42%, transparent); }
