@@ -2785,6 +2785,8 @@ function fileSection(s, kind, title, files) {
           ? { label: 'Unstage', action: () => gitOp(s, 'git.unstage', folderFiles.map((f) => f.path)) }
           : { label: 'Stage', action: () => gitOp(s, 'git.stage', folderFiles.map((f) => f.path)) },
         undoableInFolder.length && { label: 'Undo Changes…', danger: true, action: () => confirmUndo(s, kind, undoableInFolder, folder) },
+        '-',
+        { label: 'Open in File Explorer', action: () => request('git.openFolder', { id: s.id, path: folder }) },
       ]);
     })];
 }
