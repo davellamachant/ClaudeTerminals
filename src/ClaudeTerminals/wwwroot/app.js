@@ -4917,6 +4917,22 @@ async function checkNotices() {
   renderNotice();
 }
 
+/** A notice's text, with each [label](https://…) in it a link that opens in the browser (the host has checked them). */
+function noticeText(text) {
+  const parts = [];
+  let at = 0;
+  for (const m of text.matchAll(/\[([^[\]\n]+)\]\(([^()\s]+)\)/g)) {
+    parts.push(text.slice(at, m.index));
+    const url = m[2];
+    parts.push(url.startsWith('https://')
+      ? h('a', { class: 'notice-inline-link', href: '#', title: url, onclick: (e) => { e.preventDefault(); request('openUrl', { uri: url }); } }, m[1])
+      : m[1]);
+    at = m.index + m[0].length;
+  }
+  parts.push(text.slice(at));
+  return parts;
+}
+
 // After one's closed, tips and offers wait for the next check (closing one shouldn't bring another); news doesn't.
 const noticeAllowed = (n) => !notices.dismissed.has(n.id) && (n.kind === 'news' || (notices.tips && !notices.waiting));
 
@@ -4935,7 +4951,7 @@ function renderNotice() {
   bar.style.setProperty('--notice', own ? n.color : '');
   bar.replaceChildren(
     h('span', { class: 'notice-kind' }, iconEl(kind.icon), kind.label),
-    h('span', { class: 'notice-text' }, n.text),
+    h('span', { class: 'notice-text' }, noticeText(n.text)),
     n.linkUrl && h('a', { class: 'notice-link', href: '#', title: n.linkUrl,
       onclick: (e) => { e.preventDefault(); request('openUrl', { uri: n.linkUrl }); } }, n.linkLabel, iconEl('chevR')),
     h('button', { class: 'tb-btn notice-close', title: "Close (this one won't show again)", 'aria-label': 'Close', onclick: () => dismissNotice(n) }, iconEl('close')),
@@ -4983,7 +4999,7 @@ function showNoticesDialog() {
           renderNotice();
           showNoticesDialog();
         } }, 'Show again')),
-      h('div', { class: 'notice-row-text' }, n.text),
+      h('div', { class: 'notice-row-text' }, noticeText(n.text)),
       n.linkUrl && h('a', { class: 'notice-link', href: '#', title: n.linkUrl,
         onclick: (e) => { e.preventDefault(); request('openUrl', { uri: n.linkUrl }); } }, n.linkLabel, iconEl('chevR')));
   });

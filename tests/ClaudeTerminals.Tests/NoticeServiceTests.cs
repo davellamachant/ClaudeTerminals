@@ -37,6 +37,13 @@ public sealed class NoticeServiceTests
         Assert.Empty(Parse("""{ "id": "a", "text": "1\n2\n3\n4\n5" }"""));
     }
 
+    [Fact]
+    public void A_notice_can_have_links_in_its_text_and_only_what_they_show_counts_towards_its_length()
+    {
+        var text = "Check out [www.llamalogger.com](https://www.llamalogger.com/" + new string('x', 400) + ").";
+        Assert.Equal(text, Assert.Single(Parse($$"""{ "id": "a", "text": "{{text}}" }""")).Text);
+    }
+
     [Theory]
     [InlineData("""{ "id": "a", "text": "Hi" }""", "accent")]
     [InlineData("""{ "id": "a", "text": "Hi", "color": "Amber" }""", "amber")]
@@ -66,6 +73,8 @@ public sealed class NoticeServiceTests
     [InlineData("""{ "id": "a", "text": "Hi", "color": "red; background: url(x)" }""")]
     [InlineData("""{ "id": "a", "text": "Hi", "link": { "url": "http://example.com/" } }""")]
     [InlineData("""{ "id": "a", "text": "Hi", "link": { "url": "javascript:alert(1)" } }""")]
+    [InlineData("""{ "id": "a", "text": "See [this](http://example.com/)" }""")]
+    [InlineData("""{ "id": "a", "text": "See [this](javascript:void0)" }""")]
     public void A_malformed_notice_is_left_out(string notice) => Assert.Empty(Parse(notice));
 
     [Fact]

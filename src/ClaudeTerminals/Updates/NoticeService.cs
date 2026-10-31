@@ -133,9 +133,25 @@ internal static partial class NoticeService
     [GeneratedRegex(@"^#[0-9a-fA-F]{6}$")]
     private static partial Regex HexColor();
 
+    /// <summary>A link in the text, written as in Markdown: [what's shown](https://…). The page finds them the same way.</summary>
+    [GeneratedRegex(@"\[([^\[\]\n]+)\]\(([^()\s]+)\)")]
+    private static partial Regex TextLink();
+
+    /// <summary>The text as shown, with each link's label in its place; null if a link in it isn't https.</summary>
+    private static string? Shown(string text)
+    {
+        var ok = true;
+        var shown = TextLink().Replace(text, m =>
+        {
+            ok &= Uri.TryCreate(m.Groups[2].Value, UriKind.Absolute, out var u) && u.Scheme == Uri.UriSchemeHttps;
+            return m.Groups[1].Value;
+        });
+        return ok ? shown : null;
+    }
+
     /// <summary>
     /// The notices meant for <paramref name="version"/> on <paramref name="now"/>. One that's malformed (no id or
-    /// text, an unknown kind, a link that isn't https) is left out rather than shown half-right.
+    /// text, an unknown kind, a link, or a link in its text, that isn't https) is left out rather than shown half-right.
     /// </summary>
     internal static List<Notice> Parse(string json, Version version, DateTime now)
     {
@@ -151,7 +167,7 @@ internal static partial class NoticeService
             if (text?.Count(c => c == '\n') >= MaxLines) continue;
             var kind = Str(n, "kind") ?? "tip";
             if (id == null || !IdPattern().IsMatch(id) || !ids.Add(id)) continue;
-            if (string.IsNullOrEmpty(text) || text.Length > MaxText) continue;
+            if (string.IsNullOrEmpty(text) || Shown(text) is not { Length: <= MaxText }) continue;
             if (kind is not ("tip" or "offer" or "news")) continue;
             var color = Str(n, "color")?.Trim().ToLowerInvariant() ?? "accent";
             if (!Colors.Contains(color) && !HexColor().IsMatch(color)) continue;

@@ -352,7 +352,7 @@ Each notice in the file:
 ```
 
 - **id**: lowercase letters, digits, `.`, `_` and `-`; closing a notice remembers its id, so a changed notice needs a new one.
-- **text**: up to 400 characters. It wraps to fit the window; `\n` starts a new line (up to 4 lines).
+- **text**: up to 400 characters. It wraps to fit the window; `\n` starts a new line (up to 4 lines). A link in the text is written as in Markdown, `[www.llamalogger.com](https://www.llamalogger.com)`, and must be `https`; only what it shows counts towards the 400.
 - **kind**: `tip` (the default), `offer` or `news`.
 - **color**: `accent` (the default), `blue`, `green`, `amber`, `orange`, `red`, `purple`, `pink`, `grey`, or a `#rrggbb` of its own. It tints the line and colours the label and link; the text keeps the theme's colour.
 - **link** (optional): an `https` address; the label defaults to *Learn more*.
