@@ -11,8 +11,6 @@
 #   - The GitHub service connection named in githubConnection below, with access to the repository and permitted
 #     for this pipeline.
 #   - Optionally a pipeline variable TimeStampServer; without it Sectigo's (the certificate's CA) is used.
-#   - A pipeline variable StorageAccount: the public storage account the app reads its notices from (as in
-#     azure-pipelines-notices.yml). The release fails without it.
 # The agent needs the .NET 10 SDK, Node.js (npm), Inno Setup 6 and the Windows SDK's signtool.
 
 # Releases are started by hand: no pushes, tags or pull requests start this pipeline.
@@ -94,13 +92,9 @@ steps:
         $server = $env:TIMESTAMP_SERVER
         if (-not $server -or $server.StartsWith('$(')) { $server = 'http://timestamp.sectigo.com' }
         Write-Host "Timestamp server: $server"
-        # The storage account the app reads its notices from: a pipeline variable, kept out of the repository.
-        $account = $env:STORAGE_ACCOUNT
-        if (-not $account -or $account.StartsWith('$(')) { throw 'Set the StorageAccount pipeline variable (the public storage account the notices are read from).' }
-        & ./publish.ps1 -Sign -TimestampServer $server -NoticesStorageAccount $account
+        & ./publish.ps1 -Sign -TimestampServer $server
     env:
       TIMESTAMP_SERVER: $(TimeStampServer)
-      STORAGE_ACCOUNT: $(StorageAccount)
 
   - task: PublishPipelineArtifact@1
     displayName: 'Keep the signed installer on the run'

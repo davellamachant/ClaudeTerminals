@@ -334,7 +334,7 @@ A few seconds after starting, and every 6 hours, the app checks this repository'
 
 ### Tips and offers
 
-Now and then a line under the title bar suggests something: a **Tip** about the app, an **Offer** (something from someone else, such as a free subscription), or **News**. They come from `notices.json` in the `downloads` container of our public storage account, under `TerminalsData/` (always that address: the release pipeline builds the account's name into the app from its `StorageAccount` variable, and a build from source without it shows no notices), read a few seconds after starting and every 30 minutes (an anonymous request, like the update check). One shows at a time; its × closes it for good. *Show tips and offers*, in the version number's menu or the line's right-click menu, turns tips and offers off; news still shows. *Tips and offers…*, in the same menus, lists every notice that's current, in full and with its link, and shows one you closed again.
+Now and then a line under the title bar suggests something: a **Tip** about the app, an **Offer** (something from someone else, such as a free subscription), or **News**. They come from `https://downloads.llamachant.com/downloads/TerminalsData/notices.json` (always that address), read a few seconds after starting and every 30 minutes (an anonymous request, like the update check). One shows at a time; its × closes it for good. *Show tips and offers*, in the version number's menu or the line's right-click menu, turns tips and offers off; news still shows. *Tips and offers…*, in the same menus, lists every notice that's current, in full and with its link, and shows one you closed again.
 
 Each notice in the file:
 

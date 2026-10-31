@@ -9,8 +9,8 @@
 # One-time setup in Azure DevOps:
 #   - A second pipeline, created from the GitHub repository with this file
 #     (Existing Azure Pipelines YAML file › /azure-pipelines-notices.yml).
-#   - A pipeline variable StorageAccount: the public storage account (as in azure-pipelines.yml, which builds it
-#     into the app). It's kept out of the repository.
+#   - A pipeline variable StorageAccount: the public storage account behind downloads.llamachant.com, where the app
+#     reads the notices. It's kept out of the repository.
 #   - The Azure Resource Manager service connection named in azureConnection below, permitted for this pipeline, whose
 #     identity has the Storage Blob Data Contributor role on the storage account.
 # The agent needs the .NET 10 SDK.

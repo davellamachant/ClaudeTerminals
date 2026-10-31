@@ -86,15 +86,6 @@ public sealed class NoticeServiceTests
         Assert.Equal(["First", "Second"], found.Select(n => n.Text));
     }
 
-    [Theory]
-    [InlineData("ourpublicstore", "https://ourpublicstore.blob.core.windows.net/downloads/TerminalsData/notices.json")]
-    [InlineData(null, null)]                         // a build from source: no notices
-    [InlineData("", null)]
-    [InlineData("evil.example.com/x?", null)]        // only an account name, never an address
-    [InlineData("UPPERCASE", null)]
-    public void The_notices_come_from_the_storage_account_built_into_the_app(string? account, string? url) =>
-        Assert.Equal(url, NoticeService.FeedFor(account));
-
     [Fact]
     public void A_file_without_notices_has_none() =>
         Assert.Empty(NoticeService.Parse("{}", V, Now));
