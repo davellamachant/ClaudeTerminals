@@ -33,12 +33,6 @@
     <InternalsVisibleTo Include="ClaudeTerminals.Tests" />
   </ItemGroup>
 
-  <!-- The storage account the notices are read from (see NoticeService), given by the release pipeline
-       (-p:NoticesStorageAccount=…) rather than kept in the repository. A build without it shows no notices. -->
-  <ItemGroup Condition="'$(NoticesStorageAccount)' != ''">
-    <AssemblyMetadata Include="NoticesStorageAccount" Value="$(NoticesStorageAccount)" />
-  </ItemGroup>
-
   <!-- Third-party front-end libraries come from web/node_modules (run `npm install` in /web). -->
   <ItemGroup>
     <XtermFiles Include="$(WebDir)\node_modules\@xterm\xterm\lib\xterm.js;$(WebDir)\node_modules\@xterm\xterm\css\xterm.css" />

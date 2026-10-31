@@ -1,5 +1,4 @@
 using System.Net.Http.Headers;
-using System.Reflection;
 using System.Security.Cryptography;
 using System.Security.Cryptography.Pkcs;
 using System.Security.Cryptography.X509Certificates;
@@ -20,21 +19,8 @@ internal sealed record Notice(string Id, string Kind, string Text, string? LinkL
 /// </summary>
 internal static partial class NoticeService
 {
-    /// <summary>
-    /// Only ever this file, in our public storage account: nothing on the machine can point the app elsewhere. The
-    /// account is built into the app by the release pipeline (NoticesStorageAccount); without it there are no notices.
-    /// </summary>
-    internal static readonly string? FeedUrl = FeedFor(Assembly.GetExecutingAssembly()
-        .GetCustomAttributes<AssemblyMetadataAttribute>()
-        .FirstOrDefault(a => a.Key == "NoticesStorageAccount")?.Value);
-
-    [GeneratedRegex("^[a-z0-9]{3,24}$")]
-    private static partial Regex StorageAccountName();
-
-    internal static string? FeedFor(string? storageAccount) =>
-        storageAccount != null && StorageAccountName().IsMatch(storageAccount)
-            ? $"https://{storageAccount}.blob.core.windows.net/downloads/TerminalsData/notices.json"
-            : null;
+    /// <summary>Only ever this file, on our own download site: nothing on the machine can point the app elsewhere.</summary>
+    internal const string FeedUrl = "https://downloads.llamachant.com/downloads/TerminalsData/notices.json";
 
     private const int MaxText = 400;
     private const int MaxLines = 4;   // written as lines; a long one may wrap to more on a narrow window
@@ -58,7 +44,6 @@ internal static partial class NoticeService
     /// </summary>
     public static async Task<IReadOnlyList<Notice>> CheckAsync(CancellationToken ct = default)
     {
-        if (FeedUrl == null) return [];   // a build from source, without our storage account
         var json = GetAsync(FeedUrl, ct);
         var signature = GetAsync(FeedUrl + ".p7s", ct);
         if (await json is not { } content || await signature is not { } sig || !Verify(content, sig)) return [];
