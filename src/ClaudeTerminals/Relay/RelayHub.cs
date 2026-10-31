@@ -3,7 +3,8 @@ namespace ClaudeTerminals.Relay;
 /// <summary>A session as the relay knows it: what another session is told about it, and what rules are judged by.</summary>
 /// <param name="Project">Its project's id (sessions in the same project share it), or null.</param>
 /// <param name="ProjectName">That project's name, as other sessions are told it.</param>
-internal sealed record RelayPeer(string Id, string Name, string? Project, string? ProjectName, string? Agent, bool Running);
+/// <param name="Inbox">Whether others may message it first (a session always; a plugin only with "inbox": true).</param>
+internal sealed record RelayPeer(string Id, string Name, string? Project, string? ProjectName, string? Agent, bool Running, bool Inbox = true);
 
 /// <param name="ReplyTo">The message this answers, if any (which lets it through: see <see cref="RelayHub.Send"/>).</param>
 /// <param name="Thread">The first message of the exchange it's part of (its own id when it starts one).</param>
@@ -71,6 +72,12 @@ internal sealed class RelayHub
 
     public RelayPolicy Policy => policy;
 
+    /// <summary>
+    /// Decides for messages the rules don't cover (to or from a plugin): Allow or Deny, or null to leave it to the rules. Given
+    /// the sender, the receiver and whether it's a reply. It can refuse even a reply.
+    /// </summary>
+    public Func<RelayPeer, RelayPeer, bool, RelayDecision?>? Gate { get; set; }
+
     /// <summary>A pair of sessions has a first message waiting for your answer.</summary>
     public event Action<RelayAsk>? Asked;
 
@@ -129,7 +136,8 @@ internal sealed class RelayHub
         {
             var me = peers.GetValueOrDefault(from);
             return peers.Values.Where(p => p.Id != from)
-                .Select(p => (p, policy.Paused ? RelayDecision.Deny : policy.Decide(from, p.Id, SameProject(me, p)).Decision)).ToList();
+                .Select(p => (p, policy.Paused ? RelayDecision.Deny
+                    : (me != null ? Gate?.Invoke(me, p, false) : null) ?? policy.Decide(from, p.Id, SameProject(me, p)).Decision)).ToList();
         }
     }
 
@@ -164,7 +172,8 @@ internal sealed class RelayHub
             var id = Guid.NewGuid().ToString("N")[..12];
             var message = new RelayMessage(id, from, target.Id, text, t, parent?.Id, parent?.Thread ?? id, (parent?.Turn ?? 0) + 1);
             var isReply = parent != null && t - parent.Sent < ReplyWindow;
-            var decision = isReply ? RelayDecision.Allow : policy.Decide(from, target.Id, SameProject(me, target)).Decision;
+            var gated = Gate?.Invoke(me, target, isReply);
+            var decision = gated == RelayDecision.Deny ? RelayDecision.Deny : isReply ? RelayDecision.Allow : gated ?? policy.Decide(from, target.Id, SameProject(me, target)).Decision;
             switch (decision)
             {
                 case RelayDecision.Deny:

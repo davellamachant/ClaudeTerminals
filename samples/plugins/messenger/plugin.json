@@ -1,0 +1,11 @@
+{
+  "title": "Messenger",
+  "description": "Send a message to a Claude or Codex session and see the answers, or the messages sessions send it",
+  "entry": "index.html",
+  "placement": "panel",
+  "access": ["message"],
+  "inbox": true,
+  "menu": [
+    { "label": "Message this session", "command": "to", "where": ["session", "sessionTab"] }
+  ]
+}

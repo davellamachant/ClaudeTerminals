@@ -150,6 +150,7 @@ host.addEventListener('message', (e) => {
     case 'relay': relayChanged(m.state); break;
     case 'relay.ask': askRelay(m.from, m.to); break;
     case 'relay.message': onRelayMessage(m); break;
+    case 'plugins.grants': applyGrants(m.grants); break;
   }
 });
 
@@ -5598,20 +5599,81 @@ const PLUGIN_ACCESS = {
       h('p', {}, 'It can’t type into a session or change a file. But like any web page it could send what it sees to a website, so allow only a plugin you trust. You can change your answer any time in Permissions, on the palette menu.'),
     ],
   },
+  message: {
+    verb: 'message your sessions', title: 'Message your sessions',
+    about: 'Send messages to the Claude and Codex sessions in the projects you choose, and read their answers' +
+      ' (and, if it takes messages, ones they send it first). Its messages reach an agent as from a plugin, not from you.',
+    dialog: (p) => [
+      h('p', {}, `${p.title} is a plugin, from ${plugins.folder}\\${p.id}. It asks to message your sessions:`),
+      h('ul', {},
+        h('li', {}, 'it can send a message to the Claude or Codex session in a project you choose here, which that agent reads as a message from a plugin, not as your prompt, and may act on;'),
+        h('li', {}, 'it reads the answers they send back' + (p.inbox ? ', and messages they send it first (it takes messages);' : ';')),
+        h('li', {}, 'every message is in Permissions › Messages.')),
+      h('p', {}, 'A message can ask an agent to do things, so allow only a plugin you trust. You can change your answer any time in Permissions, on the palette menu.'),
+    ],
+  },
 };
 
 /**
- * What you decided for each plugin, by plugin id: the kinds you allowed (pluginAccess) and the kinds you refused
- * (pluginDenied), both kept. A kind in neither is asked about the first time the plugin needs it. A plugin is asked
- * about only for what its plugin.json's "access" names. The Permissions view shows and changes all of it.
+ * What you decided for each plugin, as the host keeps it (PluginGrants, in plugin-grants.json), by plugin id:
+ * - pluginAccess / pluginDenied: the kinds you allowed and refused; a kind in neither is asked about the first time the
+ *   plugin needs it, and only kinds its plugin.json's "access" names;
+ * - pluginScope: the projects whose sessions it sees ({ projects: [project id, or NO_PROJECT] }); none there means every
+ *   project, including ones you add later (what a plugin allowed before projects could be chosen keeps);
+ * - pluginHidden: sessions you hid from it one by one, on top of that;
+ * - pluginChanged: plugins whose plugin.json changed since you allowed them, so what you allowed is asked again.
+ * A session it doesn't see is left out of its list, and asking about one is answered as if there were no such session.
+ * Changes here go to the host, which sends back what it kept (plugins.grants); the Permissions view shows all of it.
  */
-const pluginAccess = store.get('pluginAccess', {});
-const pluginDenied = store.get('pluginDenied', {});
+const NO_PROJECT = 'none';
+const pluginAccess = {}, pluginDenied = {}, pluginScope = {}, pluginHidden = {};
+const pluginChanged = new Set();
 const pluginAsking = new Map();    // 'id|kind' → the answer, while you're being asked
+
+/** The host's answers about plugins, in place of what was here. */
+function applyGrants(grants) {
+  for (const map of [pluginAccess, pluginDenied, pluginScope, pluginHidden]) for (const k of Object.keys(map)) delete map[k];
+  pluginChanged.clear();
+  for (const [id, g] of Object.entries(grants ?? {})) {
+    if (g.allowed?.length) pluginAccess[id] = g.allowed;
+    if (g.denied?.length) pluginDenied[id] = g.denied;
+    if (g.projects) pluginScope[id] = { projects: g.projects };
+    if (g.hidden?.length) pluginHidden[id] = g.hidden;
+    if (g.changed) pluginChanged.add(id);
+  }
+  checkPluginSight();
+  permissionsChanged();
+}
+
+/**
+ * Read once at start, before any plugin is answered. Answers this page kept itself (before the host kept them) are
+ * handed to the host the first time, and then forgotten here.
+ */
+const grantsReady = (async () => {
+  const OLD = ['pluginAccess', 'pluginDenied', 'pluginScope', 'pluginHidden'];
+  try {
+    const m = await request('plugins.grants');
+    const old = OLD.map((k) => store.get(k, null));
+    if (old.some(Boolean)) {
+      if (!Object.keys(m.grants ?? {}).length) {
+        const [allowed, denied, scope, hidden] = old.map((x) => x ?? {});
+        const ids = new Set([allowed, denied, scope, hidden].flatMap(Object.keys));
+        await request('plugins.grants.import', { grants: Object.fromEntries([...ids].map((id) => [id,
+          { allowed: allowed[id] ?? [], denied: denied[id] ?? [], projects: scope[id]?.projects ?? null, hidden: hidden[id] ?? [] }])) });
+        Object.assign(m, await request('plugins.grants'));
+      }
+      for (const k of OLD) { try { localStorage.removeItem('ct.' + k); } catch { /* gone anyway */ } }
+    }
+    applyGrants(m.grants);
+  } catch (e) { console.error('Your answers about plugins could not be read', e); }
+})();
 
 /** 'allow', 'deny' or 'ask' (not decided yet). By id, so a plugin no longer installed still has its answers. */
 const pluginAccessState = (id, kind) => pluginAccess[id]?.includes(kind) ? 'allow' : pluginDenied[id]?.includes(kind) ? 'deny' : 'ask';
 const pluginMayHave = (p, kind) => p.access.includes(kind) && pluginAccessState(p.id, kind) === 'allow';
+
+/** Tells the host; what it kept comes back as plugins.grants. */
+const sendGrant = (name, args) => request(name, args).catch((e) => toast(e.message, true));
 
 /** Sets what plugin id may do with kind: 'allow', 'deny' or 'ask' (forget the answer, so it's asked again). */
 function setPluginAccess(id, kind, to) {
@@ -5623,8 +5685,8 @@ function setPluginAccess(id, kind, to) {
   };
   put(pluginAccess, to === 'allow');
   put(pluginDenied, to === 'deny');
-  store.set('pluginAccess', pluginAccess);
-  store.set('pluginDenied', pluginDenied);
+  if (to === 'allow') pluginChanged.delete(id);
+  sendGrant('plugins.grant', { id, kind, state: to });
   // Taken away: the page starts over, so it no longer holds what it was shown.
   const f = pluginFrames.get(id);
   if (was === 'allow' && to !== 'allow' && f) { f.ready = false; f.frame.src = f.frame.src; }
@@ -5634,27 +5696,11 @@ function setPluginAccess(id, kind, to) {
 
 /** Forgets every answer about a plugin (one no longer installed). */
 function forgetPlugin(id) {
-  delete pluginAccess[id];
-  delete pluginDenied[id];
-  delete pluginHidden[id];
-  delete pluginScope[id];
-  store.set('pluginAccess', pluginAccess);
-  store.set('pluginDenied', pluginDenied);
-  store.set('pluginHidden', pluginHidden);
-  store.set('pluginScope', pluginScope);
+  for (const map of [pluginAccess, pluginDenied, pluginScope, pluginHidden]) delete map[id];
+  pluginChanged.delete(id);
+  sendGrant('plugins.forget', { id });
   permissionsChanged();
 }
-
-/**
- * Which sessions a plugin allowed to see your sessions sees, kept by plugin id:
- * - pluginScope: the projects it sees ({ projects: [project id, or NO_PROJECT] }); none there means every project,
- *   including ones you add later (what a plugin allowed before projects could be chosen keeps);
- * - pluginHidden: sessions you hid from it one by one, on top of that.
- * A session it doesn't see is left out of its list, and asking about one is answered as if there were no such session.
- */
-const NO_PROJECT = 'none';
-const pluginScope = store.get('pluginScope', {});
-const pluginHidden = store.get('pluginHidden', {});
 
 /** The project key a session counts under for a plugin's projects: its project's id, or NO_PROJECT. */
 const scopeKeyOf = (s) => (groupOf(s) === UNKNOWN ? NO_PROJECT : s.project);
@@ -5688,35 +5734,22 @@ function setPluginSeesSession(id, sessionId, sees) {
   const hidden = new Set(pluginHidden[id] ?? []);
   if (sees) hidden.delete(sessionId); else hidden.add(sessionId);
   if (hidden.size) pluginHidden[id] = [...hidden]; else delete pluginHidden[id];
-  store.set('pluginHidden', pluginHidden);
+  sendGrant('plugins.hidden', { id, sessionId, hidden: !sees });
   checkPluginSight();
   permissionsChanged();
 }
 
 /** Sets the projects a plugin sees: a list of project ids (and NO_PROJECT), or null for every project. */
 function setPluginScope(id, projects) {
-  if (projects) pluginScope[id] = { projects: [...new Set(projects)] }; else delete pluginScope[id];
-  store.set('pluginScope', pluginScope);
+  const list = projects ? [...new Set(projects)] : null;
+  if (list) pluginScope[id] = { projects: list }; else delete pluginScope[id];
+  sendGrant('plugins.projects', { id, projects: list });
   checkPluginSight();
   permissionsChanged();
 }
 
-/** Drops sessions and projects since removed from what plugins see, then checks who no longer sees what. */
+/** Sessions or projects came or went (the host drops those gone from its answers): check who no longer sees what. */
 function prunePluginHidden() {
-  let changed = false;
-  for (const [id, list] of Object.entries(pluginHidden)) {
-    const kept = list.filter((sid) => state.byId.has(sid));
-    if (kept.length === list.length) continue;
-    changed = true;
-    if (kept.length) pluginHidden[id] = kept; else delete pluginHidden[id];
-  }
-  if (changed) store.set('pluginHidden', pluginHidden);
-  let scoped = false;
-  for (const scope of Object.values(pluginScope)) {
-    const kept = scope.projects.filter((k) => k === NO_PROJECT || state.projects.some((pr) => pr.id === k));
-    if (kept.length !== scope.projects.length) { scope.projects = kept; scoped = true; }
-  }
-  if (scoped) store.set('pluginScope', pluginScope);
   checkPluginSight();
 }
 
@@ -5738,7 +5771,7 @@ function scopePicker(id, ok = () => {}) {
   const had = pluginScope[id];
   const open = state.byId.get(state.expandedId) ?? state.byId.get(state.currentId);
   const ticked = new Set(had ? had.projects : open ? [scopeKeyOf(open)] : []);
-  let all = !!(pluginAccess[id]?.includes('sessions') && !had);
+  let all = !!(pluginAccess[id]?.length && !had);   // allowed before projects could be chosen: every project
   const keys = [...state.projects.map((pr) => ({ key: pr.id, name: pr.name, color: projectColor(pr) })),
     ...(state.sessions.some((s) => scopeKeyOf(s) === NO_PROJECT) || ticked.has(NO_PROJECT) ? [{ key: NO_PROJECT, name: 'Sessions with no project', color: null }] : [])];
   const boxes = h('div', { class: 'scope-boxes' }, keys.map((k) => h('label', { class: 'perms-radio' },
@@ -5772,10 +5805,11 @@ function changePluginScope(p) {
 }
 
 /** Whether the plugin may use kind: allowed before, or you allow it now (asked once at a time, and not again once refused). */
-function pluginAllowed(p, kind) {
-  if (!p.access.includes(kind)) return Promise.resolve(false);
+async function pluginAllowed(p, kind) {
+  if (!p.access.includes(kind)) return false;
+  await grantsReady;   // the host's answers, not an empty start
   const st = pluginAccessState(p.id, kind);
-  if (st !== 'ask') return Promise.resolve(st === 'allow');
+  if (st !== 'ask') return st === 'allow';
   const key = p.id + '|' + kind;
   if (!pluginAsking.has(key)) pluginAsking.set(key, askPluginAccess(p, kind).finally(() => pluginAsking.delete(key)));
   return pluginAsking.get(key);
@@ -5793,7 +5827,7 @@ function askPluginAccess(p, kind) {
       resolve(yes);
     };
     let allowBtn;
-    const picker = kind === 'sessions' ? scopePicker(p.id, (enabled) => { if (allowBtn) allowBtn.disabled = !enabled; }) : null;
+    const picker = kind === 'sessions' || kind === 'message' ? scopePicker(p.id, (enabled) => { if (allowBtn) allowBtn.disabled = !enabled; }) : null;
     allowBtn = h('button', { class: 'btn primary', onclick: () => { answer(true); closeModal(); } }, 'Allow');
     openModal(`Let ${p.title} ${PLUGIN_ACCESS[kind].verb}?`, h('div', {}, ...PLUGIN_ACCESS[kind].dialog(p), picker?.el), [
       h('button', { class: 'btn', 'data-autofocus': true, onclick: () => { answer(false); closeModal(); } }, 'Don’t allow'),
@@ -5880,7 +5914,7 @@ async function loadRelayLog() {
 /** The log, newest first, for every session or the one picked; a message opens to its whole text. */
 function permsMessages() {
   if (permsView.logVersion !== relay.logVersion) loadRelayLog();
-  const name = (id) => state.byId.get(id)?.name ?? 'a closed session';
+  const name = relayName;
   const pick = permsView.logFor;
   const entries = (permsView.log ?? []).filter((e) => !pick || e.from === pick || e.to === pick);
   const agents = state.sessions.filter((s) => agentOf(s.command));
@@ -5923,13 +5957,14 @@ function permsByPlugin() {
   }
   return [
     ...asking.map((p) => h('section', { class: 'perms-card' },
-      h('header', {}, iconEl('plug'), h('b', {}, p.title), h('span', { class: 'dim', title: 'Its folder' }, `${plugins.folder}\\${p.id}`)),
+      h('header', {}, iconEl('plug'), h('b', {}, p.title), h('span', { class: 'dim', title: 'Its folder' }, `${plugins.folder}\\${p.id}`),
+        pluginChanged.has(p.id) && h('span', { class: 'chip perms-waiting', title: 'What you allowed is asked again: its plugin.json changed since' }, 'Changed since you allowed it')),
       p.access.map((kind) => {
         const hidden = kind === 'sessions' ? (pluginHidden[p.id] ?? []).map((id) => state.byId.get(id)).filter(Boolean) : [];
         return h('div', { class: 'perms-row' },
           h('div', { class: 'perms-what' }, h('b', {}, PLUGIN_ACCESS[kind]?.title ?? kind), h('span', { class: 'dim' }, PLUGIN_ACCESS[kind]?.about ?? ''),
             // Which projects: shown once it's allowed (asking picks them; refused, it sees none anyway).
-            kind === 'sessions' && pluginAccessState(p.id, kind) === 'allow' && h('span', { class: 'perms-hidden' },
+            kind === p.access.find((k) => (k === 'sessions' || k === 'message') && pluginAccessState(p.id, k) === 'allow') && h('span', { class: 'perms-hidden' },
               h('span', { class: 'decision-mark scope', 'aria-hidden': 'true' }, iconEl('folder')),
               pluginScope[p.id] ? `Only ${scopeWords(p.id)}` : 'Every project, including ones you add later',
               h('button', { class: 'link-btn', title: 'Choose the projects whose sessions it sees', onclick: () => changePluginScope(p) }, 'Change projects')),
@@ -6078,6 +6113,12 @@ function permsBySession() {
 
 // ---- messages between sessions: the rules, your answers, and telling a session it has messages
 
+/** A session's name, or a plugin's ("plugin:<id>") with "(plugin)" after it. */
+function relayName(id) {
+  if (id?.startsWith('plugin:')) { const pid = id.slice('plugin:'.length); return `${pluginById(pid)?.title ?? pid} (plugin)`; }
+  return state.byId.get(id)?.name ?? 'a closed session';
+}
+
 /** The decision of the rule from → to ('ask' when there's none). */
 const relayRule = (from, to) => relay.rules.find((r) => r.from === from && r.to === to)?.decision ?? 'ask';
 
@@ -6131,6 +6172,13 @@ function relayChanged(st) {
 }
 
 function onRelayMessage(m) {
+  if (m.to.startsWith('plugin:')) {
+    const f = pluginFrames.get(m.to.slice('plugin:'.length));
+    const note = { type: 'claude-terminals:message', unread: m.unread, from: m.from, fromName: relayName(m.from) };
+    if (f?.ready) f.frame.contentWindow?.postMessage(note, '*'); else f?.queue.push(note);
+    permissionsChanged();
+    return;
+  }
   relay.unread[m.to] = m.unread;
   (relay.from[m.to] ??= new Set()).add(m.from);
   const s = state.byId.get(m.to);
@@ -6150,7 +6198,7 @@ function relayNotify(s) {
   if (!s.running || s.startsOnOpen || !agentOf(s.command) || !['running', 'attention'].includes(statusClass(s))) return;
   if (performance.now() - s.act.lastIn < 5000) return;   // you're typing in it: the next check tries again
   relay.told[s.id] = n;
-  const names = [...(relay.from[s.id] ?? [])].map((id) => `"${state.byId.get(id)?.name ?? 'a closed session'}"`);
+  const names = [...(relay.from[s.id] ?? [])].map((id) => `"${relayName(id)}"`);
   const text = `[Claude Terminals] ${n === 1 ? 'A message has' : `${n} messages have`} come from ${names.length ? names.join(' and ') : 'another session'}. Read ${n === 1 ? 'it' : 'them'} with the read_messages tool.`;
   s.term.paste(text);
   setTimeout(() => post({ type: 'input', id: s.id, data: '\r' }), 150);
@@ -6240,7 +6288,7 @@ async function pluginRequest(p, m) {
     if (!sees(m.sessionId)) throw new Error('There is no such session.');
     return state.byId.get(m.sessionId);
   };
-  const NEEDS = { sessions: 'sessions', activity: 'sessions', folders: 'sessions', showSession: 'sessions' };
+  const NEEDS = { sessions: 'sessions', activity: 'sessions', folders: 'sessions', showSession: 'sessions', messageTargets: 'message', sendMessage: 'message', readMessages: 'message' };
   const kind = NEEDS[m.name];
   if (!kind) throw new Error(`There is no request "${m.name}".`);
   if (!p.access.includes(kind)) throw new Error(`Its plugin.json doesn't ask for "${kind}" access.`);
@@ -6262,6 +6310,15 @@ async function pluginRequest(p, m) {
       expand(s.id);
       return null;
     }
+    // Messages, through the relay as "plugin:<its id>" (the host checks again that it may, and which sessions it sees).
+    case 'messageTargets': return request('relay.pluginTargets', { plugin: p.id });
+    case 'sendMessage': {
+      const text = typeof m.text === 'string' ? m.text : '';
+      const to = typeof m.to === 'string' ? m.to : '';
+      if (!state.byId.has(to) || !pluginSeesSession(p.id, to)) throw new Error('There is no such session.');
+      return request('relay.pluginSend', { plugin: p.id, to, text, replyTo: typeof m.replyTo === 'string' ? m.replyTo : null });
+    }
+    case 'readMessages': return request('relay.pluginRead', { plugin: p.id });
   }
 }
 

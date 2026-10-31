@@ -164,9 +164,31 @@ internal sealed class MainForm : Form
     /// <summary>Messages between sessions, through the panel server's tools; which session may message which is kept in relay.json.</summary>
     private readonly RelayHub relay = new(new RelayPolicy(Path.Combine(SessionStore.AppDataFolder, "relay.json")));
 
-    private List<RelayPeer> RelayPeers() => order.Select(id => sessions[id]).Where(s => s.Agent != null).Select(s => new RelayPeer(
-        s.Id, s.Info.Name.Length > 0 ? s.Info.Name : s.Id, s.Info.Project, projects.FirstOrDefault(p => p.Id == s.Info.Project)?.Name,
-        s.Agent?.Name, s.IsRunning)).ToList();
+    /// <summary>Your answers about plugins (see PluginGrants), kept in plugin-grants.json.</summary>
+    private readonly PluginGrants grants = new(Path.Combine(SessionStore.AppDataFolder, "plugin-grants.json"));
+
+    private List<RelayPeer> RelayPeers()
+    {
+        // A session counts in a project only while that project exists (as the page shows it), for plugins' projects too.
+        string? ProjectOf(TerminalSession s) => projects.Any(p => p.Id == s.Info.Project) ? s.Info.Project : null;
+        var list = order.Select(id => sessions[id]).Where(s => s.Agent != null).Select(s => new RelayPeer(
+            s.Id, s.Info.Name.Length > 0 ? s.Info.Name : s.Id, ProjectOf(s), projects.FirstOrDefault(p => p.Id == s.Info.Project)?.Name,
+            s.Agent?.Name, s.IsRunning)).ToList();
+        // Plugins allowed to message sessions take part too, as "plugin:<id>" (see PluginGrants.RelayGate).
+        list.AddRange(plugins.Values.Where(p => p.Access.Contains("message") && grants.State(p.Id, "message") == "allow")
+            .Select(p => new RelayPeer(PluginGrants.PeerPrefix + p.Id, p.Title, null, null, "Plugin", true, p.Inbox)));
+        return list;
+    }
+
+    /// <summary>Your answers about plugins, as the page reads them.</summary>
+    private object GrantsMessage() => new
+    {
+        type = "plugins.grants",
+        grants = grants.Snapshot().ToDictionary(x => x.Key, x => new
+        {
+            allowed = x.Value.Allowed, denied = x.Value.Denied, projects = x.Value.Projects, hidden = x.Value.Hidden, changed = x.Value.Changed,
+        }),
+    };
 
     /// <summary>The rules, whether messages are paused, what's waiting for your answer, and each session's unread count.</summary>
     private object RelayState() => new
@@ -223,7 +245,10 @@ internal sealed class MainForm : Form
         panelStore.KeepOwners(sessions.Keys);
         panelStore.Changed += change => RunOnUi(() => Post(PanelsMessage(change)));
         relay.Policy.KeepSessions(sessions.Keys);
+        relay.Gate = grants.RelayGate;
         relay.SetPeers(RelayPeers());
+        // Answers about plugins change which plugins take part in messages, so the peers are read again too.
+        grants.Changed += () => RunOnUi(() => { relay.SetPeers(RelayPeers()); Post(GrantsMessage()); });
         // The state first, so the page has the message waiting by the time it asks you about it.
         relay.Asked += ask => RunOnUi(() => { Post(new { type = "relay", state = RelayState() }); Post(new { type = "relay.ask", from = ask.From, to = ask.To }); });
         relay.Delivered += m => RunOnUi(() => Post(new { type = "relay.message", to = m.To, from = m.From, unread = relay.Unread(m.To) }));
@@ -498,6 +523,7 @@ internal sealed class MainForm : Form
     private object SessionList()
     {
         relay.SetPeers(RelayPeers());   // the list goes out whenever sessions or projects change
+        grants.Keep(sessions.Keys.ToHashSet(), projects.Select(p => p.Id).ToHashSet());
         return SessionListMessage();
     }
 
@@ -846,6 +872,53 @@ internal sealed class MainForm : Form
             case "relay.clearLog":
                 relay.ClearLog();
                 return null;
+
+            // ---- plugins' messages, asked by the page for a plugin it checked may (the plugin's id is the frame's own)
+            case "relay.pluginTargets":
+                return relay.Others(PluginGrants.PeerPrefix + Str(msg, "plugin")).Where(o => o.Decision == RelayDecision.Allow && !o.Peer.Id.StartsWith(PluginGrants.PeerPrefix))
+                    .Select(o => new { id = o.Peer.Id, name = o.Peer.Name, project = o.Peer.ProjectName, agent = o.Peer.Agent, running = o.Peer.Running });
+            case "relay.pluginSend":
+            {
+                var r = relay.Send(PluginGrants.PeerPrefix + Str(msg, "plugin"), Str(msg, "to"), Str(msg, "text"), OptStr(msg, "replyTo"));
+                return new { outcome = r.Outcome.ToString().ToLowerInvariant(), id = r.Message?.Id };
+            }
+            case "relay.pluginRead":
+                return relay.Read(PluginGrants.PeerPrefix + Str(msg, "plugin")).Select(m => new
+                {
+                    id = m.Id, from = m.From, fromName = relay.Peer(m.From)?.Name, text = m.Text, sent = m.Sent, replyTo = m.ReplyTo, turn = m.Turn,
+                });
+
+            // ---- your answers about plugins (see PluginGrants)
+            case "plugins.grants":
+                return GrantsMessage();
+            case "plugins.grant":
+            {
+                var id = Str(msg, "id");
+                grants.Set(id, Str(msg, "kind"), Str(msg, "state"), plugins.GetValueOrDefault(id)?.ManifestHash);
+                return null;
+            }
+            case "plugins.projects":
+                grants.SetProjects(Str(msg, "id"), msg.TryGetProperty("projects", out var pj) && pj.ValueKind == JsonValueKind.Array
+                    ? pj.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!).ToList() : null);
+                return null;
+            case "plugins.hidden":
+                grants.SetHidden(Str(msg, "id"), Str(msg, "sessionId"), Bool(msg, "hidden"));
+                return null;
+            case "plugins.forget":
+                grants.Forget(Str(msg, "id"));
+                return null;
+            case "plugins.grants.import":
+            {
+                // Answers the page kept itself before they were kept here; taken only into an empty store.
+                if (!msg.TryGetProperty("grants", out var g) || g.ValueKind != JsonValueKind.Object) return null;
+                List<string> List(JsonElement e, string name) => e.TryGetProperty(name, out var a) && a.ValueKind == JsonValueKind.Array
+                    ? a.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!).ToList() : [];
+                grants.Import(g.EnumerateObject().Where(p => p.Value.ValueKind == JsonValueKind.Object).ToDictionary(p => p.Name, p => new PluginGrant(
+                    List(p.Value, "allowed"), List(p.Value, "denied"),
+                    p.Value.TryGetProperty("projects", out var pr) && pr.ValueKind == JsonValueKind.Array ? List(p.Value, "projects") : null,
+                    List(p.Value, "hidden"), null)));
+                return null;
+            }
             case "reorder":
             {
                 var ids = msg.GetProperty("ids").EnumerateArray().Select(x => x.GetString()!).Where(sessions.ContainsKey).ToList();
@@ -971,8 +1044,10 @@ internal sealed class MainForm : Form
             {
                 // Read the plugins folder again, so a plugin added or changed shows without restarting.
                 var (found, problems) = LoadPlugins();
+                grants.Reconcile(found);   // a plugin whose plugin.json changed is asked again
+                relay.SetPeers(RelayPeers());
                 return new { folder = PluginFolder, plugins = found.Select(p => new { id = p.Id, title = p.Title, description = p.Description, url = p.Url, placement = p.Placement,
-                    menu = p.Menu.Select(i => new { label = i.Label, command = i.Command, where = i.Where }), access = p.Access,
+                    menu = p.Menu.Select(i => new { label = i.Label, command = i.Command, where = i.Where }), access = p.Access, inbox = p.Inbox,
                     toolbar = p.Toolbar is { } t ? new { icon = t.Icon, tooltip = t.Tooltip, command = t.Command } : null }), problems };
             }
             case "plugins.openFolder":

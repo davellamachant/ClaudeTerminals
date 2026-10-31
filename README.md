@@ -274,7 +274,8 @@ plugins\
   - `"sessionTab"`: a session tab's right-click menu.
 
   In the project and session menus, plugins' items are under a **Plugins** heading at the end, each with its plugin's name beside it.
-- **`access`:** what it asks to see beyond its own page, one or a list. There's one kind, `"sessions"` (see **Seeing your sessions** below). Leave it out and it sees nothing.
+- **`access`:** what it asks for beyond its own page, one or a list: `"sessions"` (see **Seeing your sessions** below) and `"message"` (see **Messaging your sessions**). Leave it out and it gets nothing.
+- **`inbox`:** `true` lets sessions message it first, not only answer what it sends them (it needs `"message"` access too).
 - **`toolbar`:** a button in the title bar, after New Session and Git Changes, set apart from them. **`icon`** is an image file in the plugin's folder (SVG, PNG, ICO, GIF, JPEG or WebP, up to 64 KB); the button shows only the icon, never text, so it can't pass for one of the app's own buttons. Its tooltip is the plugin's name, then **`tooltip`** if given. Clicking it opens the plugin and sends **`command`**, if given, with the open session as context. The plugin's badge shows on its button too. Right-click the button › **Hide this button** to hide it; the plugin's **Show its title bar button** in the palette menu brings it back.
 
 **Talking to the app.** A plugin and the app exchange a few messages, each `{ type: 'claude-terminals:<name>', … }`. Listen with `addEventListener('message', …)`; send with `parent.postMessage(…, '*')`.
@@ -287,6 +288,7 @@ plugins\
 | `title` `{ title }` | From the plugin | Changes its own tab's caption (up to 60 characters); `{ title: null }` puts its name back. |
 | `request` `{ requestId, name, … }` | From the plugin | Asks for something its `access` lets it see (below). |
 | `response` `{ requestId, result }` or `{ requestId, error }` | To the plugin | The answer to a request. |
+| `message` `{ unread, from, fromName }` | To the plugin | A message came for it (with `"message"` access); read it with `readMessages` (below). |
 
 The badge and caption last until its tab is closed. A plugin can only change its own tab; anything else it sends is ignored.
 
@@ -311,6 +313,18 @@ Without `access`, that's all a plugin learns. The session id tells clicks on dif
 | `activity` `{ ids, have }` | What Claude did in each session, read from its conversation: `[{ id, found, conversation, version, from, events }]`. Each event is `{ t, k, file, text, ok, q }`: its time; its kind (`prompt`, `read`, `search`, `edit`, `run`, `build`, `test`, `ask`, `say`, `agent`, `compact` or `other`); the file read or edited; the prompt, question, command or first sentence of an answer; whether a test, build or edit succeeded, once known; and whether an answer ends in a question. `have` maps a session id to the `{ conversation, version }` you already have, so only newer events come back, from index `from`. |
 | `folders` `{ sessionId }` | The top-level folders of the session's repository with how many tracked files each holds: `{ root, folders: [{ name, files }] }`, `root` being the repository's main worktree. `null` outside Git. |
 | `showSession` `{ sessionId }` | Opens the session, as clicking its tab would. |
+
+**Messaging your sessions.** A plugin with `"access": ["message"]` can message Claude and Codex sessions through the same relay sessions use (see **Messages between sessions**). You're asked first, and choose the projects whose sessions it may message, as for seeing them; the two share the same projects and the sessions you hid. Its messages reach an agent as from the plugin ("Messenger (plugin)"), never from you, and the agent is told it has one as for any message. With `"inbox": true` sessions may message it first too; otherwise they can only answer it. Plugins never message each other, and every message is in Permissions › **Messages**.
+
+| Request | Answer |
+|---|---|
+| `messageTargets` | The sessions it may message now: `[{ id, name, project, agent, running }]`. |
+| `sendMessage` `{ to, text, replyTo }` | Sends `text` to the session `to` (an id from `messageTargets`), as a reply to `replyTo` if given: `{ outcome, id }`, `outcome` being `delivered` or `denied`, and `id` the message's, which an answer names as its `replyTo`. |
+| `readMessages` | The messages sent to it since it last read them, each read once: `[{ id, from, fromName, text, sent, replyTo, turn }]`. |
+
+When a message comes for it, the app sends `message` `{ unread, from, fromName }` to its page (once it has loaded, if it isn't open yet); read them with `readMessages`. [`samples/plugins/messenger`](samples/plugins/messenger) is a plugin that uses them: pick a session, send it a message, and see its answer. To try it, copy the folder into your plugins folder.
+
+**Where your answers are kept.** Your answers about plugins (what each may do, its projects, the sessions you hid) are kept in `plugin-grants.json` next to `sessions.json`, where both the page and the message relay read them. Each answer that allows something remembers the plugin's `plugin.json`: if that file changes, what you allowed is asked again, and Permissions marks the plugin **Changed since you allowed it**.
 
 **What a plugin can't do.** A plugin is only a page. It's given no terminals, files or Git, no sessions unless you allowed it to see them, and it can't reach the app:
 - it runs in a sandboxed frame with an origin of its own, so it can't read or change the app's page, or another plugin's;

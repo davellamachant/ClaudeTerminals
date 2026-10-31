@@ -12,8 +12,10 @@ namespace ClaudeTerminals.Plugins;
 /// <param name="Access">What it asks to see beyond its own page (see <see cref="PluginCatalog.AccessKinds"/>); the app asks
 /// you before it's given any.</param>
 /// <param name="Toolbar">Its button in the title bar, beside New Session and Git Changes, if it has one.</param>
+/// <param name="Inbox">Whether sessions may message it ("inbox": true), as well as it them; it needs "message" access too.</param>
+/// <param name="ManifestHash">Its plugin.json's SHA-256: access you allowed is asked again when it changes (see PluginGrants).</param>
 internal sealed record PluginInfo(string Id, string Title, string? Description, string Entry, string Folder, string Placement,
-    IReadOnlyList<PluginMenuItem> Menu, IReadOnlyList<string> Access, PluginButton? Toolbar = null)
+    IReadOnlyList<PluginMenuItem> Menu, IReadOnlyList<string> Access, PluginButton? Toolbar = null, bool Inbox = false, string ManifestHash = "")
 {
     public string Host => PluginCatalog.HostFor(Id);
     public string Url => $"https://{Host}/{Entry}";
@@ -78,7 +80,10 @@ internal static partial class PluginCatalog
             }
             try
             {
-                using var doc = JsonDocument.Parse(File.ReadAllText(manifest));
+                var bytes = File.ReadAllBytes(manifest);
+                // Parsed as bytes, which a UTF-8 byte order mark would trip; the hash is of the whole file.
+                var bom = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF ? 3 : 0;
+                using var doc = JsonDocument.Parse(bytes.AsMemory(bom));
                 var root = doc.RootElement;
                 var title = Str(root, "title") is { Length: > 0 } t ? t.Trim() : name;
                 var entry = (Str(root, "entry") is { Length: > 0 } en ? en : "index.html").Replace('\\', '/').TrimStart('/');
@@ -94,7 +99,9 @@ internal static partial class PluginCatalog
                     continue;
                 }
                 plugins.Add(new PluginInfo(id, title, Str(root, "description"), entry, Path.GetFullPath(dir), placement, MenuOf(root, name, problems),
-                    AccessOf(root, name, problems), ButtonOf(root, dir, name, problems)));
+                    AccessOf(root, name, problems), ButtonOf(root, dir, name, problems),
+                    Inbox: root.TryGetProperty("inbox", out var inbox) && inbox.ValueKind == JsonValueKind.True,
+                    ManifestHash: Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes))));
             }
             catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
             {
@@ -149,9 +156,10 @@ internal static partial class PluginCatalog
     /// What a plugin can ask to see. "sessions": the list of sessions (name, project, folder, repository, whether it's
     /// working or waiting for you), what Claude did in each (prompts, files read and edited, commands, questions; see
     /// ActivityReader) and how many files each top-level folder of a session's repository holds. It's read only: nothing in it
-    /// types into a session or changes a file.
+    /// types into a session or changes a file. "message": send messages to the sessions it may see and read their answers
+    /// (and, with "inbox": true in its plugin.json, messages sessions send it first), through the same relay sessions use.
     /// </summary>
-    public static readonly IReadOnlyList<string> AccessKinds = ["sessions"];
+    public static readonly IReadOnlyList<string> AccessKinds = ["sessions", "message"];
 
     /// <summary>The manifest's "access": the kinds it names that there are (others are left out, with why).</summary>
     private static List<string> AccessOf(JsonElement root, string name, List<string> problems)
