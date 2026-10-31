@@ -1047,6 +1047,19 @@ internal sealed class MainForm : Form
                 OpenFileForViewing(full);
                 return null;
             }
+            case "git.openFolder":
+            {
+                // A folder of the Git Changes tree. If its changes are deletions it may be gone: the nearest folder
+                // above it that's still there, at most the repository's own.
+                var root = GitDir(msg);
+                var path = Str(msg, "path").TrimEnd('/', '\\');
+                if (GitService.FullPathInRepo(root, path) == null) throw new InvalidOperationException("That folder is outside the repository.");
+                while (path.Length > 0 && !Directory.Exists(Path.Combine(root, path))) path = Path.GetDirectoryName(path) ?? "";
+                var target = path.Length == 0 ? root
+                    : GitService.ExistingPathInRepo(root, path) ?? throw new InvalidOperationException("That folder is outside the repository (it is reached through a link).");
+                OpenExternal(target);
+                return null;
+            }
         }
         return null;
     }
