@@ -85,6 +85,15 @@
         <!-- A plugin's page: a frame per open plugin tab (see showPlugin). -->
         <section id="pluginDoc" hidden></section>
 
+        <!-- Permissions: what each plugin may do, by plugin or by session (see renderPermissions). -->
+        <section id="permsDoc" hidden>
+          <div class="diff-toolbar">
+            <span class="diff-summary">Permissions</span>
+            <div id="permsBy" class="seg" role="tablist" aria-label="Show permissions"></div>
+          </div>
+          <div id="permsBody" tabindex="-1"></div>
+        </section>
+
         <!-- Between the terminal and a tab shown beside it, and where a tab dragged here would go (see showDocs). -->
         <div id="docSplitter" title="Drag to resize; double-click to even up"></div>
         <div id="dockHint" hidden></div>

@@ -37,6 +37,10 @@ const PATHS = {
   grid: 'M2.5 2.5h4.5v4.5H2.5zM9 2.5h4.5v4.5H9zM2.5 9h4.5v4.5H2.5zM9 9h4.5v4.5H9z',
   list: 'M5.8 4h7.7M5.8 8h7.7M5.8 12h7.7M2.6 4h.1M2.6 8h.1M2.6 12h.1',
   plug: 'M6 1.5v3M10 1.5v3M4 4.5h8v2.5a4 4 0 0 1-8 0zM8 11v3.5',   // a plugin's tab   // the Project view: a list of the project's worktrees
+  shield: 'M8 1.5l5.5 2v4.2c0 3.2-2.3 5.6-5.5 6.8-3.2-1.2-5.5-3.6-5.5-6.8V3.5z',   // the Permissions view
+  markAllow: 'M3.5 8.5l3 3 6-7',                                          // Permissions: allowed
+  markAsk: 'M5.8 5.8a2.2 2.2 0 1 1 3.2 2c-.7.4-1 .9-1 1.6v.6M8 12.6h.01',  // Permissions: you're asked first
+  markDeny: 'M8 2a6 6 0 1 0 0 12A6 6 0 1 0 8 2M3.8 3.8l8.4 8.4',         // Permissions: not allowed
   git: 'M5 3v10M5 11a2 2 0 1 0 0 .01M5 3a1.6 1.6 0 1 0 0 .01M11 3a1.6 1.6 0 1 0 0 .01M11 4.6C11 8 5 7 5 10',
   branch: 'M5 2.5v8M5 12a1.5 1.5 0 1 0 0 .01M11 4a1.5 1.5 0 1 0 0 .01M11 5.5c0 3-6 2.5-6 5',
   chevR: 'M6 4l4 4-4 4',
@@ -696,6 +700,8 @@ function syncSessions(list, projects) {
   // A Project view whose project has just been deleted goes back to all sessions.
   if (state.projectViewOf != null && !allGroups().includes(state.projectViewOf)) showTerminalDoc();
   projectViewChanged();
+  prunePluginHidden();   // a session removed is no longer hidden from anything
+  permissionsChanged();
 }
 
 function createSession(info) {
@@ -3589,7 +3595,7 @@ function tabShown(t) {
   // A Project view is shown on its own: neither a session's tabs with it, nor it with a session's.
   if (isProjectTab(t)) return state.projectViewOf === t.projectId;
   if (state.projectViewOf != null) return false;
-  if (isPluginTab(t)) return true;   // a plugin belongs to no project
+  if (isPluginTab(t) || isPermsTab(t)) return true;   // a plugin, or Permissions, belongs to no project
   const cur = currentSession();
   const s = state.byId.get(t.sessionId);
   return !cur || !s || groupOf(s) === groupOf(cur);
@@ -3642,14 +3648,16 @@ function showDocs() {
   if (prev && prev !== tab && docs.tabs.includes(prev)) {   // not a tab being closed
     if (isConvTab(prev)) prev.scrollTop = $('#convBody').scrollTop;
     else if (isProjectTab(prev)) prev.scrollTop = $('#projectBody').scrollTop;
-    else if (!isPluginTab(prev) && diffEditor) prev.viewState = diffEditor.saveViewState();
+    else if (isPermsTab(prev)) prev.scrollTop = $('#permsBody').scrollTop;
+    else if (!isPluginTab(prev) && !isPermsTab(prev) && diffEditor) prev.viewState = diffEditor.saveViewState();
   }
   docs.shown = tab;
   const split = !!tab && tab === sideTab();
-  $('#diffDoc').hidden = !tab || isConvTab(tab) || isProjectTab(tab) || isPluginTab(tab);
+  $('#diffDoc').hidden = !tab || isConvTab(tab) || isProjectTab(tab) || isPluginTab(tab) || isPermsTab(tab);
   $('#convDoc').hidden = !isConvTab(tab);
   $('#projectDoc').hidden = !isProjectTab(tab);
   $('#pluginDoc').hidden = !isPluginTab(tab);
+  $('#permsDoc').hidden = !isPermsTab(tab);
   $('#termPane').classList.toggle('behind', !!tab && !split);
   const area = $('#docArea');
   for (const dir in DOCK_SIDES) area.classList.toggle('split-' + dir, split && docs.dir === dir);
@@ -3660,6 +3668,7 @@ function showDocs() {
     if (isConvTab(tab)) showConversation(tab);
     else if (isProjectTab(tab)) showProjectView(tab);
     else if (isPluginTab(tab)) showPlugin(tab);
+    else if (isPermsTab(tab)) showPermissions(tab);
     else loadDiff(tab);
   } else if (!tab) {
     diffState.seq++;
@@ -3704,7 +3713,7 @@ function closeDoc(key) {
   } else {
     renderDocTabs();
   }
-  if (!docs.tabs.some((t) => !isConvTab(t) && !isProjectTab(t) && !isPluginTab(t))) disposeDiffModels();
+  if (!docs.tabs.some((t) => !isConvTab(t) && !isProjectTab(t) && !isPluginTab(t) && !isPermsTab(t))) disposeDiffModels();
 }
 
 function cycleDoc(delta) {
@@ -3750,6 +3759,17 @@ function renderDocTabs() {
         onmousedown: (e) => { if (e.button === 1) e.preventDefault(); },
         onauxclick: (e) => { if (e.button === 1) closeDoc(t.key); },
       }, iconEl('plug'), h('span', { class: 'doc-title' }, pluginCaption(t.pluginId)), pluginBadge(t.pluginId, 'badge'),
+      h('button', { class: 'icon-btn small', title: 'Close (Ctrl+W)', onclick: () => closeDoc(t.key) }, iconEl('close')));
+    }
+    if (isPermsTab(t)) {
+      return h('div', {
+        class: 'doc-tab' + (docs.active === t.key ? ' active' : ''),
+        'data-id': t.key,
+        title: 'Permissions: what each plugin and session may do',
+        onclick: (e) => { if (!e.target.closest('button')) activateDoc(t.key); },
+        onmousedown: (e) => { if (e.button === 1) e.preventDefault(); },
+        onauxclick: (e) => { if (e.button === 1) closeDoc(t.key); },
+      }, iconEl('shield'), h('span', { class: 'doc-title' }, 'Permissions'),
       h('button', { class: 'icon-btn small', title: 'Close (Ctrl+W)', onclick: () => closeDoc(t.key) }, iconEl('close')));
     }
     if (isConvTab(t)) {
@@ -5060,9 +5080,8 @@ function themeMenu(x, y) {
       { label: p.title, kbd: p.placement === 'panel' ? 'Side panel' : '', action: () => openPlugin(p.id) },
       ...p.menu.filter((m) => m.where.includes('palette')).map((m) => ({ label: [h('span', { class: 'menu-indent' }), m.label], action: () => openPlugin(p.id, m.command, { menu: 'palette' }) })),
       p.toolbar && hiddenPluginButtons.has(p.id) && { label: [h('span', { class: 'menu-indent' }), 'Show its title bar button'], action: () => setPluginButton(p.id, true) },
-      ...p.access.filter((kind) => PLUGIN_ACCESS[kind]).map((kind) => ({ label: [h('span', { class: 'menu-indent' }), pluginMayHave(p, kind) ? PLUGIN_ACCESS[kind].stop : PLUGIN_ACCESS[kind].let],
-        action: () => setPluginAccess(p, kind, !pluginMayHave(p, kind)) })),
     ]),
+    { label: 'Permissions', kbd: 'Plugins and sessions', action: () => openPermissions() },
     plugins.problems.length > 0 && { label: `${plugins.problems.length} couldn't be loaded`, kbd: 'Why?', action: () => toast(plugins.problems.join('\n'), true) },
     { label: plugins.list.length ? 'Open the plugins folder' : 'Add a plugin: open the plugins folder', action: () => request('plugins.openFolder') },
   ]);
@@ -5553,47 +5572,200 @@ function renderPluginButtons() {
 
 /**
  * Each kind of access a plugin can ask for (PluginCatalog.AccessKinds): what the dialog says it would let the plugin do,
- * and its palette menu items. A request names the kind it needs in pluginRequest's NEEDS.
+ * and how the Permissions view names and explains it. A request names the kind it needs in pluginRequest's NEEDS.
  */
 const PLUGIN_ACCESS = {
   sessions: {
-    verb: 'see your sessions', let: 'Let it see your sessions', stop: 'Stop it seeing your sessions',
+    verb: 'see your sessions', title: 'See your sessions',
+    about: 'Their names, projects and folders, whether each is working or waiting, what Claude did in each, and how many files their folders hold. Read only. Only the projects you choose, and you can hide single sessions from it too.',
     dialog: (p) => [
       h('p', {}, `${p.title} is a plugin, from ${plugins.folder}\\${p.id}. It asks to see:`),
       h('ul', {},
         h('li', {}, 'your sessions: their names, projects and folders, and whether each is working or waiting for you;'),
         h('li', {}, 'what Claude did in each: your prompts, the files it read and edited, the commands it ran and the questions it asked;'),
         h('li', {}, 'how many files each top-level folder of their repositories holds.')),
-      h('p', {}, 'It can’t type into a session or change a file. But like any web page it could send what it sees to a website, so allow only a plugin you trust. The palette menu can stop it seeing them later.'),
+      h('p', {}, 'It can’t type into a session or change a file. But like any web page it could send what it sees to a website, so allow only a plugin you trust. You can change your answer any time in Permissions, on the palette menu.'),
     ],
   },
 };
 
 /**
- * The access you allowed each plugin, by plugin id (["sessions"]), kept; access you refused is only until the app
- * restarts, so the plugin asks again then. A plugin is asked about only for what its plugin.json's "access" names.
+ * What you decided for each plugin, by plugin id: the kinds you allowed (pluginAccess) and the kinds you refused
+ * (pluginDenied), both kept. A kind in neither is asked about the first time the plugin needs it. A plugin is asked
+ * about only for what its plugin.json's "access" names. The Permissions view shows and changes all of it.
  */
 const pluginAccess = store.get('pluginAccess', {});
-const pluginRefused = new Set();   // 'id|kind'
+const pluginDenied = store.get('pluginDenied', {});
 const pluginAsking = new Map();    // 'id|kind' → the answer, while you're being asked
-const pluginMayHave = (p, kind) => p.access.includes(kind) && !!pluginAccess[p.id]?.includes(kind);
 
-function setPluginAccess(p, kind, allowed) {
-  const kinds = new Set(pluginAccess[p.id] ?? []);
-  if (allowed) { kinds.add(kind); pluginRefused.delete(p.id + '|' + kind); } else { kinds.delete(kind); pluginRefused.add(p.id + '|' + kind); }
-  if (kinds.size) pluginAccess[p.id] = [...kinds]; else delete pluginAccess[p.id];
+/** 'allow', 'deny' or 'ask' (not decided yet). By id, so a plugin no longer installed still has its answers. */
+const pluginAccessState = (id, kind) => pluginAccess[id]?.includes(kind) ? 'allow' : pluginDenied[id]?.includes(kind) ? 'deny' : 'ask';
+const pluginMayHave = (p, kind) => p.access.includes(kind) && pluginAccessState(p.id, kind) === 'allow';
+
+/** Sets what plugin id may do with kind: 'allow', 'deny' or 'ask' (forget the answer, so it's asked again). */
+function setPluginAccess(id, kind, to) {
+  const was = pluginAccessState(id, kind);
+  const put = (map, on) => {
+    const kinds = new Set(map[id] ?? []);
+    if (on) kinds.add(kind); else kinds.delete(kind);
+    if (kinds.size) map[id] = [...kinds]; else delete map[id];
+  };
+  put(pluginAccess, to === 'allow');
+  put(pluginDenied, to === 'deny');
   store.set('pluginAccess', pluginAccess);
-  // Stopped: the page starts over, so it no longer holds what it was shown.
-  const f = pluginFrames.get(p.id);
-  if (!allowed && f) { f.ready = false; f.frame.src = f.frame.src; }
+  store.set('pluginDenied', pluginDenied);
+  // Taken away: the page starts over, so it no longer holds what it was shown.
+  const f = pluginFrames.get(id);
+  if (was === 'allow' && to !== 'allow' && f) { f.ready = false; f.frame.src = f.frame.src; }
+  checkPluginSight();
+  permissionsChanged();
 }
 
-/** Whether the plugin may see kind: allowed before, or you allow it now (asked once at a time, and not again once refused). */
+/** Forgets every answer about a plugin (one no longer installed). */
+function forgetPlugin(id) {
+  delete pluginAccess[id];
+  delete pluginDenied[id];
+  delete pluginHidden[id];
+  delete pluginScope[id];
+  store.set('pluginAccess', pluginAccess);
+  store.set('pluginDenied', pluginDenied);
+  store.set('pluginHidden', pluginHidden);
+  store.set('pluginScope', pluginScope);
+  permissionsChanged();
+}
+
+/**
+ * Which sessions a plugin allowed to see your sessions sees, kept by plugin id:
+ * - pluginScope: the projects it sees ({ projects: [project id, or NO_PROJECT] }); none there means every project,
+ *   including ones you add later (what a plugin allowed before projects could be chosen keeps);
+ * - pluginHidden: sessions you hid from it one by one, on top of that.
+ * A session it doesn't see is left out of its list, and asking about one is answered as if there were no such session.
+ */
+const NO_PROJECT = 'none';
+const pluginScope = store.get('pluginScope', {});
+const pluginHidden = store.get('pluginHidden', {});
+
+/** The project key a session counts under for a plugin's projects: its project's id, or NO_PROJECT. */
+const scopeKeyOf = (s) => (groupOf(s) === UNKNOWN ? NO_PROJECT : s.project);
+const pluginInScope = (id, s) => !pluginScope[id] || pluginScope[id].projects.includes(scopeKeyOf(s));
+const pluginSeesSession = (id, sessionId) => {
+  const s = state.byId.get(sessionId);
+  return !!s && pluginInScope(id, s) && !pluginHidden[id]?.includes(sessionId);
+};
+
+/** The sessions each plugin sees as last checked, to tell when one it saw no longer is (see checkPluginSight). */
+const pluginSaw = new Map();
+
+/**
+ * After anything that changes which sessions plugins see (an answer, a project chosen, a session hidden or moved to
+ * another project): a plugin allowed to see sessions that no longer sees one it did has its page reloaded, so it no
+ * longer holds what it was shown.
+ */
+function checkPluginSight() {
+  for (const p of plugins.list) {
+    if (!pluginMayHave(p, 'sessions')) { pluginSaw.delete(p.id); continue; }
+    const now = new Set(state.sessions.filter((s) => pluginSeesSession(p.id, s.id)).map((s) => s.id));
+    const before = pluginSaw.get(p.id);
+    pluginSaw.set(p.id, now);
+    const f = pluginFrames.get(p.id);
+    if (before && f && [...before].some((sid) => !now.has(sid))) { f.ready = false; f.frame.src = f.frame.src; }
+  }
+}
+
+/** Hides a session from a plugin, or shows it again. */
+function setPluginSeesSession(id, sessionId, sees) {
+  const hidden = new Set(pluginHidden[id] ?? []);
+  if (sees) hidden.delete(sessionId); else hidden.add(sessionId);
+  if (hidden.size) pluginHidden[id] = [...hidden]; else delete pluginHidden[id];
+  store.set('pluginHidden', pluginHidden);
+  checkPluginSight();
+  permissionsChanged();
+}
+
+/** Sets the projects a plugin sees: a list of project ids (and NO_PROJECT), or null for every project. */
+function setPluginScope(id, projects) {
+  if (projects) pluginScope[id] = { projects: [...new Set(projects)] }; else delete pluginScope[id];
+  store.set('pluginScope', pluginScope);
+  checkPluginSight();
+  permissionsChanged();
+}
+
+/** Drops sessions and projects since removed from what plugins see, then checks who no longer sees what. */
+function prunePluginHidden() {
+  let changed = false;
+  for (const [id, list] of Object.entries(pluginHidden)) {
+    const kept = list.filter((sid) => state.byId.has(sid));
+    if (kept.length === list.length) continue;
+    changed = true;
+    if (kept.length) pluginHidden[id] = kept; else delete pluginHidden[id];
+  }
+  if (changed) store.set('pluginHidden', pluginHidden);
+  let scoped = false;
+  for (const scope of Object.values(pluginScope)) {
+    const kept = scope.projects.filter((k) => k === NO_PROJECT || state.projects.some((pr) => pr.id === k));
+    if (kept.length !== scope.projects.length) { scope.projects = kept; scoped = true; }
+  }
+  if (scoped) store.set('pluginScope', pluginScope);
+  checkPluginSight();
+}
+
+/** In words: "Billing, Docs" or "every project". */
+function scopeWords(id) {
+  const scope = pluginScope[id];
+  if (!scope) return 'every project';
+  if (!scope.projects.length) return 'no project yet';
+  return scope.projects.map((k) => k === NO_PROJECT ? 'sessions with no project' : state.projects.find((pr) => pr.id === k)?.name).filter(Boolean).join(', ');
+}
+
+/**
+ * The projects picker, for the dialog asking to see your sessions and for changing it later: "Only these projects"
+ * (ticked boxes, one per project and one for sessions with no project) or "All sessions". It starts on what the plugin
+ * has, or, the first time, on only the open session's project. ok(enabled) is told when there's something to allow.
+ * Returns { el, value() → project keys, or null for all }.
+ */
+function scopePicker(id, ok = () => {}) {
+  const had = pluginScope[id];
+  const open = state.byId.get(state.expandedId) ?? state.byId.get(state.currentId);
+  const ticked = new Set(had ? had.projects : open ? [scopeKeyOf(open)] : []);
+  let all = !!(pluginAccess[id]?.includes('sessions') && !had);
+  const keys = [...state.projects.map((pr) => ({ key: pr.id, name: pr.name, color: projectColor(pr) })),
+    ...(state.sessions.some((s) => scopeKeyOf(s) === NO_PROJECT) || ticked.has(NO_PROJECT) ? [{ key: NO_PROJECT, name: 'Sessions with no project', color: null }] : [])];
+  const boxes = h('div', { class: 'scope-boxes' }, keys.map((k) => h('label', { class: 'perms-radio' },
+    h('input', { type: 'checkbox', checked: ticked.has(k.key), onchange: (e) => { if (e.target.checked) ticked.add(k.key); else ticked.delete(k.key); sync(); } }),
+    k.color ? h('span', { class: 'proj-tag', style: `--proj:${k.color}` }, k.name) : k.name,
+    h('span', { class: 'dim' }, `${state.sessions.filter((s) => scopeKeyOf(s) === k.key).length} sessions`))));
+  const radio = (value, label) => h('label', { class: 'perms-radio' },
+    h('input', { type: 'radio', name: 'pluginScope-' + id, checked: value === all, onchange: () => { all = value; sync(); } }), label);
+  const sync = () => {
+    for (const box of boxes.querySelectorAll('input')) box.disabled = all;
+    boxes.classList.toggle('off', all);
+    ok(all || ticked.size > 0);
+  };
+  const el = h('div', { class: 'perms-radios' }, h('b', {}, 'Which sessions'),
+    radio(false, 'Only sessions in these projects'), boxes,
+    radio(true, 'All sessions, including projects you add later'));
+  setTimeout(sync, 0);
+  return { el, value: () => (all ? null : keys.map((k) => k.key).filter((k) => ticked.has(k))) };
+}
+
+/** Changing a plugin's projects from the Permissions view. */
+function changePluginScope(p) {
+  let okBtn;
+  const picker = scopePicker(p.id, (enabled) => { if (okBtn) okBtn.disabled = !enabled; });
+  okBtn = h('button', { class: 'btn primary', onclick: () => { setPluginScope(p.id, picker.value()); closeModal(); } }, 'Save');
+  openModal(`Sessions ${p.title} may see`, h('div', {},
+    h('p', {}, `${p.title} sees the sessions in the projects you tick, as they come and go, apart from any you hide from it one by one.`),
+    picker.el), [
+    h('button', { class: 'btn', 'data-autofocus': true, onclick: closeModal }, 'Cancel'), okBtn,
+  ]);
+}
+
+/** Whether the plugin may use kind: allowed before, or you allow it now (asked once at a time, and not again once refused). */
 function pluginAllowed(p, kind) {
   if (!p.access.includes(kind)) return Promise.resolve(false);
-  if (pluginMayHave(p, kind)) return Promise.resolve(true);
+  const st = pluginAccessState(p.id, kind);
+  if (st !== 'ask') return Promise.resolve(st === 'allow');
   const key = p.id + '|' + kind;
-  if (pluginRefused.has(key)) return Promise.resolve(false);
   if (!pluginAsking.has(key)) pluginAsking.set(key, askPluginAccess(p, kind).finally(() => pluginAsking.delete(key)));
   return pluginAsking.get(key);
 }
@@ -5604,15 +5776,149 @@ function askPluginAccess(p, kind) {
     const answer = (yes) => {
       if (answered) return;
       answered = true;
-      setPluginAccess(p, kind, yes);
+      // Seeing sessions comes with the projects you picked (set before access, so it never sees more for a moment).
+      if (yes && picker) setPluginScope(p.id, picker.value());
+      setPluginAccess(p.id, kind, yes ? 'allow' : 'deny');
       resolve(yes);
     };
-    openModal(`Let ${p.title} ${PLUGIN_ACCESS[kind].verb}?`, h('div', {}, ...PLUGIN_ACCESS[kind].dialog(p)), [
+    let allowBtn;
+    const picker = kind === 'sessions' ? scopePicker(p.id, (enabled) => { if (allowBtn) allowBtn.disabled = !enabled; }) : null;
+    allowBtn = h('button', { class: 'btn primary', onclick: () => { answer(true); closeModal(); } }, 'Allow');
+    openModal(`Let ${p.title} ${PLUGIN_ACCESS[kind].verb}?`, h('div', {}, ...PLUGIN_ACCESS[kind].dialog(p), picker?.el), [
       h('button', { class: 'btn', 'data-autofocus': true, onclick: () => { answer(false); closeModal(); } }, 'Don’t allow'),
-      h('button', { class: 'btn primary', onclick: () => { answer(true); closeModal(); } }, 'Allow'),
+      allowBtn,
     ]);
     onModalClose = () => answer(false);   // closed any other way
   });
+}
+
+// ---- the Permissions view: what each plugin may do, by plugin or by session
+
+const PERMS_KEY = 'permissions';
+function isPermsTab(t) { return t?.kind === 'permissions'; }   // a declaration: tab code above may run first
+const permsView = { by: store.get('permissionsBy', 'plugin'), open: new Set() };   // by: 'plugin' or 'session'; open: sessions whose messaging rows are unfolded
+
+/** Opens the Permissions view, a tab like a plugin's, beside whichever session is open. */
+async function openPermissions(by = null) {
+  if (by) setPermsBy(by);
+  if (!docs.tabs.some((t) => t.key === PERMS_KEY)) docs.tabs.push({ key: PERMS_KEY, kind: 'permissions', preview: false, scrollTop: null });
+  activateDoc(PERMS_KEY);
+  await loadPlugins();   // a plugin added since shows up
+  permissionsChanged();
+}
+
+function setPermsBy(by) {
+  permsView.by = by;
+  store.set('permissionsBy', by);
+  permissionsChanged();
+}
+
+/** An answer or the sessions changed: redraw the view if it's showing. */
+function permissionsChanged() {
+  if (isPermsTab(shownDoc())) renderPermissions();
+}
+
+function showPermissions(tab) {
+  renderPermissions();
+  if (tab.scrollTop != null) $('#permsBody').scrollTop = tab.scrollTop;
+}
+
+/** Allowed / Asks first / Not allowed, for one plugin and kind. */
+function permsChoice(id, kind, name) {
+  const st = pluginAccessState(id, kind);
+  const opt = (to, label, tip) => h('button', {
+    class: 'seg-btn' + (st === to ? ' active' : ''), role: 'radio', 'aria-checked': String(st === to), title: tip,
+    onclick: () => { if (st !== to) setPluginAccess(id, kind, to); },
+  }, label);
+  return h('div', { class: 'seg perms-seg', role: 'radiogroup', 'aria-label': `${name}: ${PLUGIN_ACCESS[kind]?.title ?? kind}` },
+    opt('allow', 'Allowed', 'It may, without asking'),
+    opt('ask', 'Ask first', 'You’re asked the first time it needs to'),
+    opt('deny', 'Not allowed', 'It’s refused, without asking'));
+}
+
+function renderPermissions() {
+  fill($('#permsBy'), [['plugin', 'By plugin'], ['session', 'By session']].map(([by, label]) =>
+    h('button', { class: 'seg-btn' + (permsView.by === by ? ' active' : ''), role: 'tab', 'aria-selected': String(permsView.by === by), onclick: () => setPermsBy(by) }, label)));
+  fill($('#permsBody'), permsView.by === 'session' ? permsBySession() : permsByPlugin());
+}
+
+function permsByPlugin() {
+  const asking = plugins.list.filter((p) => p.access.length);
+  const plain = plugins.list.filter((p) => !p.access.length);
+  const gone = [...new Set([...Object.keys(pluginAccess), ...Object.keys(pluginDenied)])].filter((id) => !pluginById(id));
+  if (!asking.length && !gone.length) {
+    return h('div', { class: 'perms-empty' },
+      h('p', {}, plugins.list.length ? 'None of your plugins asks for anything beyond its own page.' : 'You have no plugins.'),
+      h('p', { class: 'dim' }, 'A plugin names what it wants in its plugin.json’s "access"; it shows here, and asks you the first time it needs it.'),
+      h('button', { class: 'btn', onclick: () => request('plugins.openFolder') }, 'Open the plugins folder'));
+  }
+  return [
+    ...asking.map((p) => h('section', { class: 'perms-card' },
+      h('header', {}, iconEl('plug'), h('b', {}, p.title), h('span', { class: 'dim', title: 'Its folder' }, `${plugins.folder}\\${p.id}`)),
+      p.access.map((kind) => {
+        const hidden = kind === 'sessions' ? (pluginHidden[p.id] ?? []).map((id) => state.byId.get(id)).filter(Boolean) : [];
+        return h('div', { class: 'perms-row' },
+          h('div', { class: 'perms-what' }, h('b', {}, PLUGIN_ACCESS[kind]?.title ?? kind), h('span', { class: 'dim' }, PLUGIN_ACCESS[kind]?.about ?? ''),
+            // Which projects: shown once it's allowed (asking picks them; refused, it sees none anyway).
+            kind === 'sessions' && pluginAccessState(p.id, kind) === 'allow' && h('span', { class: 'perms-hidden' },
+              h('span', { class: 'decision-mark scope', 'aria-hidden': 'true' }, iconEl('folder')),
+              pluginScope[p.id] ? `Only ${scopeWords(p.id)}` : 'Every project, including ones you add later',
+              h('button', { class: 'link-btn', title: 'Choose the projects whose sessions it sees', onclick: () => changePluginScope(p) }, 'Change projects')),
+            hidden.length > 0 && h('span', { class: 'perms-hidden' }, decisionMark('deny', 'Hidden from it'),
+              `Except ${hidden.map((s) => s.name).join(', ')}`,
+              h('button', { class: 'link-btn', title: 'Let it see every session again', onclick: () => { for (const s of hidden) setPluginSeesSession(p.id, s.id, true); } }, 'Show all'),
+              h('button', { class: 'link-btn', title: 'Change which sessions it sees', onclick: () => setPermsBy('session') }, 'By session'))),
+          permsChoice(p.id, kind, p.title));
+      }))),
+    gone.length > 0 && h('section', { class: 'perms-card' },
+      h('header', {}, h('b', {}, 'No longer installed')),
+      gone.map((id) => h('div', { class: 'perms-row' },
+        h('div', { class: 'perms-what' }, h('b', {}, id),
+          h('span', { class: 'dim' }, [['allowed', pluginAccess[id]], ['not allowed', pluginDenied[id]]].filter(([, k]) => k?.length)
+            .map(([word, k]) => `${word}: ${k.map((x) => PLUGIN_ACCESS[x]?.title.toLowerCase() ?? x).join(', ')}`).join(' · '))),
+        h('button', { class: 'btn', title: 'Forget your answers, so it asks again if it comes back', onclick: () => forgetPlugin(id) }, 'Forget')))),
+    plain.length > 0 && h('p', { class: 'perms-note dim' }, `${plain.map((p) => p.title).join(', ')} ${plain.length === 1 ? 'asks' : 'ask'} for nothing beyond ${plain.length === 1 ? 'its' : 'their'} own page.`),
+  ];
+}
+
+/** A decision as a coloured mark ('allow', 'ask' or 'deny'), saying tip on hover and to a screen reader. */
+const decisionMark = (decision, tip) =>
+  h('span', { class: 'decision-mark ' + decision, title: tip, role: 'img', 'aria-label': tip }, iconEl({ allow: 'markAllow', ask: 'markAsk', deny: 'markDeny' }[decision]));
+
+/**
+ * The plugins that ask to see sessions, as chips saying whether each sees this one: clicking hides the session from it,
+ * or shows it again. A plugin not allowed to see any session goes to By plugin instead, where that's changed.
+ */
+function pluginChips(s) {
+  const asking = plugins.list.filter((p) => p.access.includes('sessions'));
+  if (!asking.length) return h('span', { class: 'dim' }, 'No plugin asks to see sessions');
+  return asking.map((p) => {
+    const global = pluginAccessState(p.id, 'sessions');
+    // Why it doesn't see this one, if it doesn't: its projects leave this one out, or you hid it one by one.
+    const outside = !pluginInScope(p.id, s);
+    const hidden = !!pluginHidden[p.id]?.includes(s.id);
+    const st = global === 'deny' || outside || hidden ? 'deny' : global;
+    const project = scopeKeyOf(s) === NO_PROJECT ? 'sessions with no project' : projectOf(s)?.name;
+    const tip = global === 'deny' ? `${p.title} may see no session. Click to change that under By plugin.`
+      : outside ? `${p.title} sees only ${scopeWords(p.id)}, not ${project}. Click to change its projects.`
+      : hidden ? `Hidden from ${p.title}. Click to let it see “${s.name}” again.`
+      : global === 'allow' ? `${p.title} may see “${s.name}”. Click to hide it from ${p.title}.`
+      : `${p.title} asks before it sees your sessions; you pick its projects then. Click to hide “${s.name}” from it whatever you pick.`;
+    return h('button', {
+      class: 'chip plugin-chip ' + st, title: tip, 'aria-pressed': String(st !== 'deny'),
+      onclick: () => (global === 'deny' ? setPermsBy('plugin') : outside ? changePluginScope(p) : setPluginSeesSession(p.id, s.id, hidden)),
+    }, decisionMark(st, tip), p.title,
+    global !== 'deny' && (outside ? h('span', { class: 'dim' }, ' · not in its projects') : hidden ? h('span', { class: 'dim' }, ' · hidden') : null));
+  });
+}
+/** Each session, with the plugins that ask to see sessions and whether each sees it. */
+function permsBySession() {
+  const sessions = state.sessions;
+  if (!sessions.length) return h('div', { class: 'perms-empty' }, h('p', {}, 'You have no sessions.'));
+  return sessions.map((s) => h('section', { class: 'perms-card' },
+    h('header', {}, h('i', { class: 'dot ' + statusClass(s) }), h('b', {}, s.name), projectTag(s)),
+    h('div', { class: 'perms-row' }, h('div', { class: 'perms-what' }, h('b', {}, 'Plugins'), h('span', { class: 'dim' }, 'Click one to hide this session from it, or show it again.')),
+      h('div', { class: 'perms-who' }, pluginChips(s)))));
 }
 
 /** A session as plugins allowed to see sessions are told it. status is statusClass's: exited, asking (needs your answer), attention (finished, waiting for you), working or running (idle). */
@@ -5632,10 +5938,11 @@ const pluginSessionInfo = (s) => ({
  *   showSession { sessionId } → opens the session, as clicking its tab would
  */
 async function pluginRequest(p, m) {
+  // A session hidden from the plugin is, to it, a session that doesn't exist.
+  const sees = (id) => state.byId.has(id) && pluginSeesSession(p.id, id);
   const sessionArg = () => {
-    const s = state.byId.get(m.sessionId);
-    if (!s) throw new Error('There is no such session.');
-    return s;
+    if (!sees(m.sessionId)) throw new Error('There is no such session.');
+    return state.byId.get(m.sessionId);
   };
   const NEEDS = { sessions: 'sessions', activity: 'sessions', folders: 'sessions', showSession: 'sessions' };
   const kind = NEEDS[m.name];
@@ -5643,9 +5950,9 @@ async function pluginRequest(p, m) {
   if (!p.access.includes(kind)) throw new Error(`Its plugin.json doesn't ask for "${kind}" access.`);
   if (!await pluginAllowed(p, kind)) throw new Error(`It isn't allowed to ${PLUGIN_ACCESS[kind].verb}.`);
   switch (m.name) {
-    case 'sessions': return state.sessions.map(pluginSessionInfo);
+    case 'sessions': return state.sessions.filter((s) => sees(s.id)).map(pluginSessionInfo);
     case 'activity': {
-      const ids = (Array.isArray(m.ids) ? m.ids : []).filter((id) => typeof id === 'string' && state.byId.has(id)).slice(0, 100);
+      const ids = (Array.isArray(m.ids) ? m.ids : []).filter((id) => typeof id === 'string' && sees(id)).slice(0, 100);
       const have = m.have && typeof m.have === 'object' ? m.have : {};
       return request('plugins.activity', { ids, have: Object.fromEntries(ids.filter((id) => have[id]).map((id) => [id, { conversation: String(have[id].conversation ?? ''), version: Number(have[id].version) || 0 }])) });
     }
@@ -5823,7 +6130,7 @@ $('#docTabs').addEventListener('contextmenu', (e) => {
 });
 
 // While split, the side you click or tab into has your attention (see attend).
-for (const id of ['#diffDoc', '#convDoc', '#pluginDoc']) {
+for (const id of ['#diffDoc', '#convDoc', '#pluginDoc', '#permsDoc']) {
   for (const type of ['pointerdown', 'focusin']) $(id).addEventListener(type, () => attend(docs.side), true);
 }
 for (const type of ['pointerdown', 'focusin']) $('#termPane').addEventListener(type, () => attend('terminal'), true);

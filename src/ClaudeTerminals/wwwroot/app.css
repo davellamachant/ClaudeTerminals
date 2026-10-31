@@ -985,6 +985,43 @@ body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; user-selec
 /* ---------------------------------------------------------------- Project view */
 #projectDoc { position: absolute; inset: 0; z-index: 20; display: flex; flex-direction: column; background: var(--editor-bg); }
 #pluginDoc { position: absolute; inset: 0; z-index: 20; background: var(--editor-bg); }
+#permsDoc { position: absolute; inset: 0; z-index: 20; display: flex; flex-direction: column; background: var(--editor-bg); }
+#permsDoc .diff-toolbar .seg { align-self: center; }
+#permsDoc .diff-toolbar .seg-btn { padding: 2px 12px; font-size: 12px; white-space: nowrap; }
+#permsBody { flex: 1; min-height: 0; overflow: auto; padding: 16px 16px 32px; outline: none; display: grid; grid-template-columns: minmax(0, 920px); gap: 14px; align-content: start; }
+.perms-card { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; }
+.perms-card > header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border-soft); background: var(--panel-2); border-radius: 4px 4px 0 0; min-width: 0; }
+.perms-card > header span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.perms-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 10px 12px; }
+.perms-row + .perms-row { border-top: 1px solid var(--border-soft); }
+.perms-what { flex: 1 1 260px; min-width: 0; display: grid; gap: 2px; }
+.perms-what span.dim { font-size: 12px; }
+.perms-who { display: flex; flex-wrap: wrap; gap: 6px; }
+.perms-seg { flex: none; align-self: center; }
+.perms-seg .seg-btn { padding: 4px 12px; font-size: 12px; white-space: nowrap; display: inline-flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.25; }
+.perms-note { margin: 0; font-size: 12px; }
+.perms-empty { color: var(--text-dim); }
+.perms-empty .btn { margin-top: 4px; }
+.decision-mark { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%; flex: none; }
+.decision-mark svg.ic { width: 12px; height: 12px; stroke-width: 2; }
+.decision-mark.allow { color: var(--ok); background: color-mix(in srgb, var(--ok) 16%, transparent); }
+.decision-mark.ask { color: var(--attention); background: color-mix(in srgb, var(--attention) 16%, transparent); }
+.decision-mark.deny { color: var(--st-d); background: color-mix(in srgb, var(--st-d) 16%, transparent); }
+.plugin-chip { gap: 6px; padding-left: 3px; height: 24px; }
+.plugin-chip .decision-mark { width: 18px; height: 18px; }
+.plugin-chip.deny { color: var(--text-faint); }
+.plugin-chip.deny:hover { color: var(--text-dim); }
+.perms-hidden { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); margin-top: 4px; }
+.perms-hidden .decision-mark { width: 16px; height: 16px; }
+.perms-hidden .decision-mark svg.ic { width: 10px; height: 10px; }
+.link-btn { border: none; background: none; padding: 0; color: var(--link); cursor: pointer; font: inherit; }
+.link-btn:hover { text-decoration: underline; }
+.decision-mark.scope { color: var(--text-dim); background: var(--panel-2); }
+.scope-boxes { display: grid; gap: 6px; padding-left: 24px; }
+.scope-boxes.off { opacity: .5; }
+.scope-boxes .dim { font-size: 11px; }
+.perms-radios { display: grid; gap: 6px; margin: 12px 0; }
+.perms-radio { display: flex; align-items: center; gap: 8px; cursor: pointer; }
 .plugin-frame { display: block; width: 100%; height: 100%; border: 0; background: var(--editor-bg); }
 /* A side panel plugin: its frame fills the group under the tab row. */
 .dock-frames { flex: 1; min-height: 0; display: flex; }
