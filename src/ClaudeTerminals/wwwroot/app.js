@@ -4782,7 +4782,7 @@ function applyAccent() {
 // The host checks the repository's latest GitHub release; an update shows as a button in the title bar. Installing
 // downloads and checks the installer, closes the app, updates silently and reopens it.
 
-const UPDATE_EVERY_MS = 6 * 60 * 60 * 1000;
+const UPDATE_EVERY_MS = 15 * 60 * 1000;
 const updates = { info: null, current: null, checking: false, installing: false, auto: store.get('autoUpdateCheck', true) };
 
 async function checkForUpdates(manual = false) {
@@ -5207,7 +5207,7 @@ request('app.version').then((v) => {
   $('#appVersion').replaceChildren(`v${v}`, iconEl('chevD'));   // the chevron says it opens a menu
 }).catch(() => {});
 $('#appVersion').addEventListener('click', (e) => { const r = e.currentTarget.getBoundingClientRect(); versionMenu(r.right - 260, r.bottom + 2); });
-// Soon after start (not during it), then every few hours; never when turned off.
+// Soon after start (not during it), then every 15 minutes; never when turned off.
 setTimeout(() => { if (updates.auto) checkForUpdates(); }, 15_000);
 setInterval(() => { if (updates.auto) checkForUpdates(); }, UPDATE_EVERY_MS);
 setTimeout(checkNotices, 5_000);

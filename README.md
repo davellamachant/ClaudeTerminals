@@ -330,7 +330,7 @@ A theme is only data: the app takes the names above and checks each value, so it
 
 ### Updates
 
-A few seconds after starting, and every 6 hours, the app checks this repository's latest GitHub release (an anonymous request; nothing about you or your sessions is sent). When there's a newer version, an **Update to x.y.z** button appears in the title bar, showing what's new. *Update and restart* downloads the installer, checks it against the SHA-256 GitHub publishes for it (it won't run a file that doesn't match), closes the app, installs silently and reopens it. Running sessions carry on in the conversations they were in. The version is shown at the top right and in the window title; clicking it offers *Check for updates* and turns the automatic check off.
+A few seconds after starting, and every 15 minutes, the app checks this repository's latest GitHub release (an anonymous request; nothing about you or your sessions is sent). When there's a newer version, an **Update to x.y.z** button appears in the title bar, showing what's new. *Update and restart* downloads the installer, checks it against the SHA-256 GitHub publishes for it (it won't run a file that doesn't match), closes the app, installs silently and reopens it. Running sessions carry on in the conversations they were in. The version is shown at the top right and in the window title; clicking it offers *Check for updates* and turns the automatic check off.
 
 ### Tips and offers
 
