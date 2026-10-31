@@ -301,6 +301,8 @@ Without `access`, that's all a plugin learns. The session id tells clicks on dif
 | `folders` `{ sessionId }` | The top-level folders of the session's repository with how many tracked files each holds: `{ root, folders: [{ name, files }] }`, `root` being the repository's main worktree. `null` outside Git. |
 | `showSession` `{ sessionId }` | Opens the session, as clicking its tab would. |
 
+[`samples/plugins/floor-plan`](samples/plugins/floor-plan) is a plugin that uses them: a project's sessions on a map of its code, each top-level folder a room and each session standing at the file it's working on, with a slider to rewind. To try it, copy the folder into your plugins folder.
+
 **What a plugin can't do.** A plugin is only a page. It's given no terminals, files or Git, no sessions unless you allowed it to see them, and it can't reach the app:
 - it runs in a sandboxed frame with an origin of its own, so it can't read or change the app's page, or another plugin's;
 - the app listens to it only for the messages above, never through the bridge the app's own page uses, and answers a request only with what that plugin was allowed to see;
