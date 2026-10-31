@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace ClaudeTerminals.Relay;
 
 /// <summary>A session as the relay knows it: what another session is told about it, and what rules are judged by.</summary>
@@ -32,7 +34,9 @@ internal sealed class RelayException(string message) : Exception(message);
 /// a name it gives. A message goes into the other session's inbox only as <see cref="RelayPolicy"/> allows; with no
 /// rule it waits while you're asked (<see cref="Asked"/>), and is delivered or dropped by your answer. The receiving
 /// agent reads its inbox through a tool, so a message reaches it as data from another agent, not as your prompt.
-/// Every message is logged (<see cref="Log"/>). Thread safe; events are raised on the caller's thread, outside the lock.
+/// Every message is logged (<see cref="Log"/>). Unread and waiting messages and the log are kept between runs (a file
+/// written shortly after each change, and by <see cref="Flush"/>). Thread safe; events are raised on the caller's thread,
+/// outside the lock.
 /// </summary>
 internal sealed class RelayHub
 {
@@ -63,11 +67,76 @@ internal sealed class RelayHub
     private readonly Dictionary<string, TaskCompletionSource> arrivals = [];   // session → done when something reaches its inbox
     private int logVersion;
 
-    public RelayHub(RelayPolicy policy, Func<DateTime>? now = null)
+    private readonly string? path;
+    private System.Threading.Timer? saveTimer;
+
+    /// <param name="path">Where unread and waiting messages and the log are kept between runs; null for this run only.</param>
+    public RelayHub(RelayPolicy policy, Func<DateTime>? now = null, string? path = null)
     {
         this.policy = policy;
         this.now = now ?? (() => DateTime.UtcNow);
+        this.path = path;
+        if (path != null) Load(path);
         policy.Changed += Recheck;
+        Changed += ScheduleSave;   // everything that changes what's kept raises Changed
+    }
+
+    // ---- kept between runs
+
+    private static readonly JsonSerializerOptions FileOptions = new(JsonSerializerDefaults.Web);
+
+    private sealed record Waits(string From, string To, List<RelayMessage> Messages);
+    private sealed record Kept(Dictionary<string, List<RelayMessage>> Inboxes, List<Waits> Waiting, List<RelayLogEntry> Log);
+
+    private void Load(string file)
+    {
+        try
+        {
+            if (!File.Exists(file) || JsonSerializer.Deserialize<Kept>(File.ReadAllText(file), FileOptions) is not { } kept) return;
+            foreach (var (id, list) in kept.Inboxes ?? []) if (list?.Count > 0) inboxes[id] = list;
+            foreach (var w in kept.Waiting ?? []) if (w.Messages?.Count > 0) waiting[(w.From, w.To)] = w.Messages;
+            log.AddRange((kept.Log ?? []).TakeLast(MaxLog));
+        }
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            // A damaged file loses the messages kept, not the app.
+        }
+    }
+
+    /// <summary>Writes what's kept a moment after the last change, so a burst of messages is written once.</summary>
+    private void ScheduleSave()
+    {
+        if (path == null) return;
+        lock (gate)
+        {
+            saveTimer ??= new System.Threading.Timer(_ => Flush());
+            saveTimer.Change(TimeSpan.FromSeconds(1), Timeout.InfiniteTimeSpan);
+        }
+    }
+
+    /// <summary>Writes what's kept now (as the app closes).</summary>
+    public void Flush()
+    {
+        if (path == null) return;
+        string json;
+        lock (gate)
+        {
+            json = JsonSerializer.Serialize(new Kept(
+                inboxes.ToDictionary(x => x.Key, x => x.Value.ToList()),
+                waiting.Select(w => new Waits(w.Key.From, w.Key.To, w.Value.ToList())).ToList(),
+                [.. log]), FileOptions);
+        }
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            var temp = path + ".tmp";
+            File.WriteAllText(temp, json);
+            File.Move(temp, path, true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Written next time something changes.
+        }
     }
 
     public RelayPolicy Policy => policy;
@@ -94,12 +163,14 @@ internal sealed class RelayHub
         lock (gate)
         {
             peers = list.ToDictionary(p => p.Id);
-            foreach (var key in waiting.Keys.Where(k => !peers.ContainsKey(k.From) || !peers.ContainsKey(k.To)).ToList())
+            static bool Plugin(string id) => id.StartsWith("plugin:", StringComparison.Ordinal);
+            bool Gone(string id) => !Plugin(id) && !peers.ContainsKey(id);
+            foreach (var key in waiting.Keys.Where(k => Gone(k.From) || Gone(k.To)).ToList())
             {
                 foreach (var m in waiting[key]) SetStatus(m, RelayStatus.Dropped);
                 dropped += waiting.Remove(key) ? 1 : 0;
             }
-            foreach (var id in inboxes.Keys.Where(id => !peers.ContainsKey(id)).ToList())
+            foreach (var id in inboxes.Keys.Where(Gone).ToList())
             {
                 foreach (var m in inboxes[id]) SetStatus(m, RelayStatus.Dropped);
                 inboxes.Remove(id);

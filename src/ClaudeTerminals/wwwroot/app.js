@@ -38,6 +38,8 @@ const PATHS = {
   list: 'M5.8 4h7.7M5.8 8h7.7M5.8 12h7.7M2.6 4h.1M2.6 8h.1M2.6 12h.1',
   plug: 'M6 1.5v3M10 1.5v3M4 4.5h8v2.5a4 4 0 0 1-8 0zM8 11v3.5',   // a plugin's tab   // the Project view: a list of the project's worktrees
   shield: 'M8 1.5l5.5 2v4.2c0 3.2-2.3 5.6-5.5 6.8-3.2-1.2-5.5-3.6-5.5-6.8V3.5z',   // the Permissions view
+  link: 'M6.8 9.2l2.4-2.4M7.3 4.7l1-1a2.6 2.6 0 0 1 3.7 3.7l-1 1M8.7 11.3l-1 1a2.6 2.6 0 0 1-3.7-3.7l1-1',   // a session that may message others
+  mail: 'M2 4h12v8.5H2zM2 4.5l6 4.5 6-4.5',   // unread messages
   markAllow: 'M3.5 8.5l3 3 6-7',                                          // Permissions: allowed
   markAsk: 'M5.8 5.8a2.2 2.2 0 1 1 3.2 2c-.7.4-1 .9-1 1.6v.6M8 12.6h.01',  // Permissions: you're asked first
   markDeny: 'M8 2a6 6 0 1 0 0 12A6 6 0 1 0 8 2M3.8 3.8l8.4 8.4',         // Permissions: not allowed
@@ -1054,6 +1056,7 @@ function renderTileHeader(s) {
     h('span', { class: 'dot ' + statusClass(s), title: statusText(s) }),
     h('span', { class: 'tile-name', title: conversationLine(s) }, s.name),
     projectTag(s),
+    relayTileMark(s),
     h('span', { class: 'tile-title', title: s.title }, s.title),
     gs && h('button', {
       class: 'chip', title: `${gs.count} changed file(s) on ${gs.branch} — show in Git Changes`,
@@ -1424,6 +1427,7 @@ function sessionMenu(s, x, y, from = 'session') {
     state.expandedId === s.id ? { label: 'Back to all sessions', kbd: 'Shift+Esc', action: collapse } : { label: 'Expand', action: () => expand(s.id) },
     { label: 'Show Git changes', action: () => showGit(s.id) },
     { label: 'Show conversation', action: () => openConversation(s) },
+    { label: 'Permissions…', action: () => openPermissions('session', s.id) },
     { label: `Project view: ${projectName(groupOf(s))}${projectName(groupOf(s)).endsWith('s') ? '’' : '’s'} worktrees side by side`, action: () => openProjectView(groupOf(s)) },
     '-',
     { label: 'Resume a different conversation…', action: () => showResumeDialog(s) },
@@ -5641,6 +5645,7 @@ function applyGrants(grants) {
     if (g.hidden?.length) pluginHidden[id] = g.hidden;
     if (g.changed) pluginChanged.add(id);
   }
+  renderPermsButton();
   checkPluginSight();
   permissionsChanged();
 }
@@ -5848,13 +5853,44 @@ function isPermsTab(t) { return t?.kind === 'permissions'; }   // a declaration:
 const permsView = { by: store.get('permissionsBy', 'plugin'), open: new Set(), log: null, logVersion: -1, logLoading: false, logFor: null, logOpen: new Set() };
 
 /** Opens the Permissions view, a tab like a plugin's, beside whichever session is open. */
-async function openPermissions(by = null) {
+async function openPermissions(by = null, sessionId = null) {
   if (by) setPermsBy(by);
+  if (sessionId && by === 'session') permsView.open.add(sessionId);   // its messaging rows unfolded
+  if (sessionId && by === 'messages') permsView.logFor = sessionId;
   if (!docs.tabs.some((t) => t.key === PERMS_KEY)) docs.tabs.push({ key: PERMS_KEY, kind: 'permissions', preview: false, scrollTop: null });
   activateDoc(PERMS_KEY);
   await loadPlugins();   // a plugin added since shows up
   permissionsChanged();
+  if (sessionId && by === 'session') $(`#permsBody [data-session="${sessionId}"]`)?.scrollIntoView({ block: 'start' });
 }
+
+/**
+ * A session tile's mark: its unread messages (opens them in Permissions › Messages), or a link when it may message a
+ * session by a rule of its own (opens its rules). Reads the relay state directly: tiles are drawn before the
+ * Permissions code below has run.
+ */
+function relayTileMark(s) {
+  const unread = relay.unread[s.id] ?? 0;
+  if (unread) {
+    return h('button', { class: 'chip relay-tile', title: `${unread} unread message${unread === 1 ? '' : 's'} from other sessions: show them`, onclick: () => openPermissions('messages', s.id) },
+      iconEl('mail'), String(unread));
+  }
+  const allows = relay.rules.filter((r) => r.from === s.id && r.decision === 'allow').length;
+  if (!allows) return null;
+  return h('button', { class: 'icon-btn relay-tile', title: 'It may message other sessions by rules of its own: show them', onclick: () => openPermissions('session', s.id) }, iconEl('link'));
+}
+
+/** The title bar's Permissions button: shown once anything is allowed, or a message waits for your answer (counted on it). */
+function renderPermsButton() {
+  const b = $('#btnPerms');
+  if (!b) return;
+  const waiting = relay.waiting.reduce((n, w) => n + w.count, 0);
+  const any = waiting > 0 || relay.rules.some((r) => r.decision === 'allow') || Object.keys(pluginAccess).length > 0;
+  b.hidden = !any;
+  b.title = waiting ? `Permissions: ${waiting} message${waiting === 1 ? '' : 's'} waiting for your answer` : 'Permissions: what plugins and sessions may do';
+  fill(b, iconEl('shield'), waiting ? h('span', { class: 'plugin-btn-count' }, String(Math.min(waiting, 99))) : null);
+}
+$('#btnPerms')?.addEventListener('click', () => openPermissions(relay.waiting.length ? 'session' : null));
 
 function setPermsBy(by) {
   permsView.by = by;
@@ -5923,7 +5959,7 @@ function permsMessages() {
       h('select', { class: 'log-filter', 'aria-label': 'Show messages of', onchange: (e) => { permsView.logFor = e.target.value || null; permissionsChanged(); } },
         h('option', { value: '' }, 'Every session'),
         agents.map((s) => h('option', { value: s.id, selected: s.id === pick }, s.name))),
-      h('span', { class: 'dim' }, `${entries.length} message${entries.length === 1 ? '' : 's'}, kept while the app runs`),
+      h('span', { class: 'dim' }, `${entries.length} message${entries.length === 1 ? '' : 's'}, the latest 500 are kept`),
       h('span', { class: 'spacer' }),
       h('button', { class: 'btn', title: 'Forget what was read, refused or dropped (unread and waiting messages stay)', onclick: () => request('relay.clearLog').catch((e) => toast(e.message, true)) }, 'Clear')),
     !entries.length ? h('p', { class: 'perms-empty' }, permsView.log ? 'No messages yet.' : 'Loading…')
@@ -6101,7 +6137,7 @@ function permsBySession() {
     ...sessions.map((s) => {
       const agent = agentOf(s.command);
       const unread = relay.unread[s.id] ?? 0;
-      return h('section', { class: 'perms-card' },
+      return h('section', { class: 'perms-card', 'data-session': s.id },
         h('header', {}, h('i', { class: 'dot ' + statusClass(s) }), h('b', {}, s.name), projectTag(s), agent && h('span', { class: 'dim' }, agent.name),
           unread > 0 && h('span', { class: 'chip', title: 'Messages it hasn’t read yet' }, `${unread} unread`)),
         agent ? permsMessaging(s) : h('div', { class: 'perms-row dim' }, 'Not a coding agent, so it can’t send or read messages.'),
@@ -6167,6 +6203,8 @@ function relayChanged(st) {
   Object.assign(relay, st);
   if (relay.asking && !relay.waiting.some((w) => w.from === relay.asking.from && w.to === relay.asking.to)) closeModal();
   renderPermsPause();
+  renderPermsButton();
+  for (const s of state.sessions) renderTileHeader(s);   // their marks
   permissionsChanged();
   for (const s of state.sessions) relayNotify(s);
 }
@@ -6182,7 +6220,7 @@ function onRelayMessage(m) {
   relay.unread[m.to] = m.unread;
   (relay.from[m.to] ??= new Set()).add(m.from);
   const s = state.byId.get(m.to);
-  if (s) relayNotify(s);
+  if (s) { renderTileHeader(s); relayNotify(s); }
   permissionsChanged();
 }
 

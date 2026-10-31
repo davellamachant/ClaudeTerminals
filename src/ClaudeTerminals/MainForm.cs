@@ -162,7 +162,8 @@ internal sealed class MainForm : Form
     private readonly PanelStore panelStore = new(Path.Combine(SessionStore.AppDataFolder, "panels.json"));
 
     /// <summary>Messages between sessions, through the panel server's tools; which session may message which is kept in relay.json.</summary>
-    private readonly RelayHub relay = new(new RelayPolicy(Path.Combine(SessionStore.AppDataFolder, "relay.json")));
+    private readonly RelayHub relay = new(new RelayPolicy(Path.Combine(SessionStore.AppDataFolder, "relay.json")),
+        path: Path.Combine(SessionStore.AppDataFolder, "relay-messages.json"));
 
     /// <summary>Your answers about plugins (see PluginGrants), kept in plugin-grants.json.</summary>
     private readonly PluginGrants grants = new(Path.Combine(SessionStore.AppDataFolder, "plugin-grants.json"));
@@ -461,6 +462,7 @@ internal sealed class MainForm : Form
         foreach (var s in sessions.Values) CatchUpConversation(s);   // so each reopens where it was
         foreach (var s in sessions.Values) s.Dispose();
         panelServer?.Dispose();
+        relay.Flush();   // unread and waiting messages, for next time
         base.OnFormClosing(e);
     }
 

@@ -302,6 +302,31 @@ public class RelayTests
     }
 
     [Fact]
+    public void UnreadAndWaitingMessagesAndTheLogAreKeptBetweenRuns()
+    {
+        var file = Path.Combine(Path.GetTempPath(), $"relay-messages-{Guid.NewGuid():N}.json");
+        try
+        {
+            var policy = new RelayPolicy(null);
+            var hub = new RelayHub(policy, path: file);
+            var peers = new[] { Peer("a", "p1"), Peer("b", "p1"), Peer("c", "p2") };
+            hub.SetPeers(peers);
+            policy.Set("a", "b", RelayDecision.Allow);
+            hub.Send("a", "b", "unread one");
+            hub.Send("a", "c", "waiting one");
+            hub.Flush();
+
+            var again = new RelayHub(new RelayPolicy(null), path: file);
+            again.SetPeers(peers);   // before plugins are known
+            Assert.Equal(1, again.Unread("b"));
+            Assert.Equal("unread one", again.Read("b").Single().Text);
+            Assert.Equal(("a", "c"), again.Waiting().Select(w => (w.From, w.To)).Single());
+            Assert.Contains(again.Log(), e => e.Message.Text == "waiting one" && e.Status == RelayStatus.Waiting);
+        }
+        finally { File.Delete(file); }
+    }
+
+    [Fact]
     public void ADamagedFileMeansAskingAgain()
     {
         var path = Path.Combine(Path.GetTempPath(), $"relay-{Guid.NewGuid():N}.json");
