@@ -132,7 +132,7 @@ internal sealed class PanelServer : IDisposable
             try
             {
                 using var doc = JsonDocument.Parse(body.ToArray());
-                reply = mcp.Handle(session, doc.RootElement);
+                reply = await mcp.HandleAsync(session, doc.RootElement);
             }
             catch (JsonException)
             {

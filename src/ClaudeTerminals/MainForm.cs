@@ -175,6 +175,7 @@ internal sealed class MainForm : Form
         rules = relay.Policy.Rules().Select(r => new { from = r.From, to = r.To, decision = r.Decision.ToString().ToLowerInvariant() }),
         waiting = relay.Waiting().Select(w => new { from = w.From, to = w.To, count = w.Count }),
         unread = sessions.Keys.Select(id => (id, n: relay.Unread(id))).Where(x => x.n > 0).ToDictionary(x => x.id, x => x.n),
+        logVersion = relay.LogVersion,
     };
 
     private static RelayDecision ParseDecision(string s) => s switch
@@ -808,13 +809,27 @@ internal sealed class MainForm : Form
                 return null;
             case "relay.answer":
             {
-                // Your answer to a session asking to message another: a rule for that session, its project or anyone, or
-                // (dismiss) neither, dropping what's waiting.
+                // Your answer to a session asking to message another. scope: "once" (this time only: delivered when
+                // allowed, dropped when not), or a rule: "session" (that session), "project" (its project), "*" (anyone),
+                // or for every session "all-project" (the same project) or "all" (anyone).
                 var from = Str(msg, "from");
                 var to = Str(msg, "to");
-                var scope = Str(msg, "scope");
-                if (scope == "once") { relay.Dismiss(from, to); return null; }
-                relay.Policy.Set(from, scope is RelayPolicy.SameProject or RelayPolicy.Anyone ? scope : to, Bool(msg, "allow") ? RelayDecision.Allow : RelayDecision.Deny);
+                var allow = Bool(msg, "allow");
+                var (ruleFrom, ruleTo) = Str(msg, "scope") switch
+                {
+                    "once" => (null, null),
+                    RelayPolicy.SameProject => (from, RelayPolicy.SameProject),
+                    RelayPolicy.Anyone => (from, RelayPolicy.Anyone),
+                    "all-project" => (RelayPolicy.Anyone, RelayPolicy.SameProject),
+                    "all" => (RelayPolicy.Anyone, RelayPolicy.Anyone),
+                    _ => (from, to),
+                };
+                if (ruleFrom == null) relay.AnswerOnce(from, to, allow);
+                else
+                {
+                    relay.Policy.Set(ruleFrom, ruleTo!, allow ? RelayDecision.Allow : RelayDecision.Deny);
+                    relay.AnswerOnce(from, to, allow);   // what waits, if the rule didn't settle it (a broader rule a closer one overrides)
+                }
                 return null;
             }
             case "relay.pause":
@@ -822,6 +837,15 @@ internal sealed class MainForm : Form
                 return null;
             case "relay.unread":
                 return relay.Unread(Str(msg, "id"));
+            case "relay.log":
+                return relay.Log().Select(e => new
+                {
+                    id = e.Message.Id, from = e.Message.From, to = e.Message.To, text = e.Message.Text, sent = e.Message.Sent, replyTo = e.Message.ReplyTo,
+                    thread = e.Message.Thread, turn = e.Message.Turn, status = e.Status.ToString().ToLowerInvariant(), at = e.At,
+                });
+            case "relay.clearLog":
+                relay.ClearLog();
+                return null;
             case "reorder":
             {
                 var ids = msg.GetProperty("ids").EnumerateArray().Select(x => x.GetString()!).Where(sessions.ContainsKey).ToList();

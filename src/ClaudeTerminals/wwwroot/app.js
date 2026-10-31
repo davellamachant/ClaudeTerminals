@@ -160,7 +160,7 @@ host.addEventListener('message', (e) => {
  * whether they're paused, what waits for your answer ({ from, to, count }), each session's unread count, and the
  * sessions to tell they have messages once they're idle. Up here, as tile code reads it.
  */
-const relay = { paused: false, rules: [], waiting: [], unread: {}, told: {}, from: {}, asks: [], asking: null };
+const relay = { paused: false, rules: [], waiting: [], unread: {}, logVersion: 0, told: {}, from: {}, asks: [], asking: null };
 
 const state = {
   sessions: [],              // ordered session objects
@@ -5807,7 +5807,11 @@ function askPluginAccess(p, kind) {
 
 const PERMS_KEY = 'permissions';
 function isPermsTab(t) { return t?.kind === 'permissions'; }   // a declaration: tab code above may run first
-const permsView = { by: store.get('permissionsBy', 'plugin'), open: new Set() };   // by: 'plugin' or 'session'; open: sessions whose messaging rows are unfolded
+/**
+ * by: 'plugin', 'session' or 'messages'; open: sessions whose messaging rows are unfolded; the Messages tab's log as last
+ * read (and the relay.logVersion it was read at), the session it's showing (null: all) and the messages opened in it.
+ */
+const permsView = { by: store.get('permissionsBy', 'plugin'), open: new Set(), log: null, logVersion: -1, logLoading: false, logFor: null, logOpen: new Set() };
 
 /** Opens the Permissions view, a tab like a plugin's, beside whichever session is open. */
 async function openPermissions(by = null) {
@@ -5848,9 +5852,63 @@ function permsChoice(id, kind, name) {
 }
 
 function renderPermissions() {
-  fill($('#permsBy'), [['plugin', 'By plugin'], ['session', 'By session']].map(([by, label]) =>
+  fill($('#permsBy'), [['plugin', 'By plugin'], ['session', 'By session'], ['messages', 'Messages']].map(([by, label]) =>
     h('button', { class: 'seg-btn' + (permsView.by === by ? ' active' : ''), role: 'tab', 'aria-selected': String(permsView.by === by), onclick: () => setPermsBy(by) }, label)));
-  fill($('#permsBody'), permsView.by === 'session' ? permsBySession() : permsByPlugin());
+  fill($('#permsBody'), permsView.by === 'session' ? permsBySession() : permsView.by === 'messages' ? permsMessages() : permsByPlugin());
+}
+
+// ---- the Messages tab: what sessions sent each other, and what became of each message
+
+const LOG_STATUS = {
+  waiting: { word: 'Waiting for your answer', mark: 'ask' }, delivered: { word: 'Unread', mark: 'allow' }, read: { word: 'Read', mark: 'allow' },
+  refused: { word: 'Not allowed', mark: 'deny' }, dropped: { word: 'Dropped', mark: 'deny' },
+};
+
+/** Reads the log again when it has changed since it was last read (relay.logVersion), then redraws. */
+async function loadRelayLog() {
+  if (permsView.logLoading || permsView.logVersion === relay.logVersion) return;
+  permsView.logLoading = true;
+  try {
+    const version = relay.logVersion;
+    permsView.log = await request('relay.log');
+    permsView.logVersion = version;
+  } catch (e) { toast(e.message, true); }
+  finally { permsView.logLoading = false; }
+  permissionsChanged();
+}
+
+/** The log, newest first, for every session or the one picked; a message opens to its whole text. */
+function permsMessages() {
+  if (permsView.logVersion !== relay.logVersion) loadRelayLog();
+  const name = (id) => state.byId.get(id)?.name ?? 'a closed session';
+  const pick = permsView.logFor;
+  const entries = (permsView.log ?? []).filter((e) => !pick || e.from === pick || e.to === pick);
+  const agents = state.sessions.filter((s) => agentOf(s.command));
+  return [
+    h('div', { class: 'log-bar' },
+      h('select', { class: 'log-filter', 'aria-label': 'Show messages of', onchange: (e) => { permsView.logFor = e.target.value || null; permissionsChanged(); } },
+        h('option', { value: '' }, 'Every session'),
+        agents.map((s) => h('option', { value: s.id, selected: s.id === pick }, s.name))),
+      h('span', { class: 'dim' }, `${entries.length} message${entries.length === 1 ? '' : 's'}, kept while the app runs`),
+      h('span', { class: 'spacer' }),
+      h('button', { class: 'btn', title: 'Forget what was read, refused or dropped (unread and waiting messages stay)', onclick: () => request('relay.clearLog').catch((e) => toast(e.message, true)) }, 'Clear')),
+    !entries.length ? h('p', { class: 'perms-empty' }, permsView.log ? 'No messages yet.' : 'Loading…')
+    : h('section', { class: 'perms-card log-list' }, entries.map((e) => {
+      const st = LOG_STATUS[e.status] ?? LOG_STATUS.dropped;
+      const first = e.text.split('\n')[0];
+      return h('details', { class: 'log-row ' + e.status, open: permsView.logOpen.has(e.id), ontoggle: (ev) => { if (ev.target.open) permsView.logOpen.add(e.id); else permsView.logOpen.delete(e.id); } },
+        h('summary', {},
+          decisionMark(st.mark, st.word),
+          h('span', { class: 'log-time', title: new Date(e.sent).toLocaleString() }, new Date(e.sent).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })),
+          h('b', {}, name(e.from)), h('span', { class: 'dim' }, '→'), h('b', {}, name(e.to)),
+          h('span', { class: 'log-text' }, first.length > 160 ? first.slice(0, 160) + '…' : first),
+          e.turn > 1 && h('span', { class: 'chip', title: `Message ${e.turn} of this exchange (it stops at 12)` }, `reply ${e.turn - 1}`),
+          e.status === 'waiting'
+            ? h('button', { class: 'chip perms-waiting', title: 'Answer now', onclick: (ev) => { ev.preventDefault(); askRelay(e.from, e.to); } }, st.word)
+            : h('span', { class: 'chip' }, st.word)),
+        h('pre', { class: 'log-full' }, e.text));
+    })),
+  ];
 }
 
 function permsByPlugin() {
@@ -6115,13 +6173,11 @@ function showRelayAsk() {
   if (!a || !b) { showRelayAsk(); return; }
   relay.asking = next;
   const project = a.project && a.project === b.project ? projectOf(a) : null;
-  let scope = 'pair';
-  const choice = (value, label) => h('label', { class: 'perms-radio' },
-    h('input', { type: 'radio', name: 'relayScope', value, checked: value === 'pair', onchange: () => { scope = value; } }), label);
+  let scope = 'session';
+  const choice = (value, label, tip) => h('label', { class: 'perms-radio', title: tip },
+    h('input', { type: 'radio', name: 'relayScope', value, checked: value === scope, onchange: () => { scope = value; } }), label);
   const answer = (allow) => {
-    const once = allow === null;
-    request('relay.answer', { from: next.from, to: next.to, allow: !!allow, scope: once ? 'once' : scope === 'pair' ? 'session' : scope })
-      .catch((e) => toast(e.message, true));
+    request('relay.answer', { from: next.from, to: next.to, allow, scope }).catch((e) => toast(e.message, true));
     closeModal();
   };
   const agentName = (s) => agentOf(s.command)?.name ?? 'the agent';
@@ -6129,11 +6185,14 @@ function showRelayAsk() {
     h('p', {}, `${agentName(a)} in “${a.name}” wants to send a message to ${agentName(b)} in “${b.name}”. It waits until you answer.`),
     h('p', {}, `The message reaches ${b.name}’s agent as a message from another session, not as your prompt, and it’s told to read it. A message can still ask it to do things, so allow only sessions you’d let work together. ${b.name} can always reply to a message it’s sent.`),
     h('div', { class: 'perms-radios' }, h('b', {}, 'Your answer is for'),
-      choice('pair', `“${a.name}” messaging “${b.name}”`),
+      choice('once', 'This time only', 'What it sent now is delivered or dropped; you’re asked again next time'),
+      choice('session', `“${a.name}” messaging “${b.name}”`),
       project && choice('project', `“${a.name}” messaging any session in ${project.name}`),
-      choice('*', `“${a.name}” messaging any session`)),
+      choice('*', `“${a.name}” messaging any session`),
+      h('b', { class: 'perms-radios-sub' }, 'Or for every session'),
+      project && choice('all-project', 'Any session messaging a session in the same project', 'A rule under All sessions in Permissions'),
+      choice('all', 'Any session messaging any other session', 'A rule under All sessions in Permissions')),
     h('p', { class: 'dim' }, 'You can change it any time in Permissions, on the palette menu.')), [
-    h('button', { class: 'btn', title: 'Drop what it sent, and ask again next time', onclick: () => answer(null) }, 'Not now'),
     h('button', { class: 'btn', 'data-autofocus': true, onclick: () => answer(false) }, 'Don’t allow'),
     h('button', { class: 'btn primary', onclick: () => answer(true) }, 'Allow'),
   ]);

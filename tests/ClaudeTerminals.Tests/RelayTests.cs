@@ -136,6 +136,87 @@ public class RelayTests
     }
 
     [Fact]
+    public void AnExchangeStopsAfterMaxTurns()
+    {
+        var hub = Hub(out var policy);
+        policy.Set("a", "b", RelayDecision.Allow);
+        var last = hub.Send("a", "b", "turn 1").Message!;
+        for (var turn = 2; turn <= RelayHub.MaxTurns; turn++)
+        {
+            var (from, to) = turn % 2 == 0 ? ("b", "a") : ("a", "b");
+            last = hub.Send(from, to, "turn " + turn, replyTo: last.Id).Message!;
+            Assert.Equal(turn, last.Turn);
+        }
+
+        var next = last.To;
+        Assert.Contains("reached", Assert.Throws<RelayException>(() => hub.Send(next, last.From, "one more", replyTo: last.Id)).Message);
+        // A new message starts afresh, under the rules (a may message b).
+        Assert.Equal(1, hub.Send("a", "b", "new topic").Message!.Turn);
+    }
+
+    [Fact]
+    public async Task WaitForReplyReturnsTheReplyAsSoonAsItComes()
+    {
+        var hub = Hub(out var policy);
+        policy.Set("a", "b", RelayDecision.Allow);
+        var question = hub.Send("a", "b", "what changed?").Message!;
+        hub.Send("c", "a", "unrelated");   // waits for an answer: not a reply
+
+        var waiting = hub.WaitForReplyAsync("a", question.Id, TimeSpan.FromSeconds(10));
+        await Task.Delay(50);
+        Assert.False(waiting.IsCompleted);
+        hub.Send("b", "a", "the parser", replyTo: question.Id);
+
+        var reply = await waiting.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("the parser", reply!.Text);
+        Assert.Equal(0, hub.Unread("a"));   // taken, not left to read again
+    }
+
+    [Fact]
+    public async Task WaitForReplyGivesUpAtItsTimeAndLeavesOtherMessagesUnread()
+    {
+        var hub = Hub(out var policy);
+        policy.Set("a", "b", RelayDecision.Allow);
+        policy.Set("b", "a", RelayDecision.Allow);
+        var question = hub.Send("a", "b", "status?").Message!;
+        hub.Send("b", "a", "something else");
+
+        Assert.Null(await hub.WaitForReplyAsync("a", question.Id, TimeSpan.FromMilliseconds(100)));
+        Assert.Equal(1, hub.Unread("a"));
+        Assert.Throws<RelayException>(() => hub.WaitForReplyAsync("a", "not-mine", TimeSpan.Zero).GetAwaiter().GetResult());
+    }
+
+    [Fact]
+    public void TheLogFollowsEachMessage()
+    {
+        var hub = Hub(out var policy);
+        var waits = hub.Send("a", "b", "first").Message!;
+        policy.Set("a", "c", RelayDecision.Deny);
+        hub.Send("a", "c", "refused");
+
+        Assert.Equal(RelayStatus.Waiting, hub.Log().Single(e => e.Message.Id == waits.Id).Status);
+        hub.AnswerOnce("a", "b", deliver: true);   // Allow once: delivered, with no rule made
+        Assert.Equal(RelayStatus.Delivered, hub.Log().Single(e => e.Message.Id == waits.Id).Status);
+        Assert.DoesNotContain(policy.Rules(), r => r.To == "b");
+        hub.Read("b");
+        Assert.Equal(RelayStatus.Read, hub.Log().Single(e => e.Message.Id == waits.Id).Status);
+        Assert.Equal(RelayStatus.Refused, hub.Log().Single(e => e.Message.Text == "refused").Status);
+
+        hub.Send("a", "b", "again");   // still no rule: asks again
+        hub.AnswerOnce("a", "b", deliver: false);
+        Assert.Equal(RelayStatus.Dropped, hub.Log().First().Status);
+        Assert.Equal("again", hub.Log().First().Message.Text);   // newest first
+    }
+
+    [Fact]
+    public void AnswersCanSetTheGlobalRules()
+    {
+        var policy = new RelayPolicy(null);
+        policy.Set(RelayPolicy.Anyone, RelayPolicy.SameProject, RelayDecision.Allow);
+        Assert.Equal(RelayDecision.Allow, policy.Decide("x", "y", sameProject: true).Decision);
+    }
+
+    [Fact]
     public void AnOldMessageCanNoLongerBeRepliedTo()
     {
         var clock = new DateTime(2026, 10, 31, 12, 0, 0, DateTimeKind.Utc);
