@@ -164,8 +164,11 @@ internal static partial class PluginCatalog
     /// ActivityReader) and how many files each top-level folder of a session's repository holds. It's read only: nothing in it
     /// types into a session or changes a file. "message": send messages to the sessions it may see and read their answers
     /// (and, with "inbox": true in its plugin.json, messages sessions send it first), through the same relay sessions use.
+    /// "ask": put a question about sessions to an agent run headless with the user's own sign-in, over their conversations
+    /// (see SessionAssistant); it needs "sessions" too. "type": type text into a session's terminal as if pasted, and press
+    /// Enter when asked to; never into a session stopped at a question.
     /// </summary>
-    public static readonly IReadOnlyList<string> AccessKinds = ["sessions", "message"];
+    public static readonly IReadOnlyList<string> AccessKinds = ["sessions", "message", "ask", "type"];
 
     /// <summary>The manifest's "access": the kinds it names that there are (others are left out, with why).</summary>
     private static List<string> AccessOf(JsonElement root, string name, List<string> problems)
