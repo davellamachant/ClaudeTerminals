@@ -149,9 +149,11 @@ internal static partial class PluginCatalog
     /// What a plugin can ask to see. "sessions": the list of sessions (name, project, folder, repository, whether it's
     /// working or waiting for you), what Claude did in each (prompts, files read and edited, commands, questions; see
     /// ActivityReader) and how many files each top-level folder of a session's repository holds. It's read only: nothing in it
-    /// types into a session or changes a file.
+    /// types into a session or changes a file. "ask": put a question about sessions to an agent run headless with the user's
+    /// own sign-in, over their conversations (see SessionAssistant); it needs "sessions" too. "type": type text into a
+    /// session's terminal as if pasted, and press Enter when asked to; never into a session stopped at a question.
     /// </summary>
-    public static readonly IReadOnlyList<string> AccessKinds = ["sessions"];
+    public static readonly IReadOnlyList<string> AccessKinds = ["sessions", "ask", "type"];
 
     /// <summary>The manifest's "access": the kinds it names that there are (others are left out, with why).</summary>
     private static List<string> AccessOf(JsonElement root, string name, List<string> problems)

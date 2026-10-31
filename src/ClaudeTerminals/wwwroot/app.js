@@ -133,7 +133,7 @@ host.addEventListener('message', (e) => {
       m.ok ? p.resolve(m.result) : p.reject(new Error(m.error));
       break;
     }
-    case 'sessions': syncSessions(m.sessions, m.projects || []); break;
+    case 'sessions': state.agents = m.agents || state.agents; syncSessions(m.sessions, m.projects || []); break;
     case 'output': onOutput(m.id, m.data); break;
     case 'exited': onExited(m.id, m.code); break;
     case 'git.status': onGitStatus(m); break;
@@ -147,6 +147,7 @@ host.addEventListener('message', (e) => {
 
 const state = {
   sessions: [],              // ordered session objects
+  agents: [],                // the coding agents the host knows (AgentProfile.Describe): id, name, programs, choosesId, follows, …
   byId: new Map(),
   expandedId: null,
   projectViewOf: null,       // the project whose Project view is showing: a place of its own, with no session open
@@ -419,14 +420,170 @@ const DEFAULT_COMMAND = 'claude';   // each new session gets a conversation of i
 const MAX_WEBGL = 12;
 
 // ------------------------------------------------------------------ theme
-// System (follows Windows' app mode), Light or Dark. The host reports Windows' app mode with the accent colour; until
-// then the browser's own reading of it stands in.
+// System (follows Windows' app mode), Light, Dark, or a theme: a JSON file of colours, shipped in wwwroot/themes
+// (Nerds) or added to the themes folder (see ThemeCatalog). The host reports Windows' app mode with the accent colour;
+// until then the browser's own reading of it stands in. A theme is light or dark underneath (its base): that fills in
+// every colour it leaves out, and is all Claude and plugins are told.
 
 const theme = { pref: store.get('theme', 'system'), windowsLight: null };
-const isLight = () => theme.pref === 'light' ||
-  (theme.pref === 'system' && (theme.windowsLight ?? matchMedia('(prefers-color-scheme: light)').matches));
+// The themes the host found, and why any couldn't be loaded. The theme in use is also kept here, so it paints at once
+// on the next start rather than once the host has listed the themes.
+const themes = { list: [], problems: [], folder: null, names: null, last: store.get('themeLook', null) };
+const BUILT_IN_THEMES = ['system', 'light', 'dark'];
+/** The theme file in use, or null for System, Light and Dark. */
+const currentTheme = () => BUILT_IN_THEMES.includes(theme.pref) ? null
+  : themes.list.find((t) => t.id === theme.pref) ?? (themes.last?.id === theme.pref ? themes.last : null);
+const isLight = () => {
+  const t = currentTheme();
+  if (t) return t.base === 'light';
+  return theme.pref === 'light' || (theme.pref !== 'dark' && (theme.windowsLight ?? matchMedia('(prefers-color-scheme: light)').matches));
+};
 const themeName = () => (isLight() ? 'light' : 'dark');
-document.documentElement.dataset.theme = themeName();
+
+/**
+ * What the theme in use paints with, or null for System, Light and Dark: its own colours, over those built from the
+ * accent colour for a monochrome theme (see monochromeLook). Until the host has listed the themes, the look kept from
+ * last time stands in.
+ */
+function themeLook() {
+  const t = currentTheme();
+  if (!t) return null;
+  if (!themes.list.includes(t)) return t;   // the kept look
+  const made = t.monochrome ? monochromeLook(accentColour(), t.base === 'light') : {};
+  return {
+    id: t.id, name: t.name, base: t.base, font: t.font, glow: t.glow, monochrome: t.monochrome,
+    colors: { ...made.colors, ...t.colors }, terminal: { ...made.terminal, ...t.terminal }, diff: { ...made.diff, ...t.diff },
+    accent: t.accent ?? made.accent ?? null,
+  };
+}
+
+let themeColors = [];   // the colours the theme in use set on the page, to take off again
+/** Marks the page with the theme: data-theme light or dark for the stylesheet, and a theme's own colours, font and glow. */
+function markTheme(look = themeLook()) {
+  const root = document.documentElement;
+  root.dataset.theme = themeName();
+  for (const name of themeColors) root.style.removeProperty(name);
+  themeColors = Object.entries(look?.colors ?? {}).map(([name, value]) => { root.style.setProperty('--' + name, value); return '--' + name; });
+  if (look?.font) root.style.fontFamily = `"${look.font}", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif`;
+  else root.style.removeProperty('font-family');
+  if (look?.glow) root.dataset.glow = '';
+  else delete root.dataset.glow;
+}
+markTheme(themes.last?.id === theme.pref ? themes.last : null);   // the accent isn't known yet: last time's look
+
+/** Reads the themes again (one added to the folder shows without restarting), and puts the one in use on the page. */
+async function loadThemes() {
+  try {
+    const r = await request('themes.list');
+    const before = themeName();
+    Object.assign(themes, { list: r.themes, problems: r.problems, folder: r.folder, names: r.names });
+    // A theme that's gone (its file deleted, or no longer valid) gives way to System.
+    if (!currentTheme() && !BUILT_IN_THEMES.includes(theme.pref)) theme.pref = 'system';
+    applyTheme(before);
+  }
+  catch (e) { console.error('The themes could not be read', e); }
+}
+
+/** The accent colour picked in Accent colour, as #rrggbb. */
+function accentColour() {
+  const c = accent.choice;
+  return c === 'windows' ? accent.palette?.[3] ?? '#7160e8' : /^#[0-9a-f]{6}$/i.test(c) ? c : '#7160e8';
+}
+
+/** A colour's hue (0–360), saturation and lightness (0–100). */
+function hexToHsl(hex) {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), l = (max + min) / 2, d = max - min;
+  if (!d) return [0, 0, l * 100];
+  const s = d / (1 - Math.abs(2 * l - 1));
+  const h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [(h * 60 + 360) % 360, s * 100, l * 100];
+}
+
+/** #rrggbb for a hue, saturation and lightness (the diff editor only takes hex). */
+function hslHex(h, s, l) {
+  s = Math.min(100, Math.max(0, s)) / 100;
+  l = Math.min(100, Math.max(0, l)) / 100;
+  const k = (n) => (n + h / 30) % 12, a = s * Math.min(l, 1 - l);
+  const f = (n) => Math.round((l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)))) * 255);
+  return '#' + [0, 8, 4].map((n) => f(n).toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Every colour of a monochrome theme, in shades of one hue: backgrounds near black (near white on a light base), text and
+ * highlights lighter. What needs telling apart (status, Git's changes, the terminal's sixteen colours, added and removed
+ * lines) differs in how light and how strong its shade is rather than in hue.
+ */
+function monochromeLook(hex, light) {
+  const [h, sAccent] = hexToHsl(hex);
+  // A grey accent makes a grey theme; any other is held to a tint that's neither washed out nor loud.
+  const sat = sAccent < 8 ? 0 : Math.min(90, Math.max(35, sAccent));
+  const L = (l) => (light ? 100 - l : l);
+  const bg = (l) => hslHex(h, sat * 0.5, L(l));      // backgrounds and borders: muted
+  const chrome = bg(4);
+  // Text and marks are picked by how well they read on the chrome, not by lightness, which reads very differently from
+  // one hue to the next (a green is far brighter than a blue of the same lightness). Each level is a lightness on the
+  // scale the colours below are written in, matched to a contrast ratio.
+  const LEVELS = [[30, 2], [36, 3], [42, 3.6], [46, 4.2], [55, 5.8], [62, 7.5], [70, 9.5], [78, 11.5], [85, 13.5], [93, 16], [95, 17]];
+  const ratioFor = (l) => {
+    const i = LEVELS.findIndex(([at]) => at >= l);
+    if (i <= 0) return LEVELS[Math.max(i, 0)][1];
+    const [[l0, r0], [l1, r1]] = [LEVELS[i - 1], LEVELS[i]];
+    return r0 + (r1 - r0) * (l - l0) / (l1 - l0);
+  };
+  const tone = (l, s) => {
+    const want = ratioFor(l);
+    let lo = 0, hi = 100;   // lightness, searched away from the chrome until the shade reads as well as wanted
+    for (let n = 0; n < 16; n++) {
+      const mid = (lo + hi) / 2;
+      const enough = contrast(hslHex(h, s, light ? 100 - mid : mid), chrome) >= want;
+      if (enough) hi = mid; else lo = mid;
+    }
+    return hslHex(h, s, light ? 100 - hi : hi);
+  };
+  const fg = (l) => tone(l, sat);           // text and marks
+  const pale = (l) => tone(l, sat * 0.2);   // what's taken away (removed lines, errors), nearly grey
+  // The accent: a bright shade that reads on the chrome for lines, and a deep one white text reads on for fills.
+  const lineL = 62;
+  let strongL = 48;
+  while (contrast(hslHex(h, sat, strongL), '#ffffff') < 4.5 && strongL > 5) strongL -= 2;
+  return {
+    accent: { line: fg(lineL), strong: hslHex(h, sat, strongL) },
+    colors: {
+      chrome, 'chrome-2': bg(2.6), 'chrome-3': bg(1.6), panel: bg(5.5), 'panel-2': bg(7.5), hover: bg(10), 'hover-strong': bg(14),
+      border: bg(20), 'border-soft': bg(13), 'border-strong': bg(32),
+      text: fg(78), 'text-dim': fg(55), 'text-faint': fg(36), 'text-strong': fg(93),
+      focus: fg(lineL), select: bg(18), 'select-inactive': bg(11), 'terminal-bg': bg(2.2), 'editor-bg': bg(3),
+      ok: fg(66), working: fg(72), attention: fg(84), asking: fg(95), danger: pale(70), 'danger-fill': hslHex(h, sat * 0.3, strongL),
+      'st-m': fg(80), 'st-a': fg(66), 'st-d': pale(52), 'st-r': fg(88), 'st-u': fg(58),
+      'info-bg': bg(9), 'info-border': bg(26), 'error-bg': bg(8), 'error-border': bg(30), 'pv-warn-bg': bg(10), 'pv-warn-border': bg(28),
+      'ico-folder': fg(70), 'ico-file': fg(52), graph: fg(55),
+      'ref-bg': bg(16), 'ref-fg': fg(85), 'ref-head-bg': bg(24), 'ref-head-fg': fg(93), 'ref-tag-bg': bg(12), 'ref-tag-fg': fg(75),
+      'scroll-thumb': bg(20), 'scroll-thumb-hover': bg(30), 'tab-border-shown': bg(30), 'tab-border-hover': bg(40),
+      tick: bg(28), 'tick-active': fg(75), 'tick-hot': fg(95), 'card-bg': bg(6), 'card-border': bg(22), bubble: bg(10),
+      'code-fg': fg(82), 'code-bg': bg(1.6), well: bg(3), 'table-head': bg(9), link: fg(72), 'update-fg': fg(93),
+    },
+    terminal: {
+      background: bg(2.2), foreground: fg(70), cursor: fg(88), cursorAccent: bg(2.2),
+      selectionBackground: bg(24), selectionInactiveBackground: bg(14),
+      black: bg(8), red: pale(56), green: fg(62), yellow: fg(78), blue: fg(46), magenta: fg(56), cyan: fg(70), white: fg(80),
+      brightBlack: fg(36), brightRed: pale(72), brightGreen: fg(74), brightYellow: fg(88), brightBlue: fg(60), brightMagenta: fg(68), brightCyan: fg(82), brightWhite: fg(95),
+      overviewRulerBorder: bg(2.2),
+      scrollbarSliderBackground: bg(30) + '66', scrollbarSliderHoverBackground: bg(40) + '88', scrollbarSliderActiveBackground: fg(60) + '66',
+    },
+    diff: {
+      background: bg(3), foreground: fg(70), lineNumber: fg(34), lineNumberActive: fg(74), selection: bg(24), cursor: fg(88),
+      lineHighlightBorder: bg(9),
+      insertedLine: fg(40) + '33', insertedText: fg(55) + '66', removedLine: pale(30) + '55', removedText: pale(45) + '77',
+      insertedGutter: fg(40) + '66', removedGutter: pale(30) + '88', insertedOverview: fg(66) + 'cc', removedOverview: pale(50) + 'cc',
+      diagonalFill: bg(16) + '80', scrollbar: bg(30) + '66',
+      comment: fg(42), keyword: fg(93), string: fg(76), number: fg(85), type: fg(88),
+    },
+  };
+}
+
+/** The accent changed: a monochrome theme is built from it, so everything is recoloured; otherwise only the accent. */
+const accentChanged = () => (currentTheme()?.monochrome ? applyTheme() : applyAccent());
 
 // How the status dots move (see app.css): picked in Status dots… from the theme menu, and kept per person.
 const DOT_STYLES = [
@@ -455,7 +612,35 @@ const TERM_THEME_LIGHT = {
   overviewRulerBorder: '#ffffff',
   scrollbarSliderBackground: '#64646433', scrollbarSliderHoverBackground: '#64646466', scrollbarSliderActiveBackground: '#00000066',
 };
-const termTheme = () => (isLight() ? TERM_THEME_LIGHT : TERM_THEME_DARK);
+/** The terminals' colours: a theme's own over its base's. */
+const termTheme = (look = themeLook()) => ({ ...(isLight() ? TERM_THEME_LIGHT : TERM_THEME_DARK), ...look?.terminal });
+
+/** The diff editor's theme: a theme's, defined from its colours over its base's, or Light's or Dark's. */
+/** A theme's diff colours (ThemeCatalog.DiffNames) and the diff editor's names for them; the syntax colours are rules. */
+const DIFF_COLOR_IDS = {
+  background: 'editor.background', foreground: 'editor.foreground',
+  lineNumber: 'editorLineNumber.foreground', lineNumberActive: 'editorLineNumber.activeForeground',
+  selection: 'editor.selectionBackground', cursor: 'editorCursor.foreground', lineHighlightBorder: 'editor.lineHighlightBorder',
+  insertedLine: 'diffEditor.insertedLineBackground', insertedText: 'diffEditor.insertedTextBackground',
+  removedLine: 'diffEditor.removedLineBackground', removedText: 'diffEditor.removedTextBackground',
+  insertedGutter: 'diffEditorGutter.insertedLineBackground', removedGutter: 'diffEditorGutter.removedLineBackground',
+  insertedOverview: 'diffEditorOverview.insertedForeground', removedOverview: 'diffEditorOverview.removedForeground',
+  diagonalFill: 'diffEditor.diagonalFill', scrollbar: 'scrollbarSlider.background',
+};
+
+function diffTheme(look = themeLook()) {
+  const t = look;
+  const base = isLight() ? 'vs2026-light' : 'vs2026-dark';
+  if (!t || !window.monaco) return base;
+  const d = t.diff ?? {};
+  const colors = Object.fromEntries(Object.entries(DIFF_COLOR_IDS).filter(([name]) => d[name]).map(([name, id]) => [id, d[name]]));
+  // Syntax colours are rules, which take the colour without its #.
+  const rules = [['', d.foreground], ['comment', d.comment], ['keyword', d.keyword], ['string', d.string], ['number', d.number], ['type', d.type]]
+    .filter(([, v]) => v).map(([token, v]) => ({ token, foreground: v.slice(1, 7) }));
+  const name = 'theme-' + t.id;
+  monaco.editor.defineTheme(name, { base: isLight() ? 'vs' : 'vs-dark', inherit: true, rules, colors: { ...MONACO_COLORS[base], ...colors } });
+  return name;
+}
 
 // ------------------------------------------------------------------ sessions & tiles
 
@@ -501,7 +686,7 @@ function syncSessions(list, projects) {
   state.restored = true;
   for (const s of state.sessions) {
     if (s.running || s.started || s.startsOnOpen) continue;
-    if (restoring && isClaudeCommand(s.command)) { s.startsOnOpen = true; renderTileHeader(s); }
+    if (restoring && agentOf(s.command)) { s.startsOnOpen = true; renderTileHeader(s); }
     else startSession(s);
   }
   applyProjectFilter(true);
@@ -569,6 +754,13 @@ function createSession(info) {
   });
   term.onResize(({ cols, rows }) => { if (s.running) post({ type: 'resize', id: s.id, cols, rows }); });
   term.onTitleChange((t) => { s.title = t; renderTileHeader(s); });
+  // Some agents (Codex) report what they're doing in an OSC 7501 sequence, "state=working:app=codex", with state=blocked
+  // while they wait on an answer from you. A session that reports it is taken at its word rather than read off the screen.
+  term.parser.registerOscHandler(7501, (data) => {
+    const reported = /(?:^|:)state=([a-z]+)/.exec(data)?.[1];
+    if (reported) { s.reportsState = true; setAsking(s, reported === 'blocked'); }
+    return true;
+  });
   term.onBell(() => { if (state.expandedId !== s.id) setAttention(s, true); });
   // The right button only opens the menu. Left to xterm, a right press is reported to Claude when it tracks the mouse,
   // and Claude pastes on right-click, so the clipboard was pasted as the menu opened.
@@ -596,7 +788,15 @@ function fitTerm(s) {
   try { s.fit.fit(); } catch { /* not attached yet */ }
 }
 
-const isClaudeCommand = (command) => /^claude(\.exe)?(\s|$)/i.test((command || '').trim());
+/** The coding agent a command runs (one of state.agents, as the host's Agents.For), or null for any other command. */
+const agentOf = (command) => {
+  const program = (command || '').trim().split(' ')[0].toLowerCase();
+  return state.agents.find((a) => a.programs.includes(program)) ?? null;
+};
+const agentById = (id) => state.agents.find((a) => a.id === id) ?? null;
+
+/** Whether the command has an option an agent's pattern (a regex source from the host) describes. */
+const hasOption = (pattern, command) => !!pattern && new RegExp(pattern, 'i').test(' ' + (command || '').trim());
 
 function startSession(s) {
   s.started = true;
@@ -642,6 +842,7 @@ function onExited(id, code) {
   s.exitCode = code;
   s.act.state = 'idle';
   s.asking = false;
+  s.reportsState = false;   // the next start may run another command
   const what = code == null ? 'Process stopped' : `Process exited with code ${code}`;   // null: stopped from the menu
   s.term.write(`\r\n\x1b[90m[${what} — press Enter to restart]\x1b[0m\r\n`);
   renderTileHeader(s);
@@ -661,9 +862,9 @@ function noteActivity(s) {
       a.workingSince = a.burstStart;
       // Working again means it's no longer waiting for you, e.g. another session handed it a task or you answered its
       // question. "Waiting" takes priority in statusClass, so without this the dot stayed yellow until the session was
-      // opened.
-      const asked = s.asking;
-      s.asking = false;
+      // opened. A session that reports its state says when it stops asking (Codex blinks its title while it asks).
+      const asked = s.asking && !s.reportsState;
+      if (asked) s.asking = false;
       if (s.attention) setAttention(s, false);
       else { renderTileState(s); if (asked) renderDocTabs(); }
     }
@@ -680,11 +881,12 @@ setInterval(() => {
       if (now - a.workingSince > 4000 && state.expandedId !== s.id) setAttention(s, true);
       else renderTileState(s);
     }
-    // Once the screen has settled after new output has been drawn (mid-redraw it can be half drawn), see whether Claude
-    // is asking. Only Claude: a shell or a dev server can print text that looks like its menus.
-    if (s.running && a.drawnAt !== a.readAt && now - a.drawnAt > 250 && /^claude(\.exe)?(\s|$)/i.test(s.command.trim())) {
+    // Once the screen has settled after new output has been drawn (mid-redraw it can be half drawn), see whether the
+    // agent is asking. Only agents: a shell or a dev server can print text that looks like their menus.
+    const asks = s.running && !s.reportsState && a.drawnAt !== a.readAt && now - a.drawnAt > 250 && askingScreen(s.command);
+    if (asks) {
       a.readAt = a.drawnAt;
-      setAsking(s, isAsking(s.term));
+      setAsking(s, isAsking(s.term, asks));
     }
   }
 }, 500);
@@ -703,17 +905,28 @@ function setAsking(s, on) {
   renderDocTabs();
 }
 
-// Claude asks by putting a menu where its prompt box was: a permission prompt, a question (AskUserQuestion), a plan to
-// approve, the folder trust check. Each has a picked numbered choice ("> 1. Yes") or an "Esc to cancel" hint. While the
-// prompt box (a rule with "> " under it) is there, it wants a prompt instead, so text like that in the conversation
-// above doesn't count.
-function isAsking(term) {
+/** How a command's agent shows on screen that it's asking (its profile's asks, as regexes), or null. */
+function askingScreen(command) {
+  const agent = agentOf(command);
+  if (!agent?.asks) return null;
+  const { choice, promptRule, promptLine } = agent.asks;
+  return (agent.asksRe ??= {
+    choice: new RegExp(choice),
+    promptRule: promptRule && new RegExp(promptRule),
+    promptLine: promptLine && new RegExp(promptLine),
+  });
+}
+
+// An agent asks by putting a menu on screen, with a line its profile recognises (Claude's picked numbered choice, say).
+// While its prompt box (a rule with the prompt under it) is there, it wants a prompt instead, so text like that in the
+// conversation above doesn't count.
+function isAsking(term, asks) {
   const b = term.buffer.active;
   let choice = false, prev = '';
   for (let y = b.baseY; y < b.baseY + term.rows; y++) {
     const line = b.getLine(y)?.translateToString(true) ?? '';
-    if (/^\s*─{8,}/.test(prev) && /^[>!❯](\s|$)/.test(line)) return false;
-    if (/^\s*[>❯›] ?\d+\. |\bEsc to cancel\b/.test(line)) choice = true;
+    if (asks.promptRule?.test(prev) && asks.promptLine?.test(line)) return false;
+    if (asks.choice.test(line)) choice = true;
     prev = line;
   }
   return choice;
@@ -842,8 +1055,12 @@ function sessionTabTitle(s) {
  * before you type into it. Null for other commands, and until it has been fetched (see loadConversationInfo).
  */
 function conversationLine(s) {
-  if (!isClaudeCommand(s.command)) return null;
-  if (!s.conversation) return /\s(-c|--continue)(\s|$)/i.test(s.command + ' ') ? "Conversation: the folder's latest, once Claude has picked it" : null;
+  const agent = agentOf(s.command);
+  if (!agent) return null;
+  if (!s.conversation) {
+    if (hasOption(agent.continue, s.command)) return `Conversation: the folder's latest, once ${agent.name} has picked it`;
+    return agent.choosesId || hasOption(agent.ownConversation, s.command) ? null : `Conversation: a new one, once ${agent.name} has started it`;
+  }
   const c = s.convInfo;
   if (c?.id !== s.conversation) return null;
   if (!c.saved) return 'Conversation: a new one, nothing in it yet';
@@ -853,7 +1070,7 @@ function conversationLine(s) {
 
 /** Fetches the session's conversation for its tooltips when the pointer reaches its tab or tile header, so it's current. */
 async function loadConversationInfo(s) {
-  if (!isClaudeCommand(s.command) || !s.conversation) return;
+  if (!agentOf(s.command) || !s.conversation) return;
   try { s.convInfo = await request('conversationInfo', { id: s.id }); } catch { return; }
   const tab = $(`.session-tab[data-id="${s.id}"]`);
   if (tab) tab.title = sessionTabTitle(s);
@@ -896,7 +1113,8 @@ function renderSessionTabs() {
     }, iconEl('plus'));
   };
   if (!state.projects.length) {
-    fill(host, ...tabs, shown.length ? plus(shown, 'like these') : null);   // nothing to group by
+    // Nothing to group by: the sessions are still outlined as one group, as Unknown's would be, but with no name.
+    host.replaceChildren(...(shown.length ? [h('div', { class: 'session-group unknown unnamed' }, tabs, plus(shown, 'like these'))] : []));
   } else {
     const groups = [];
     shown.forEach((s, i) => {
@@ -1135,14 +1353,14 @@ function closeMenu() {
 function showMenu(x, y, items) {
   closeMenu();
   // Pressing on the menu mustn't take focus: after Paste in the terminal's menu, typing has to go on in the terminal.
-  // Items: '-' for a separator, { header } for a section title, or { label, action } with optional kbd, danger, and
+  // Items: '-' for a separator ('~' for a lighter, shorter one within a section), { header } for a section title, or { label, action } with optional kbd, danger, and
   // checked (ticked when true). If any item can be ticked, all get the tick column so their labels line up.
   const ticks = items.some((it) => it && it.checked !== undefined);
   const menu = h('div', {
     class: 'menu', onmousedown: (e) => e.preventDefault(),
     onmousemove: (e) => e.currentTarget.querySelector('.menu-item.active')?.classList.remove('active'),   // the pointer takes over
-  }, items.filter(Boolean).map((it) => it === '-'
-    ? h('div', { class: 'menu-sep' })
+  }, items.filter(Boolean).map((it) => it === '-' || it === '~'
+    ? h('div', { class: 'menu-sep' + (it === '~' ? ' subtle' : '') })
     : it.header
       ? h('div', { class: 'menu-header' }, it.header)
       : h('div', { class: 'menu-item' + (it.danger ? ' danger' : ''), onclick: () => { closeMenu(); it.action(); } },
@@ -1293,7 +1511,7 @@ function projectField(selectedId) {
   });
   let created = null;   // so retrying after a failed save doesn't create the project twice
   return {
-    el: field('Project', h('div', { class: 'stack' }, select, newName)),
+    el: field('Project', h('div', { class: 'stack' }, h('div', { class: 'combo' }, select, h('span', { class: 'combo-btn' }, iconEl('chevD'))), newName)),
     select,
     newName,
     async resolve() {
@@ -1313,6 +1531,7 @@ function defaultProjectId() {
 }
 
 function showEditDialog(s, focus) {
+  const agent = agentOf(s.command);
   const name = h('input', { value: s.name, spellcheck: 'false' });
   const command = h('input', { value: s.command, spellcheck: 'false' });
   const project = projectField(s.project);
@@ -1334,24 +1553,36 @@ function showEditDialog(s, focus) {
   for (const i of [name, command, project.newName]) i.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); });
   openModal('Edit session', [
     field('Name', name),
-    field('Command', command, 'For example: claude, claude --model opus'),
+    field('Command', command, 'For example: claude, claude --model opus, codex'),
     project.el,
     field('Folder', h('input', { value: s.directory, readonly: true })),
-    /^claude(\.exe)?(\s|$)/i.test(s.command) && field('Conversation',
-      h('input', { value: s.conversation ?? '', placeholder: 'Learned from Claude once it has picked one (--continue)', readonly: true, spellcheck: 'false' }),
-      'The conversation this session reopens each time it starts, followed through /clear and /resume. Change it with Resume a different conversation…'),
+    agent && field('Conversation',
+      h('input', {
+        value: s.conversation ?? '', readonly: true, spellcheck: 'false',
+        placeholder: agent.choosesId ? `Learned from ${agent.name} once it has picked one (--continue)` : `Learned from ${agent.name} once it has started one`,
+      }),
+      `The conversation this session reopens each time it starts, followed ${agent.follows}. Change it with Resume a different conversation…`),
     error,
   ], [h('button', { class: 'btn', onclick: closeModal }, 'Cancel'), h('button', { class: 'btn primary', onclick: save }, 'Save')]);
   if (focus === 'project') setTimeout(() => project.select.focus(), 30);
 }
 
+/** An agent's name as a tag, in its colour (AgentProfile.Color) when it has one; the stylesheet picks the theme's. */
+function agentTag(id) {
+  const a = agentById(id);
+  return h('span', {
+    class: 'conv-agent' + (a?.color ? ' colored' : ''),
+    style: a?.color && `--agent-dark: ${a.color.dark}; --agent-light: ${a.color.light}`,
+  }, a?.name ?? id);
+}
+
 const leafName = (path) => (path || '').split(/[\\/]/).filter(Boolean).pop() || path;
 
 /**
- * Searchable list of Claude Code's saved conversations (optionally limited to one folder).
- * onPick(conv, confirm) fires on click; confirm is true for a double-click.
+ * Searchable list of Claude Code's and Codex's saved conversations (optionally limited to one folder, or one agent's).
+ * onPick(conv, confirm) fires on click; confirm is true for a double-click. Each conversation's agent is conv.agent.
  */
-function conversationPicker({ directory = null, onPick }) {
+function conversationPicker({ directory = null, agent = null, onPick }) {
   const search = h('input', { placeholder: 'Search conversations by title, prompt or folder…', spellcheck: 'false' });
   const list = h('div', { class: 'conv-list' }, h('div', { class: 'conv-empty' }, 'Loading conversations…'));
   let all = [];
@@ -1376,6 +1607,7 @@ function conversationPicker({ directory = null, onPick }) {
         ondblclick: () => { if (!open) onPick(c, true); },
       },
       h('div', { class: 'conv-title' }, h('span', {}, c.title),
+        !agent && agentTag(c.agent),
         open ? h('span', { class: 'conv-open' }, 'open in ' + open.name)
           : Date.now() - new Date(c.modified) < 3 * 60000 && h('span', { class: 'conv-open', title: 'Updated in the last few minutes — it may still be running in another terminal' }, 'active now')),
       h('div', { class: 'conv-meta' }, [!directory && c.cwd, c.branch && 'on ' + c.branch, relTime(c.modified)].filter(Boolean).join('  ·  ')),
@@ -1384,7 +1616,7 @@ function conversationPicker({ directory = null, onPick }) {
   };
 
   search.addEventListener('input', render);
-  request('conversations', { directory })
+  request('conversations', { directory, agent })
     .then((r) => { all = r || []; render(); })
     .catch((e) => list.replaceChildren(h('div', { class: 'conv-empty' }, e.message)));
   return h('div', { class: 'conv-picker' }, search, list);
@@ -1493,6 +1725,7 @@ function showAddDialog(mode = 'new', from = null) {
           picked = c;
           dir.value = c.cwd || '';
           name.value = leafName(c.cwd);
+          if (agentOf(command.value)?.id !== c.agent) command.value = agentById(c.agent)?.programs[0] ?? command.value;   // only its own agent can open it
           error.hidden = true;
           updateNote();
           if (confirm) add();
@@ -1511,20 +1744,31 @@ function showAddDialog(mode = 'new', from = null) {
   // What happens to the conversation, in words, under the Command box: it follows the mode, the pick and the command.
   function updateNote() {
     const cmd = command.value.trim() || DEFAULT_COMMAND;
-    const claude = /^claude(\.exe)?(\s|$)/i.test(cmd);
-    const flag = (re) => re.test(` ${cmd} `);
+    const agent = agentOf(cmd);
     let text;
     if (firstPrompt) text = 'Starts a new conversation with the first prompt above, and reopens it each time the session starts.';
-    else if (!claude) text = 'Runs in the folder above.';
-    else if (flag(/\s(-r|--resume|--session-id|--fork-session)[\s=]/)) text = 'Your command picks its own conversation, so the app leaves that to it.';
+    else if (!agent) text = 'Runs in the folder above.';
+    else if (hasOption(agent.ownConversation, cmd)) text = 'Your command picks its own conversation, so the app leaves that to it.';
     else if (mode === 'resume') text = picked
-      ? `Reopens "${picked.title}" each time the session starts, following it through /clear and /resume.`
+      ? `Reopens "${picked.title}" each time the session starts, following it ${agent.follows}.`
       : 'Pick the conversation to carry on above.';
-    else if (flag(/\s(-c|--continue)\s/)) text = 'Carries on the folder\'s latest conversation, then keeps that one: it reopens each time the session starts.';
-    else text = 'Gets a conversation of its own and reopens it each time the session or the app restarts, following it through /clear and /resume.';
+    else if (hasOption(agent.continue, cmd)) text = 'Carries on the folder\'s latest conversation, then keeps that one: it reopens each time the session starts.';
+    else text = `${agent.choosesId ? 'Gets a conversation of its own' : 'Starts a new conversation'} and reopens it each time the session or the app restarts, following it ${agent.follows}.`;
     commandNote.textContent = text;
   }
   command.addEventListener('input', updateNote);
+  // Each agent's plain command to pick from, dropped down from the box like a combo box's list (the arrow, or Alt+Down
+  // in the box); the box stays free to type over (e.g. "claude --model opus").
+  const suggestions = () => {
+    const r = command.getBoundingClientRect();
+    showMenu(r.left, r.bottom + 2, state.agents.map((a) => ({
+      label: a.programs[0], kbd: a.name, checked: command.value.trim() === a.programs[0],
+      action: () => { command.value = a.programs[0]; updateNote(); command.focus(); },
+    })));
+    openMenuEl.style.minWidth = r.width + 'px';
+  };
+  const suggest = h('button', { class: 'combo-btn', title: 'Suggested commands (Alt+Down)', tabindex: '-1', onclick: suggestions }, iconEl('chevD'));
+  command.addEventListener('keydown', (e) => { if (e.altKey && e.key === 'ArrowDown') { e.preventDefault(); suggestions(); } });
   segNew.addEventListener('click', () => setMode('new'));
   segResume.addEventListener('click', () => setMode('resume'));
 
@@ -1534,7 +1778,7 @@ function showAddDialog(mode = 'new', from = null) {
     field('Folder (repository or worktree)', h('div', { class: 'inline' }, dir, browse)),
     field('Name', name, 'Leave it empty to use the folder\'s name.'),
     firstPrompt && field('First prompt', firstPrompt, 'From the panel. Starts a new conversation in this session; edit it first if you like.'),
-    field('Command', command, commandNote),
+    field('Command', h('div', { class: 'combo' }, command, suggest), commandNote),
     project.el,
     wtHost,
     error,
@@ -1562,9 +1806,12 @@ function quickAddMenu(s, anchor) {
 }
 
 /** The session's command without anything that picks a conversation: a new session gets one of its own. */
-const ownOptionsOnly = (command) => (/^claude(\.exe)?(\s|$)/i.test(command)
-  ? command.replace(/\s+(-c|--continue)(?=\s|$)/gi, '').replace(/\s+(-r|--resume|--session-id|--fork-session)(=\S+|\s+[^-\s]\S*)?(?=\s|$)/gi, '').trim()
-  : command);
+function ownOptionsOnly(command) {
+  const agent = agentOf(command);
+  if (!agent) return command;
+  for (const pattern of [agent.continue, agent.ownConversation].filter(Boolean)) command = command.replace(new RegExp(pattern, 'gi'), '');
+  return command.trim();
+}
 
 /** "checkout-api", or "checkout-api 2" (3, …) when that's taken. */
 function freeName(base) {
@@ -1674,9 +1921,10 @@ function showResumeDialog(s) {
     h('div', { class: 'dim' }, s.directory),
     conversationPicker({
       directory: s.directory,
+      agent: agentOf(s.command)?.id ?? null,
       onPick: (c, confirm) => { picked = c; resumeBtn.disabled = false; if (confirm) apply(c.sessionId); },
     }),
-    h('div', { class: 'dim' }, 'Close the conversation in any other terminal first, so two Claude processes don’t write to it at once.'),
+    h('div', { class: 'dim' }, `Close the conversation in any other terminal first, so two ${agentOf(s.command)?.name ?? 'agent'} processes don’t write to it at once.`),
   ], [
     h('button', { class: 'btn', onclick: closeModal }, 'Cancel'),
     h('button', { class: 'btn', title: 'Start a fresh conversation in this folder', onclick: () => apply('new') }, 'New conversation'),
@@ -2406,7 +2654,7 @@ function commitArea(s) {
     suggest.disabled = level.disabled = total === 0 || !!s.suggesting;
     suggest.classList.toggle('busy', !!s.suggesting);
     suggest.title = s.suggesting ? 'Writing a commit message…'
-      : `Suggest a ${SUGGEST_LEVELS[suggestLevel()].toLowerCase()} commit message for the ${g?.staged.length ? 'staged changes' : 'changes'} (Claude)`;
+      : `Suggest a ${SUGGEST_LEVELS[suggestLevel()].toLowerCase()} commit message for the ${g?.staged.length ? 'staged changes' : 'changes'} (${suggestedBy(s)})`;
   };
   msg.addEventListener('input', () => { s.commitDraft = msg.value; s.commitEdits = (s.commitEdits || 0) + 1; update(); });
   msg.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.ctrlKey && !btn.disabled) btn.click(); });
@@ -2430,8 +2678,14 @@ function suggestLevelMenu(s, x, y) {
   ]);
 }
 
+/** Who writes a session's suggested commit message: its agent, or Claude for a session whose agent can't. */
+function suggestedBy(s) {
+  const agent = agentOf(s.command);
+  return agent?.suggests ? agent.name : 'Claude';
+}
+
 /**
- * Visual Studio's "Generate commit message": Claude writes one for what Commit would take. It replaces the box's text
+ * Visual Studio's "Generate commit message": the session's agent writes one for what Commit would take. It replaces the box's text
  * as an edit, so Ctrl+Z brings back what was there.
  */
 async function suggestCommitMessage(s) {
@@ -3208,6 +3462,46 @@ function panelMenu(p, anchor) {
 
 // ------------------------------------------------------------------ diff document (Monaco)
 
+/** The diff editor's colours for Dark and Light, after Visual Studio 2026's; a theme's own go over its base's. */
+const MONACO_COLORS = {
+  'vs2026-dark': {
+    'editor.background': '#1e1e1e',
+    'editorLineNumber.foreground': '#2b91af',
+    'editorLineNumber.activeForeground': '#2b91af',
+    'editor.selectionBackground': '#264f78',
+    'editor.lineHighlightBackground': '#00000000',
+    'editor.lineHighlightBorder': '#2a2a2a',
+    'diffEditor.insertedLineBackground': '#2d4a1e66',
+    'diffEditor.insertedTextBackground': '#4f7a2c99',
+    'diffEditor.removedLineBackground': '#5a1d1d66',
+    'diffEditor.removedTextBackground': '#9e2a2a99',
+    'diffEditor.diagonalFill': '#3a3a3a80',
+    'diffEditorGutter.insertedLineBackground': '#2d4a1e99',
+    'diffEditorGutter.removedLineBackground': '#5a1d1d99',
+    'diffEditorOverview.insertedForeground': '#57a64acc',
+    'diffEditorOverview.removedForeground': '#d64545cc',
+    'scrollbarSlider.background': '#4a4a4f99',
+  },
+  'vs2026-light': {
+    'editor.background': '#ffffff',
+    'editorLineNumber.foreground': '#237893',
+    'editorLineNumber.activeForeground': '#0b216f',
+    'editor.selectionBackground': '#add6ff',
+    'editor.lineHighlightBackground': '#00000000',
+    'editor.lineHighlightBorder': '#eeeeee',
+    'diffEditor.insertedLineBackground': '#9bb95533',
+    'diffEditor.insertedTextBackground': '#9ccc2c55',
+    'diffEditor.removedLineBackground': '#ff000022',
+    'diffEditor.removedTextBackground': '#ff000044',
+    'diffEditor.diagonalFill': '#22222220',
+    'diffEditorGutter.insertedLineBackground': '#9bb95555',
+    'diffEditorGutter.removedLineBackground': '#ff000033',
+    'diffEditorOverview.insertedForeground': '#4b8b2bcc',
+    'diffEditorOverview.removedForeground': '#c53030cc',
+    'scrollbarSlider.background': '#64646466',
+  },
+};
+
 let monacoReady = null;
 let diffEditor = null;
 const diffState = { spec: null, sessionId: null, sideBySide: store.get('diffSideBySide', true), ignoreWs: store.get('diffIgnoreWs', false), changes: [], seq: 0 };
@@ -3218,54 +3512,10 @@ function loadMonaco() {
     require.config({ paths: { vs: 'lib/monaco/vs' } });
     require(['vs/editor/editor.main'], (m) => {
       window.monaco = window.monaco || m;
-      monaco.editor.defineTheme('vs2026-dark', {
-        base: 'vs-dark',
-        inherit: true,
-        rules: [],
-        colors: {
-          'editor.background': '#1e1e1e',
-          'editorLineNumber.foreground': '#2b91af',
-          'editorLineNumber.activeForeground': '#2b91af',
-          'editor.selectionBackground': '#264f78',
-          'editor.lineHighlightBackground': '#00000000',
-          'editor.lineHighlightBorder': '#2a2a2a',
-          'diffEditor.insertedLineBackground': '#2d4a1e66',
-          'diffEditor.insertedTextBackground': '#4f7a2c99',
-          'diffEditor.removedLineBackground': '#5a1d1d66',
-          'diffEditor.removedTextBackground': '#9e2a2a99',
-          'diffEditor.diagonalFill': '#3a3a3a80',
-          'diffEditorGutter.insertedLineBackground': '#2d4a1e99',
-          'diffEditorGutter.removedLineBackground': '#5a1d1d99',
-          'diffEditorOverview.insertedForeground': '#57a64acc',
-          'diffEditorOverview.removedForeground': '#d64545cc',
-          'scrollbarSlider.background': '#4a4a4f99',
-        },
-      });
-      monaco.editor.defineTheme('vs2026-light', {
-        base: 'vs',
-        inherit: true,
-        rules: [],
-        colors: {
-          'editor.background': '#ffffff',
-          'editorLineNumber.foreground': '#237893',
-          'editorLineNumber.activeForeground': '#0b216f',
-          'editor.selectionBackground': '#add6ff',
-          'editor.lineHighlightBackground': '#00000000',
-          'editor.lineHighlightBorder': '#eeeeee',
-          'diffEditor.insertedLineBackground': '#9bb95533',
-          'diffEditor.insertedTextBackground': '#9ccc2c55',
-          'diffEditor.removedLineBackground': '#ff000022',
-          'diffEditor.removedTextBackground': '#ff000044',
-          'diffEditor.diagonalFill': '#22222220',
-          'diffEditorGutter.insertedLineBackground': '#9bb95555',
-          'diffEditorGutter.removedLineBackground': '#ff000033',
-          'diffEditorOverview.insertedForeground': '#4b8b2bcc',
-          'diffEditorOverview.removedForeground': '#c53030cc',
-          'scrollbarSlider.background': '#64646466',
-        },
-      });
+      for (const [name, colors] of Object.entries(MONACO_COLORS))
+        monaco.editor.defineTheme(name, { base: name === 'vs2026-light' ? 'vs' : 'vs-dark', inherit: true, rules: [], colors });
       diffEditor = monaco.editor.createDiffEditor($('#diffEditor'), {
-        theme: isLight() ? 'vs2026-light' : 'vs2026-dark',
+        theme: diffTheme(),
         automaticLayout: true,
         readOnly: true,
         originalEditable: false,
@@ -3307,9 +3557,26 @@ function languageFor(path) {
 
 // ---- document tabs: a pinned Terminal tab followed by diff tabs (VS preview-tab semantics)
 
-const docs = { tabs: [], active: 'terminal' };
+// side: the tab shown beside the terminal (dragged there), or null for one at a time. While it's set, the tab you pick
+// goes beside the terminal, and active is 'terminal' or side, whichever has your attention (Ctrl+W closes only side).
+// dir and at: which side of the terminal the tab goes (a DOCK_SIDES key) and the terminal's share of the area.
+const docs = {
+  tabs: [], active: 'terminal', side: null, shown: null,
+  dir: store.get('docSplitDir', 'right'), at: store.get('docSplitAt', 0.5),
+};
+/** The sides of the terminal a tab can go, in words, with the side across from each. */
+const DOCK_SIDES = {
+  right: { label: 'Right of the terminal', across: 'left' },
+  left: { label: 'Left of the terminal', across: 'right' },
+  top: { label: 'Above the terminal', across: 'bottom' },
+  bottom: { label: 'Below the terminal', across: 'top' },
+};
 const docKey = (sessionId, spec) => [sessionId, spec.mode, spec.commit || '', spec.path].join('|');
 const activeTab = () => docs.tabs.find((t) => t.key === docs.active) || null;
+const sideTab = () => (docs.side && docs.tabs.find((t) => t.key === docs.side && tabShown(t))) || null;
+/** The tab whose page is on screen: the one you're on, else the one beside the terminal. */
+const shownDoc = () => activeTab() || sideTab();
+const canSplit = (t) => !!t && !isProjectTab(t);   // a Project view stands alone
 
 /**
  * Diff and Conversation tabs belong to their session's project, and only the current session's project's tabs are
@@ -3330,7 +3597,7 @@ const shownTabs = () => docs.tabs.filter(tabShown);
 function syncDocTabs() {
   const t = activeTab();
   if (t && !tabShown(t)) showTerminalDoc();
-  else renderDocTabs();
+  else showDocs();   // the tab beside the terminal may have come or gone with the project
 }
 
 /** Single-click opens the reusable (italic) preview tab; pin=true opens or keeps a permanent tab. */
@@ -3349,52 +3616,88 @@ function openDiff(s, spec, pin = false) {
 }
 
 function activateDoc(key) {
-  const prev = activeTab();
-  if (prev && prev.key !== key) {
-    if (isConvTab(prev)) prev.scrollTop = $('#convBody').scrollTop;
-    else if (isProjectTab(prev)) prev.scrollTop = $('#projectBody').scrollTop;
-    else if (diffEditor) prev.viewState = diffEditor.saveViewState();
-  }
   // A Project tab is a place of its own, like a session: opening it closes the open session, and anything else leaves it.
   const target = docs.tabs.find((t) => t.key === key);
   state.projectViewOf = isProjectTab(target) ? target.projectId : null;
   if (state.projectViewOf != null) collapse();
   docs.active = docs.tabs.some((t) => t.key === key && tabShown(t)) ? key : 'terminal';
-  const tab = activeTab();
-  $('#diffDoc').hidden = !tab || isConvTab(tab) || isProjectTab(tab) || isPluginTab(tab);
-  $('#convDoc').hidden = !isConvTab(tab);
-  $('#projectDoc').hidden = !isProjectTab(tab);
-  $('#pluginDoc').hidden = !isPluginTab(tab);
-  $('#termPane').classList.toggle('behind', !!tab);
-  hideRailCard();
-  renderDocTabs();
-  if (tab) {
-    if (prev !== tab) {
-      if (isConvTab(tab)) showConversation(tab);
-      else if (isProjectTab(tab)) showProjectView(tab);
-      else if (isPluginTab(tab)) showPlugin(tab);
-      else loadDiff(tab);
-    }
-  } else {
-    diffState.seq++;
+  if (docs.side && canSplit(activeTab())) {
+    docs.side = docs.active;   // split: the tab you pick goes beside the terminal, and takes the keyboard from it
+    if ($('#termPane').contains(document.activeElement)) document.activeElement.blur();
+  }
+  showDocs();
+  if (!activeTab()) {
     const s = state.byId.get(state.expandedId);
     if (s) setTimeout(() => s.term.focus(), 0);
   }
 }
 
+/** Puts the shown tab's page on screen (beside the terminal when split), keeping the view of the one it replaces. */
+function showDocs() {
+  const prev = docs.shown;
+  const tab = shownDoc();
+  if (prev && prev !== tab && docs.tabs.includes(prev)) {   // not a tab being closed
+    if (isConvTab(prev)) prev.scrollTop = $('#convBody').scrollTop;
+    else if (isProjectTab(prev)) prev.scrollTop = $('#projectBody').scrollTop;
+    else if (!isPluginTab(prev) && diffEditor) prev.viewState = diffEditor.saveViewState();
+  }
+  docs.shown = tab;
+  const split = !!tab && tab === sideTab();
+  $('#diffDoc').hidden = !tab || isConvTab(tab) || isProjectTab(tab) || isPluginTab(tab);
+  $('#convDoc').hidden = !isConvTab(tab);
+  $('#projectDoc').hidden = !isProjectTab(tab);
+  $('#pluginDoc').hidden = !isPluginTab(tab);
+  $('#termPane').classList.toggle('behind', !!tab && !split);
+  const area = $('#docArea');
+  for (const dir in DOCK_SIDES) area.classList.toggle('split-' + dir, split && docs.dir === dir);
+  area.style.setProperty('--split', docs.at * 100 + '%');
+  hideRailCard();
+  renderDocTabs();
+  if (tab && prev !== tab) {
+    if (isConvTab(tab)) showConversation(tab);
+    else if (isProjectTab(tab)) showProjectView(tab);
+    else if (isPluginTab(tab)) showPlugin(tab);
+    else loadDiff(tab);
+  } else if (!tab) {
+    diffState.seq++;
+  }
+}
+
+/** Shows tab `key` on a side of the terminal (a DOCK_SIDES key), or on its own again (dir null). */
+function splitDoc(key, dir) {
+  if (dir) {
+    docs.dir = dir;
+    store.set('docSplitDir', dir);
+  }
+  docs.side = dir ? key : null;
+  activateDoc(key);
+}
+
 const showTerminalDoc = () => activateDoc('terminal');
+
+/** While split, whichever side you click or move focus into has your attention (so Ctrl+W closes only the tab's side). */
+function attend(key) {
+  if (!sideTab() || docs.active === key) return;
+  docs.active = key;
+  renderDocTabs();
+}
 
 function closeDoc(key) {
   const i = docs.tabs.findIndex((t) => t.key === key);
   if (i < 0) return;
   const wasActive = docs.active === key;
+  const wasSide = docs.side === key;
   if (isPluginTab(docs.tabs[i])) closePluginFrame(docs.tabs[i].pluginId);
   docs.tabs.splice(i, 1);
+  // The nearest shown tab after it, else before it, that `ok` accepts.
+  const near = (ok) => docs.tabs.slice(i).find((t) => tabShown(t) && ok(t)) || docs.tabs.slice(0, i).reverse().find((t) => tabShown(t) && ok(t));
+  if (wasSide) docs.side = near(canSplit)?.key ?? null;   // another tab takes its place beside the terminal
   if (wasActive) {
-    docs.active = 'terminal';   // don't save view state for the tab being closed
-    const shown = docs.tabs.map(tabShown);
-    const next = docs.tabs.slice(i).find((_, k) => shown[i + k]) || docs.tabs.slice(0, i).reverse().find((_, k) => shown[i - 1 - k]);
+    docs.active = 'terminal';
+    const next = docs.side ? sideTab() : near(() => true);
     activateDoc(next ? next.key : 'terminal');
+  } else if (wasSide) {
+    showDocs();
   } else {
     renderDocTabs();
   }
@@ -3409,10 +3712,13 @@ function cycleDoc(delta) {
 
 function renderDocTabs() {
   const ex = state.byId.get(state.expandedId);
-  const waiting = visibleSessions().filter(waitingForYou).length;   // hidden projects show theirs on the project tabs
+  // Hidden projects show theirs on the project tabs. While a session is open this tab carries its name, so a count here
+  // would read as that session's; the session tabs' dots show which are waiting instead.
+  const waiting = ex ? 0 : visibleSessions().filter(waitingForYou).length;
   const termTab = h('div', {
     class: 'doc-tab terminal' + (docs.active === 'terminal' ? ' active' : ''),
-    title: 'Terminals (Shift+Esc from a diff, Ctrl+PgUp/PgDn to switch tabs)',
+    'data-id': 'terminal',
+    title: 'Terminals (Shift+Esc from a diff, Ctrl+PgUp/PgDn to switch tabs)\nDrag to a side of the area to show a tab beside it',
     onclick: showTerminalDoc,
   }, iconEl('terminal'), h('span', { class: 'doc-title' }, ex ? ex.name : 'All sessions'), ex ? projectTag(ex) : null,
   waiting ? h('span', { class: 'badge', title: `${waiting} session(s) waiting for you` }, String(waiting)) : null);
@@ -3469,6 +3775,11 @@ function renderDocTabs() {
     h('button', { class: 'icon-btn small', title: 'Close (Ctrl+W)', onclick: () => closeDoc(t.key) }, iconEl('close')));
   });
   fill($('#docTabs'), state.projectViewOf != null ? null : termTab, tabs);   // a Project view stands alone
+  // Split: the terminal and the tab beside it are both on screen; the one without your attention is marked "beside".
+  const side = sideTab();
+  for (const el of $('#docTabs').querySelectorAll('.doc-tab')) {
+    el.classList.toggle('beside', !!side && !el.classList.contains('active') && (el.classList.contains('terminal') || el.dataset.id === side.key));
+  }
   revealActive($('#docTabs'), '.doc-tab.active');
   // The project label in the session tab row looks selected while its Project view is showing.
   for (const label of document.querySelectorAll('.session-group-label')) label.classList.toggle('active', projectViewShowing(label.dataset.project));
@@ -3562,7 +3873,7 @@ function goToChange(dir, absolute = false) {
 
 /** Keeps the visible diff live while the session edits the file. */
 function refreshOpenDiff(s) {
-  const t = activeTab();
+  const t = shownDoc();
   if (!t || isConvTab(t) || t.sessionId !== s.id || t.spec.mode === 'commit') return;
   loadDiff(t, true);
 }
@@ -3580,7 +3891,7 @@ $('#diffNext').addEventListener('click', () => goToChange(1));
 $('#diffMode').addEventListener('click', () => { diffState.sideBySide = !diffState.sideBySide; store.set('diffSideBySide', diffState.sideBySide); applyDiffOptions(); });
 $('#diffWs').addEventListener('click', () => { diffState.ignoreWs = !diffState.ignoreWs; store.set('diffIgnoreWs', diffState.ignoreWs); applyDiffOptions(); });
 $('#diffOpenFile').addEventListener('click', () => {
-  const t = activeTab();
+  const t = shownDoc();
   if (t && !isConvTab(t)) request('openFile', { id: t.sessionId, path: t.spec.path }).catch((e) => toast(e.message, true));
 });
 $('#diffDoc').addEventListener('keydown', (e) => {
@@ -3589,8 +3900,9 @@ $('#diffDoc').addEventListener('keydown', (e) => {
 });
 
 // ------------------------------------------------------------------ conversation rail and Conversation tab
-// In its full-screen mode Claude keeps no terminal scrollback, so the rail outlines the conversation from Claude's own
-// transcript (one tick per prompt), and the Conversation tab shows the whole of it as text the app can scroll.
+// In its full-screen mode Claude keeps no terminal scrollback, so the rail outlines the conversation from the agent's own
+// transcript (one tick per prompt; see AgentProfile.ReadConversation), and the Conversation tab shows the whole of it
+// as text the app can scroll.
 
 const CONV_POLL_MS = 3000;
 const convKey = (sessionId) => 'conv|' + sessionId;
@@ -3626,11 +3938,12 @@ async function loadConversation(s, full) {
 
 setInterval(async () => {
   if (document.hidden) return;
-  const tab = activeTab();
+  const tab = shownDoc();
   if (isConvTab(tab)) {
     const s = state.byId.get(tab.sessionId);
-    if (s?.running && await loadConversation(s, true) && docs.active === tab.key) renderConversation(s, tab);
-  } else if (!tab) {
+    if (s?.running && await loadConversation(s, true) && docs.shown === tab) renderConversation(s, tab);
+  }
+  if (!tab || tab === sideTab()) {   // the terminal is on screen
     const s = state.byId.get(state.expandedId);
     if (s?.running) refreshTermRail(s);
   }
@@ -3761,7 +4074,7 @@ function openConversation(s, index = null) {
     docs.tabs.push(tab);
   }
   tab.pendingTurn = index;
-  if (docs.active === key) {
+  if (docs.shown === tab) {
     if (index != null && convView.key === key && convView.els[index]) { tab.pendingTurn = null; scrollToTurn(index); }
   } else {
     activateDoc(key);
@@ -3782,7 +4095,7 @@ async function showConversation(tab) {
   if (s.convFull) renderConversation(s, tab);
   else $('#convSummary').textContent = 'Loading…';
   if (s.running) await loadConversation(s, true);
-  if (docs.active === tab.key) renderConversation(s, tab);
+  if (docs.shown === tab) renderConversation(s, tab);
   $('#convBody').focus({ preventScroll: true });   // so the keyboard scrolls it
 }
 
@@ -3918,7 +4231,7 @@ function turnInView() {
 }
 
 $('#convBody').addEventListener('scroll', debounce(() => {
-  if (isConvTab(activeTab())) markRailActive($('#convRail'), turnInView());
+  if (isConvTab(shownDoc())) markRailActive($('#convRail'), turnInView());
 }, 50));
 attachRail($('#convRail'));
 
@@ -4017,11 +4330,11 @@ $('#projectNewWorktree').addEventListener('click', (e) => newProjectWorktree(e.c
  */
 function newProjectWorktree(anchor) {
   const members = projectMembers(state.projectViewOf);
-  const byRoot = new Map();   // repository root → the session it's asked through (a Claude one, for its options)
+  const byRoot = new Map();   // repository root → the session it's asked through (an agent one, for its options)
   for (const s of members) {
     if (!s.git?.isRepo || !s.git.root) continue;
     const key = s.git.root.toLowerCase(), had = byRoot.get(key);
-    if (!had || (!isClaudeCommand(had.command) && isClaudeCommand(s.command))) byRoot.set(key, s);
+    if (!had || (!agentOf(had.command) && agentOf(s.command))) byRoot.set(key, s);
   }
   const open = (s) => showWorktreeDialog(s, { startFrom: projectView.repos.get(s.git.root.toLowerCase())?.baseBranch ?? null });
   const choices = [...byRoot.values()];
@@ -4203,8 +4516,8 @@ function projectRowDetail(row, files, overlapOf, pr) {
     left.append(h('div', {}, h('h3', {}, row.sessions.length > 1 ? `${s.name} · ${statusText(s)}` : statusText(s)),
       h('div', { class: 'pv-conv' }, last
         ? [h('div', { class: 'pv-turn' }, h('span', { class: 't' }, last.time ? relTime(last.time) : ''), h('span', { class: 'you' }, last.prompt)),
-           last.reply && h('div', { class: 'pv-turn' }, h('span', { class: 't' }, 'Claude'), h('span', { class: 'cl' }, plainText(last.reply).slice(0, 400)))]
-        : !isClaudeCommand(s.command) ? `Runs ${s.command}.`
+           last.reply && h('div', { class: 'pv-turn' }, h('span', { class: 't' }, agentOf(s.command)?.name ?? 'Reply'), h('span', { class: 'cl' }, plainText(last.reply).slice(0, 400)))]
+        : !agentOf(s.command) ? `Runs ${s.command}.`
         : s.running ? 'No prompts in this conversation yet.'
         : s.convInfo?.title ? `Conversation: ${s.convInfo.title}${s.convInfo.modified ? ` · last used ${relTime(s.convInfo.modified)}` : ''}`
         : conversationLine(s) ?? 'Not running.')));
@@ -4240,7 +4553,7 @@ function projectRowDetail(row, files, overlapOf, pr) {
   const actions = h('div', { class: 'pv-actions' });
   for (const s of row.sessions) {
     actions.append(h('button', { class: 'btn primary', onclick: stop(() => expand(s.id)) }, row.sessions.length > 1 ? `Open ${s.name}` : s.startsOnOpen ? 'Open and start' : 'Open session'));
-    if (s.running && isClaudeCommand(s.command)) actions.append(h('button', { class: 'btn', onclick: stop(() => openConversation(s)) }, row.sessions.length > 1 ? `Conversation of ${s.name}` : 'Conversation'));
+    if (s.running && agentOf(s.command)?.showsConversation) actions.append(h('button', { class: 'btn', onclick: stop(() => openConversation(s)) }, row.sessions.length > 1 ? `Conversation of ${s.name}` : 'Conversation'));
   }
   if (!row.sessions.length && !row.missing) actions.append(h('button', { class: 'btn primary', onclick: stop(() => startSessionIn(row)) }, 'Start a session here'));
   if (pr?.pr) actions.append(h('button', { class: 'btn', onclick: stop(() => request('openUrl', { uri: pr.pr.url })) }, `View PR #${pr.pr.number}`));
@@ -4255,7 +4568,7 @@ function projectRowDetail(row, files, overlapOf, pr) {
 function startSessionIn(row) {
   const tab = activeTab();
   const members = projectMembers(tab.projectId);
-  const like = members.find((s) => isClaudeCommand(s.command)) ?? members[0];
+  const like = members.find((s) => agentOf(s.command)) ?? members[0];
   const name = freeName(leafName(row.branch && !row.branch.startsWith('(') ? row.branch : row.path));
   addAndOpen({ directory: row.path, name, command: like ? ownOptionsOnly(like.command) : 'claude', project: tab.projectId === UNKNOWN ? '' : tab.projectId })
     .catch((e) => toast(e.message, true));
@@ -4436,6 +4749,12 @@ function contrast(a, b) {
 
 function applyAccent() {
   const root = document.documentElement.style;
+  const own = themeLook()?.accent;   // a theme's own accent, or the one a monochrome theme built
+  if (own) {
+    root.setProperty('--accent-strong', own.strong);
+    root.setProperty('--accent', own.line);
+    return;
+  }
   const c = accent.choice;
   const p = c === 'windows' ? accent.palette : /^#[0-9a-f]{6}$/i.test(c) ? shadesOf(c) : null;   // null: the purple
   if (!p || p.length < 7) {
@@ -4538,12 +4857,15 @@ function showUpdateDialog() {
  */
 function applyTheme(before = null) {
   const name = themeName();
-  document.documentElement.dataset.theme = name;
-  for (const s of state.sessions) s.term.options.theme = termTheme();
-  if (window.monaco) monaco.editor.setTheme(isLight() ? 'vs2026-light' : 'vs2026-dark');
+  const look = themeLook();
+  store.set('themeLook', look);   // so it paints at once on the next start
+  markTheme(look);
+  for (const s of state.sessions) s.term.options.theme = termTheme(look);
+  if (window.monaco) monaco.editor.setTheme(diffTheme(look));
   applyAccent();
   for (const f of pluginFrames.values()) postPluginTheme(f.frame);
-  post({ type: 'theme', light: isLight() });
+  // A theme's window and title bar take its own background; Light and Dark keep Windows' own.
+  post({ type: 'theme', light: isLight(), background: look?.colors.chrome ?? null });
   if (before && before !== name) offerClaudeRestart();
 }
 
@@ -4584,19 +4906,28 @@ function versionMenu(x, y) {
   ]);
 }
 
-/** The theme menu (next to the version number): System, Light or Dark, and the accent colour. */
+/** The theme menu (next to the version number): System, Light, Dark and the themes, and the accent colour. */
 function themeMenu(x, y) {
   const c = accent.choice;
   const colour = c === 'windows' ? accent.palette?.[3] ?? '#7160e8' : c === 'purple' ? '#7160e8' : c;
+  const own = currentTheme();   // a theme with an accent of its own (not a monochrome one: that's built from yours)
   showMenu(x, y, [
     { header: 'Theme' },
     { label: 'System (follows Windows)', checked: theme.pref === 'system', action: () => setThemePref('system') },
     { label: 'Light', checked: theme.pref === 'light', action: () => setThemePref('light') },
     { label: 'Dark', checked: theme.pref === 'dark', action: () => setThemePref('dark') },
+    ...themes.list.map((t) => ({ label: t.name, checked: theme.pref === t.id, kbd: t.builtIn ? '' : 'Yours', action: () => setThemePref(t.id) })),
+    themes.problems.length > 0 && { label: `${themes.problems.length} theme${themes.problems.length === 1 ? '' : 's'} not loaded`, kbd: 'Why?', action: () => toast(themes.problems.join('\n'), true) },
+    '~',
+    { label: 'Save as a new theme…', action: showSaveThemeDialog },
+    { label: 'Open the themes folder', action: () => request('themes.openFolder') },
     '-',
     { header: 'Accent colour' },
-    { label: [h('span', { class: 'accent-dot', style: `background:${colour}` }), c === 'windows' ? 'Windows accent' : c === 'purple' ? 'Original purple' : 'Custom'],
-      kbd: 'Change…', action: showAccentDialog },
+    own?.accent
+      ? { label: [h('span', { class: 'accent-dot', style: `background:${own.accent.line}` }), `${own.name}'s own`],
+        action: () => toast(`${own.name} has an accent colour of its own. Choose another theme to change it.`) }
+      : { label: [h('span', { class: 'accent-dot', style: `background:${colour}` }), c === 'windows' ? 'Windows accent' : c === 'purple' ? 'Original purple' : 'Custom'],
+        kbd: 'Change…', action: showAccentDialog },
     '-',
     { header: 'Status dots' },
     { label: DOT_STYLES.find((d) => d.id === dotStyle.id).name, kbd: 'Change…', action: showDotStyleDialog },
@@ -4606,12 +4937,63 @@ function themeMenu(x, y) {
       { label: p.title, kbd: p.placement === 'panel' ? 'Side panel' : '', action: () => openPlugin(p.id) },
       ...p.menu.filter((m) => m.where.includes('palette')).map((m) => ({ label: [h('span', { class: 'menu-indent' }), m.label], action: () => openPlugin(p.id, m.command, { menu: 'palette' }) })),
       p.toolbar && hiddenPluginButtons.has(p.id) && { label: [h('span', { class: 'menu-indent' }), 'Show its title bar button'], action: () => setPluginButton(p.id, true) },
-      p.access.includes('sessions') && { label: [h('span', { class: 'menu-indent' }), pluginMayHave(p, 'sessions') ? 'Stop it seeing your sessions' : 'Let it see your sessions'],
-        action: () => setPluginAccess(p, 'sessions', !pluginMayHave(p, 'sessions')) },
+      ...p.access.filter((kind) => PLUGIN_ACCESS[kind]).map((kind) => ({ label: [h('span', { class: 'menu-indent' }), pluginMayHave(p, kind) ? PLUGIN_ACCESS[kind].stop : PLUGIN_ACCESS[kind].let],
+        action: () => setPluginAccess(p, kind, !pluginMayHave(p, kind)) })),
     ]),
     plugins.problems.length > 0 && { label: `${plugins.problems.length} couldn't be loaded`, kbd: 'Why?', action: () => toast(plugins.problems.join('\n'), true) },
     { label: plugins.list.length ? 'Open the plugins folder' : 'Add a plugin: open the plugins folder', action: () => request('plugins.openFolder') },
   ]);
+}
+
+/**
+ * Save as a new theme: the theme on screen, whichever it is, written to the themes folder as a file with every colour, to
+ * start a theme of your own from. It's read from what's showing, so it's always complete and matches what you see; a
+ * monochrome theme is saved with the colours your accent gives it now.
+ */
+function showSaveThemeDialog() {
+  const look = themeLook();
+  const now = look?.name ?? (isLight() ? 'Light' : 'Dark');
+  const name = h('input', { type: 'text', value: `My ${now}`, maxlength: '40', spellcheck: 'false' });
+  const save = async () => {
+    const title = name.value.trim();
+    if (!title) { name.focus(); return; }
+    try {
+      const id = await request('themes.save', { theme: themeSnapshot(title) });
+      closeModal();
+      await loadThemes();
+      setThemePref(id);
+      toast(`Saved "${title}" as ${id}.json in your themes folder.`);
+    }
+    catch (e) { toast(e.message, true); }
+  };
+  name.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); });
+  openModal('Save as a new theme', [
+    field('Name', name, `A copy of ${now} as it looks now, with every colour written out, in your themes folder. Change the file to make the theme your own; it shows in this menu.`),
+  ], [
+    h('button', { class: 'btn', onclick: closeModal }, 'Cancel'),
+    h('button', { class: 'btn primary', onclick: save }, 'Save'),
+  ]);
+  setTimeout(() => name.select(), 30);
+}
+
+/** The theme on screen as a theme file (see ThemeCatalog): every colour the page, terminals and diffs are using. */
+function themeSnapshot(title) {
+  const look = themeLook();
+  const css = getComputedStyle(document.documentElement);
+  const value = (name) => css.getPropertyValue('--' + name).trim();
+  const terminal = termTheme(look);
+  const editor = MONACO_COLORS[isLight() ? 'vs2026-light' : 'vs2026-dark'];
+  const diff = { ...Object.fromEntries(Object.entries(DIFF_COLOR_IDS).filter(([, id]) => editor[id]).map(([name, id]) => [name, editor[id]])), ...look?.diff };
+  return {
+    name: title,
+    base: themeName(),
+    ...(look?.font ? { font: look.font } : {}),
+    ...(look?.glow ? { glow: true } : {}),
+    accent: { line: value('accent'), strong: value('accent-strong') },
+    colors: Object.fromEntries(themes.names.colors.map((n) => [n, value(n)]).filter(([, v]) => v)),
+    terminal: Object.fromEntries(themes.names.terminal.filter((n) => terminal[n]).map((n) => [n, terminal[n]])),
+    diff: Object.fromEntries(themes.names.diff.filter((n) => diff[n]).map((n) => [n, diff[n]])),
+  };
 }
 
 /**
@@ -4667,7 +5049,7 @@ function showAccentDialog() {
 
   function pick(c) {
     accent.choice = c;
-    applyAccent();   // preview on the whole app
+    accentChanged();   // preview on the whole app
     windowsBtn.classList.toggle('selected', c === 'windows');
     purpleBtn.classList.toggle('selected', c === 'purple');
     for (const sw of swatches) sw.classList.toggle('selected', sw.title === c);
@@ -4689,14 +5071,14 @@ function showAccentDialog() {
     h('button', { class: 'btn primary', onclick: () => { saved = true; store.set('accentColour', accent.choice); closeModal(); } }, 'OK'),
   ]);
   // Cancel, Esc or a click outside: put back the colour from before.
-  onModalClose = () => { if (!saved) { accent.choice = before; applyAccent(); } };
+  onModalClose = () => { if (!saved) { accent.choice = before; accentChanged(); } };
   pick(before);
 }
 
 $('#btnUpdate').addEventListener('click', showUpdateDialog);
 $('#btnTheme').innerHTML = icon('theme');
 // The plugins folder is read again each time, so a plugin added since is on the menu.
-$('#btnTheme').addEventListener('click', async (e) => { const r = e.currentTarget.getBoundingClientRect(); await loadPlugins(); themeMenu(r.right - 260, r.bottom + 2); });
+$('#btnTheme').addEventListener('click', async (e) => { const r = e.currentTarget.getBoundingClientRect(); await Promise.all([loadPlugins(), loadThemes()]); themeMenu(r.right - 260, r.bottom + 2); });
 request('app.version').then((v) => {
   updates.current ??= v;
   $('#appVersion').replaceChildren(`v${v}`, iconEl('chevD'));   // the chevron says it opens a menu
@@ -4743,23 +5125,27 @@ function makeScrollable(row, extraClass = '') {
  * Drag-to-reorder for a tab row. Items matching `item` carry `data-id`; `canDrag(id)` vetoes pinned ones. While
  * dragging, the item under the pointer shows which side the drop lands on, and the row scrolls near its edges.
  * `onDrop(draggedId, targetId, before)` is told where to put it. Listeners sit on the row itself, so its contents can
- * be re-rendered freely.
+ * be re-rendered freely. With `outside`, a tab can also be dragged out below the row: `outside.over(id, x, y)` shows
+ * where it would land and returns that place (or null), `outside.over(null)` hides it, and `outside.drop(id, place)`
+ * puts it there. `fixed(id)` items stay where they are: only dragged out, and never a place to drop beside.
  *
  * Built on pointer events rather than HTML5 drag and drop: in WebView2 an HTML5 drag runs through the operating
  * system's drag loop, which AllowExternalDrop = false (set so dropped files can't navigate the page) also blocks.
  */
-function enableTabDrag(row, { item, canDrag = () => true, onDrop }) {
+function enableTabDrag(row, { item, canDrag = () => true, onDrop, outside = null, fixed = () => false }) {
   const THRESHOLD = 8;   // pixels the pointer must move before a press becomes a drag (a hurried click can move ~5)
   let press = null;      // { id, el, x, pointerId } from pointerdown until pointerup
   let dragging = false;
+  let place = null;      // where outside.over says a drop below the row lands
 
   const clear = () => row.querySelectorAll('.drop-before, .drop-after').forEach((el) => el.classList.remove('drop-before', 'drop-after'));
 
   /** The item nearest the pointer (other than the dragged one), and which side of it the drop lands on. */
   const targetAt = (x) => {
+    if (fixed(press.id)) return null;
     let best = null;
     for (const el of row.querySelectorAll(item)) {
-      if (el.dataset.id === press.id) continue;
+      if (el.dataset.id === press.id || fixed(el.dataset.id)) continue;
       const r = el.getBoundingClientRect();
       const d = x < r.left ? r.left - x : x > r.right ? x - r.right : 0;
       if (!best || d < best.d) best = { el, before: x < r.left + r.width / 2, d };
@@ -4769,6 +5155,8 @@ function enableTabDrag(row, { item, canDrag = () => true, onDrop }) {
 
   const finish = () => {
     clear();
+    if (place != null) outside.over(null);
+    place = null;
     press?.el.classList.remove('dragging');
     document.body.classList.remove('tab-dragging');
     press = null;
@@ -4781,7 +5169,7 @@ function enableTabDrag(row, { item, canDrag = () => true, onDrop }) {
     if (e.button !== 0) return;
     const el = e.target.closest(item);
     if (!el || !row.contains(el) || !canDrag(el.dataset.id) || e.target.closest('.tab-close, .icon-btn')) return;
-    press = { id: el.dataset.id, el, x: e.clientX, pointerId: e.pointerId };
+    press = { id: el.dataset.id, el, x: e.clientX, y: e.clientY, pointerId: e.pointerId };
   });
 
   row.addEventListener('pointermove', (e) => {
@@ -4790,13 +5178,20 @@ function enableTabDrag(row, { item, canDrag = () => true, onDrop }) {
     // than letting plain mouse movement start a drag that eats the next click.
     if ((e.buttons & 1) === 0) { if (dragging) finish(); else press = null; return; }
     if (!dragging) {
-      if (Math.abs(e.clientX - press.x) < THRESHOLD) return;
+      // Along the row only, unless a tab can be dragged out of it: then down counts too (the row loses the pointer once it's
+      // out, so a drag must start before then).
+      const moved = outside ? Math.hypot(e.clientX - press.x, e.clientY - press.y) : Math.abs(e.clientX - press.x);
+      if (moved < THRESHOLD) return;
       dragging = true;
       row.setPointerCapture(e.pointerId);   // keep receiving moves even when the pointer leaves the row
       press.el.classList.add('dragging');
       document.body.classList.add('tab-dragging');
     }
     const r = row.getBoundingClientRect();
+    if (outside) {
+      place = e.clientY > r.bottom + 6 ? outside.over(press.id, e.clientX, e.clientY) : (place != null && outside.over(null), null);
+      if (place != null) { clear(); return; }
+    }
     if (e.clientX < r.left + 30) row.scrollLeft -= 12;
     else if (e.clientX > r.right - 30) row.scrollLeft += 12;
     const t = targetAt(e.clientX);
@@ -4819,12 +5214,14 @@ function enableTabDrag(row, { item, canDrag = () => true, onDrop }) {
     }
     const t = targetAt(e.clientX);
     const id = press.id;
+    const out = place;
     finish();
     // The click that follows this pointerup would also switch tabs; swallow it.
     const swallow = (c) => { c.stopPropagation(); c.preventDefault(); };
     window.addEventListener('click', swallow, { capture: true, once: true });
     setTimeout(() => window.removeEventListener('click', swallow, { capture: true }), 0);
-    if (t) onDrop(id, t.el.dataset.id, t.before);
+    if (out != null) outside.drop(id, out);
+    else if (t) onDrop(id, t.el.dataset.id, t.before);
   });
 
   row.addEventListener('pointercancel', finish);
@@ -5029,8 +5426,45 @@ function renderPluginButtons() {
 
 // ---- access: what a plugin can see beyond its own page
 
+/** Each kind of access a plugin can ask for (PluginCatalog.AccessKinds): what the dialog says it would let the plugin do, and its palette menu items. */
+const PLUGIN_ACCESS = {
+  sessions: {
+    verb: 'see your sessions', let: 'Let it see your sessions', stop: 'Stop it seeing your sessions',
+    dialog: (p) => [
+      h('p', {}, `${p.title} is a plugin, from ${plugins.folder}\\${p.id}. It asks to see:`),
+      h('ul', {},
+        h('li', {}, 'your sessions: their names, projects and folders, and whether each is working or waiting for you;'),
+        h('li', {}, 'what Claude did in each: your prompts, the files it read and edited, the commands it ran and the questions it asked;'),
+        h('li', {}, 'how many files each top-level folder of their repositories holds.')),
+      h('p', {}, 'It can’t type into a session or change a file. But like any web page it could send what it sees to a website, so allow only a plugin you trust. The palette menu can stop it seeing them later.'),
+    ],
+  },
+  ask: {
+    verb: 'ask Claude about your sessions', let: 'Let it ask Claude about your sessions', stop: 'Stop it asking Claude about your sessions',
+    dialog: (p) => [
+      h('p', {}, `${p.title} is a plugin, from ${plugins.folder}\\${p.id}. It asks to put questions about your sessions to Claude:`),
+      h('ul', {},
+        h('li', {}, 'each question runs Claude (or a session’s own agent) once, headless, with your own sign-in, the way Suggest a commit message does, and counts against your usage;'),
+        h('li', {}, 'the question goes with the sessions’ conversations: your prompts, what the agent answered and the tools it used;'),
+        h('li', {}, 'the agent runs with no tools and saves no conversation, so it can’t change anything.')),
+      h('p', {}, 'The plugin sees the answers. Allow only a plugin you trust; the palette menu can stop it later.'),
+    ],
+  },
+  type: {
+    verb: 'type into your sessions', let: 'Let it type into your sessions', stop: 'Stop it typing into your sessions',
+    dialog: (p) => [
+      h('p', {}, `${p.title} is a plugin, from ${plugins.folder}\\${p.id}. It asks to type into your sessions:`),
+      h('ul', {},
+        h('li', {}, 'text goes into a running session’s terminal as if you had pasted it, for you to send, or sent for you (Enter pressed) when the plugin says so;'),
+        h('li', {}, 'what it types reaches the agent there as a prompt, so it can set a session to work;'),
+        h('li', {}, 'it can’t type into a session that has stopped at a question needing your answer.')),
+      h('p', {}, 'A toast says each time it types. Allow only a plugin you trust; the palette menu can stop it later.'),
+    ],
+  },
+};
+
 /**
- * The access you allowed each plugin, by plugin id (["sessions"]), kept; access you refused is only until the app
+ * The access you allowed each plugin, by plugin id (["sessions", "ask", "type"]), kept; access you refused is only until the app
  * restarts, so the plugin asks again then. A plugin is asked about only for what its plugin.json's "access" names.
  */
 const pluginAccess = store.get('pluginAccess', {});
@@ -5067,13 +5501,7 @@ function askPluginAccess(p, kind) {
       setPluginAccess(p, kind, yes);
       resolve(yes);
     };
-    openModal(`Let ${p.title} see your sessions?`, h('div', {},
-      h('p', {}, `${p.title} is a plugin, from ${plugins.folder}\\${p.id}. It asks to see:`),
-      h('ul', {},
-        h('li', {}, 'your sessions: their names, projects and folders, and whether each is working or waiting for you;'),
-        h('li', {}, 'what Claude did in each: your prompts, the files it read and edited, the commands it ran and the questions it asked;'),
-        h('li', {}, 'how many files each top-level folder of their repositories holds.')),
-      h('p', {}, 'It can’t type into a session or change a file. But like any web page it could send what it sees to a website, so allow only a plugin you trust. The palette menu can stop it seeing them later.')), [
+    openModal(`Let ${p.title} ${PLUGIN_ACCESS[kind].verb}?`, h('div', {}, ...PLUGIN_ACCESS[kind].dialog(p)), [
       h('button', { class: 'btn', 'data-autofocus': true, onclick: () => { answer(false); closeModal(); } }, 'Don’t allow'),
       h('button', { class: 'btn primary', onclick: () => { answer(true); closeModal(); } }, 'Allow'),
     ]);
@@ -5096,6 +5524,13 @@ const pluginSessionInfo = (s) => ({
  *                          version } that the plugin already has, so only what's new comes back
  *   folders { sessionId } → { root, folders: [{ name, files }] }, the session's repository's top-level folders, or null
  *   showSession { sessionId } → opens the session, as clicking its tab would
+ * With "ask" access (and "sessions"):
+ *   ask { question, ids, history } → { answer, writer, sessions }: an agent run headless (the sessions' own, or Claude)
+ *                          answers the question from the conversations of the sessions named; history is earlier
+ *                          [{ question, answer }] of the same chat, so a follow-up makes sense
+ * With "type" access:
+ *   type { sessionId, text, send } → types text into the session's terminal as if pasted, and presses Enter when send
+ *                          is true; refused while the session is stopped at a question needing your answer
  */
 async function pluginRequest(p, m) {
   const sessionArg = () => {
@@ -5103,11 +5538,11 @@ async function pluginRequest(p, m) {
     if (!s) throw new Error('There is no such session.');
     return s;
   };
-  const NEEDS = { sessions: 'sessions', activity: 'sessions', folders: 'sessions', showSession: 'sessions' };
+  const NEEDS = { sessions: 'sessions', activity: 'sessions', folders: 'sessions', showSession: 'sessions', ask: 'ask', type: 'type' };
   const kind = NEEDS[m.name];
   if (!kind) throw new Error(`There is no request "${m.name}".`);
   if (!p.access.includes(kind)) throw new Error(`Its plugin.json doesn't ask for "${kind}" access.`);
-  if (!await pluginAllowed(p, kind)) throw new Error(`It isn't allowed to see your ${kind}.`);
+  if (!await pluginAllowed(p, kind)) throw new Error(`It isn't allowed to ${PLUGIN_ACCESS[kind].verb}.`);
   switch (m.name) {
     case 'sessions': return state.sessions.map(pluginSessionInfo);
     case 'activity': {
@@ -5124,6 +5559,30 @@ async function pluginRequest(p, m) {
       showTerminalDoc();
       expand(s.id);
       return null;
+    }
+    case 'ask': {
+      if (!p.access.includes('sessions') || !await pluginAllowed(p, 'sessions')) throw new Error('Asking about sessions needs "sessions" access as well.');
+      const question = typeof m.question === 'string' ? m.question.trim().slice(0, 4000) : '';
+      if (!question) throw new Error('There is no question.');
+      const ids = (Array.isArray(m.ids) ? m.ids : []).filter((id) => typeof id === 'string' && state.byId.has(id)).slice(0, 50);
+      if (!ids.length) throw new Error('There are no sessions to ask about.');
+      const history = (Array.isArray(m.history) ? m.history : []).slice(-8)
+        .filter((x) => x && typeof x.question === 'string' && typeof x.answer === 'string')
+        .map((x) => ({ question: x.question.slice(0, 4000), answer: x.answer.slice(0, 4000) }));
+      const about = ids.map((id) => { const i = pluginSessionInfo(state.byId.get(id)); return { id, name: i.name, project: i.project, status: i.status }; });
+      return request('plugins.ask', { question, history, sessions: about });
+    }
+    case 'type': {
+      const s = sessionArg();
+      const text = typeof m.text === 'string' ? m.text.slice(0, 20000) : '';
+      if (!text) throw new Error('There is nothing to type.');
+      if (s.startsOnOpen || !s.running) throw new Error(`"${s.name}" isn't running.`);
+      if (s.asking) throw new Error(`"${s.name}" is waiting for your answer to a question, so nothing is typed into it.`);
+      const send = m.send === true;
+      s.term.paste(text);
+      if (send) setTimeout(() => post({ type: 'input', id: s.id, data: '\r' }), 150);
+      toast(`${p.title} typed into "${s.name}"${send ? ' and sent it' : ''}.`);
+      return { sent: send };
     }
   }
 }
@@ -5153,6 +5612,7 @@ addEventListener('message', (e) => {
 
 // Side panel plugins kept from last time show once the folder has been read.
 loadPlugins().then(() => renderGit());
+loadThemes();
 
 // ------------------------------------------------------------------ boot
 
@@ -5211,15 +5671,118 @@ enableTabDrag($('#projectTabs'), {
   },
 });
 
-// Diff tabs; the Terminal tab isn't an item, so it stays first.
+// Diff tabs. The Terminal tab stays first, but can be dragged to a side of the area like them.
 enableTabDrag($('#docTabs'), {
-  item: '.doc-tab:not(.terminal)',
+  item: '.doc-tab',
+  fixed: (key) => key === 'terminal',
   onDrop: (key, targetKey, before) => {
     const order = moveId(docs.tabs.map((t) => t.key), key, targetKey, before);
     docs.tabs.sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key));
     renderDocTabs();
   },
+  outside: { over: dockHint, drop: (key, dir) => (key === 'terminal' ? splitTerminal(dir) : splitDoc(key, dir || null)) },
 });
+
+/**
+ * Where a tab dragged into the area would go: near an edge puts it on that side of the terminal, anywhere else on its
+ * own ('' then). Shows that place, or hides it for key null. A Project tab only goes on its own.
+ */
+function dockHint(key, x, y) {
+  const hint = $('#dockHint');
+  const r = $('#docArea').getBoundingClientRect();
+  const term = key === 'terminal';
+  const t = term ? terminalPartner() : key && docs.tabs.find((d) => d.key === key);
+  if (!t || x < r.left || x > r.right || y < r.top || y > r.bottom) { hint.hidden = true; return null; }
+  const rx = (x - r.left) / r.width, ry = (y - r.top) / r.height;
+  // How far into each edge's band (its outer 40%) the pointer is; the deepest wins.
+  const [edge, depth] = Object.entries({ left: 0.4 - rx, right: rx - 0.6, top: 0.4 - ry, bottom: ry - 0.6 }).sort((a, b) => b[1] - a[1])[0];
+  const dir = canSplit(t) && depth > 0 ? edge : '';
+  // The part the dragged tab would take: a file tab what the terminal leaves it, the terminal its own share.
+  const inset = { left: '0', top: '0', right: '0', bottom: '0' };
+  if (dir) inset[DOCK_SIDES[dir].across] = (term ? 1 - docs.at : docs.at) * 100 + '%';
+  Object.assign(hint.style, inset);
+  hint.textContent = !dir ? 'On its own' : term ? TERMINAL_SIDES[dir] : DOCK_SIDES[dir].label;
+  hint.hidden = false;
+  return dir;
+}
+
+/** The terminal dragged to a side (a DOCK_SIDES key): the file tab goes across from it. '' shows it on its own. */
+const TERMINAL_SIDES = { right: 'Terminal on the right', left: 'Terminal on the left', top: 'Terminal on top', bottom: 'Terminal below' };
+
+/** The file tab the terminal shares the area with: the one on screen, else the last one open. */
+const terminalPartner = () => [shownDoc(), ...shownTabs().reverse()].find(canSplit) || null;
+
+function splitTerminal(dir) {
+  const t = terminalPartner();
+  if (dir && t) splitDoc(t.key, DOCK_SIDES[dir].across);
+  else docs.side = null;
+  showTerminalDoc();
+}
+
+$('#docTabs').addEventListener('contextmenu', (e) => {
+  if (e.target.closest('.doc-tab.terminal')) {
+    const partner = terminalPartner();
+    if (!partner) return;
+    e.preventDefault();
+    const split = sideTab() && docs.side === partner.key;
+    showMenu(e.clientX, e.clientY, [
+      { header: 'Beside ' + (isConvTab(partner) ? 'the Conversation' : isPluginTab(partner) ? pluginCaption(partner.pluginId) : partner.spec.path.split('/').pop()) },
+      ...Object.entries(TERMINAL_SIDES).map(([dir, label]) => ({
+        label, checked: !!split && DOCK_SIDES[docs.dir].across === dir, action: () => splitTerminal(dir),
+      })),
+      { label: 'On its own', checked: !split, action: () => splitTerminal('') },
+    ]);
+    return;
+  }
+  const el = e.target.closest('.doc-tab');
+  const t = el && docs.tabs.find((d) => d.key === el.dataset.id);
+  if (!t) return;
+  e.preventDefault();
+  const beside = docs.side === t.key;
+  showMenu(e.clientX, e.clientY, [
+    ...Object.entries(DOCK_SIDES).map(([dir, side]) => canSplit(t) && { label: side.label, checked: beside && docs.dir === dir, action: () => splitDoc(t.key, dir) }),
+    canSplit(t) && { label: 'On its own', checked: !beside, action: () => splitDoc(t.key, null) },
+    canSplit(t) && '-',
+    { label: 'Close', kbd: 'Ctrl+W', action: () => closeDoc(t.key) },
+  ]);
+});
+
+// While split, the side you click or tab into has your attention (see attend).
+for (const id of ['#diffDoc', '#convDoc', '#pluginDoc']) {
+  for (const type of ['pointerdown', 'focusin']) $(id).addEventListener(type, () => attend(docs.side), true);
+}
+for (const type of ['pointerdown', 'focusin']) $('#termPane').addEventListener(type, () => attend('terminal'), true);
+
+// The divider between the terminal and the tab beside it; double-click evens them up.
+(() => {
+  const sp = $('#docSplitter');
+  const set = (at) => {
+    docs.at = Math.max(0.2, Math.min(0.8, at));
+    $('#docArea').style.setProperty('--split', docs.at * 100 + '%');
+  };
+  sp.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    sp.setPointerCapture(e.pointerId);   // keeps the moves coming over a plugin's frame too
+    sp.classList.add('dragging');
+    const move = (ev) => {
+      const r = $('#docArea').getBoundingClientRect();
+      set({
+        right: (ev.clientX - r.left) / r.width, left: (r.right - ev.clientX) / r.width,
+        bottom: (ev.clientY - r.top) / r.height, top: (r.bottom - ev.clientY) / r.height,
+      }[docs.dir]);
+    };
+    const up = () => {
+      sp.classList.remove('dragging');
+      store.set('docSplitAt', docs.at);
+      sp.removeEventListener('pointermove', move);
+      sp.removeEventListener('lostpointercapture', up);
+    };
+    sp.addEventListener('pointermove', move);
+    sp.addEventListener('lostpointercapture', up);
+  });
+  sp.addEventListener('dblclick', () => { set(0.5); store.set('docSplitAt', docs.at); });
+})();
 
 applyGitVisibility();
 applyDiffOptions();

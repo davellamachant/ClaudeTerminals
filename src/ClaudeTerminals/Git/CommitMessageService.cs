@@ -1,31 +1,32 @@
-using System.Diagnostics;
 using System.Text;
-using ClaudeTerminals.Terminal;
+using ClaudeTerminals.Sessions;
 
 namespace ClaudeTerminals.Git;
 
 /// <summary>
-/// Suggests a commit message for a repository's changes, like Visual Studio's "Generate commit message": Claude Code
-/// runs headless (claude -p) with no tools, MCP servers or saved session, and the user's own Claude sign-in.
-/// It describes what Commit would take: the staged changes, or everything when nothing is staged.
+/// Suggests a commit message for a repository's changes, like Visual Studio's "Generate commit message": the session's
+/// agent runs headless (<see cref="AgentProfile.HeadlessCommand"/>, such as claude -p) with the user's own sign-in, or
+/// Claude Code for a session that runs something else. It describes what Commit would take: the staged changes, or
+/// everything when nothing is staged.
 /// </summary>
 internal static partial class CommitMessageService
 {
     private const int MaxDiffChars = 60_000;
     private const int MaxNewFileChars = 2_000;
-    private static readonly TimeSpan Timeout = TimeSpan.FromMinutes(2);
-
-    /// <summary>Headless, tool-less and not saved (so it doesn't appear among the conversations to resume).</summary>
-    private const string Command = "claude -p --model haiku --tools \"\" --strict-mcp-config --no-session-persistence --output-format text";
 
     /// <param name="detail">"short" (one line), "standard" (a line, and brief points only when needed) or "detailed".</param>
-    public static async Task<string> SuggestAsync(string dir, string? detail = null, CancellationToken ct = default)
+    /// <param name="agent">The session's agent, which writes it if it can (see <see cref="Writer"/>).</param>
+    public static async Task<string> SuggestAsync(string dir, string? detail = null, AgentProfile? agent = null, CancellationToken ct = default)
     {
         detail = NormalizeDetail(detail);
+        var writer = Writer(agent);
         var prompt = await BuildPromptAsync(dir, detail) ?? throw new InvalidOperationException("There are no changes to describe.");
-        var message = Finish(await RunClaudeAsync(dir, prompt, ct), detail);
-        return message.Length > 0 ? message : throw new InvalidOperationException("Claude didn't suggest a message. Try again.");
+        var message = Finish(await HeadlessAgent.RunAsync(writer, dir, prompt, "suggest a message", ct), detail);
+        return message.Length > 0 ? message : throw new InvalidOperationException($"{writer.Name} didn't suggest a message. Try again.");
     }
+
+    /// <summary>Who writes the message for a session: its agent, or Claude for one with no headless command (or no agent).</summary>
+    internal static AgentProfile Writer(AgentProfile? agent) => HeadlessAgent.Writer(agent);
 
     internal static string NormalizeDetail(string? detail) => detail is "short" or "detailed" ? detail : "standard";
 
@@ -36,7 +37,7 @@ internal static partial class CommitMessageService
         return detail == "short" ? message.Split('\n')[0].Trim() : message;
     }
 
-    /// <summary>The request for Claude, or null when there is nothing to commit.</summary>
+    /// <summary>The request for the agent, or null when there is nothing to commit.</summary>
     internal static async Task<string?> BuildPromptAsync(string dir, string detail = "standard")
     {
         var status = await GitService.GetStatusAsync(dir);
@@ -118,77 +119,6 @@ internal static partial class CommitMessageService
         {
             return "";   // a folder (submodule), or gone already
         }
-    }
-
-    private static async Task<string> RunClaudeAsync(string dir, string prompt, CancellationToken ct)
-    {
-        var env = SessionEnvironment.Build();
-        string line;
-        try
-        {
-            line = CommandLineResolver.Resolve(Command, env);
-        }
-        catch (FileNotFoundException)
-        {
-            throw new InvalidOperationException("Claude Code (claude) wasn't found on PATH, so a message can't be suggested.");
-        }
-        var (program, arguments) = SplitProgram(line);
-        var psi = new ProcessStartInfo(program, arguments)
-        {
-            WorkingDirectory = dir,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            StandardInputEncoding = new UTF8Encoding(false),
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
-        };
-        // The same clean environment sessions get, not this app's (which may have been started from a Claude session).
-        psi.Environment.Clear();
-        foreach (var (name, value) in env) psi.Environment[name] = value;
-
-        using var timer = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timer.CancelAfter(Timeout);
-        using var process = Process.Start(psi) ?? throw new InvalidOperationException("Could not start Claude Code.");
-        try
-        {
-            var stdout = process.StandardOutput.ReadToEndAsync(timer.Token);
-            var stderr = process.StandardError.ReadToEndAsync(timer.Token);
-            await process.StandardInput.WriteAsync(prompt.AsMemory(), timer.Token);
-            process.StandardInput.Close();
-            var output = await stdout;
-            var error = await stderr;
-            await process.WaitForExitAsync(timer.Token);
-            if (process.ExitCode != 0)
-            {
-                var why = (error.Trim().Length > 0 ? error : output).Trim();
-                throw new InvalidOperationException("Claude couldn't suggest a message: " + (why.Length > 400 ? why[..400] + "…" : why));
-            }
-            return output;
-        }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-        {
-            throw new InvalidOperationException($"Claude didn't answer within {Timeout.TotalMinutes:0} minutes.");
-        }
-        finally
-        {
-            try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
-            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) { }
-        }
-    }
-
-    /// <summary>CommandLineResolver gives a whole command line; the program is its first (possibly quoted) token.</summary>
-    internal static (string Program, string Arguments) SplitProgram(string line)
-    {
-        if (line.StartsWith('"'))
-        {
-            var end = line.IndexOf('"', 1);
-            return (line[1..end], line[(end + 1)..].TrimStart());
-        }
-        var space = line.IndexOf(' ');
-        return space < 0 ? (line, "") : (line[..space], line[(space + 1)..]);
     }
 
     /// <summary>Drops code fences or quotes the model sometimes wraps the message in.</summary>

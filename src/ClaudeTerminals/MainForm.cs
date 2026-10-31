@@ -114,14 +114,18 @@ internal sealed class MainForm : Form
     {
         if (following) return;
         var running = sessions.Values.Where(s => s.IsRunning && TerminalSession.CanTrackConversation(s.Info.Command))
-            .Select(s => (Session: s, Pids: s.ProcessIds())).ToList();
+            .Select(s => (Session: s, Pids: s.ProcessIds(), Others: OthersConversations(s))).ToList();
         if (running.Count == 0) return;
         following = true;
         try
         {
-            var live = await Task.Run(() => running.Select(r => (r.Session, Id: ConversationReader.ResumableConversation(r.Pids))).ToList());
+            var live = await Task.Run(() => running.Select(r => (r.Session, Id: r.Session.Agent?.LiveConversation(r.Session, r.Pids, r.Others))).ToList());
             var changed = false;
-            foreach (var (s, id) in live) changed |= AdoptConversation(s, id);
+            // Two sessions started together in one folder could both see the same new conversation (Codex's are told
+            // apart only by folder and time): the first takes it.
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (s, id) in live)
+                if (id != null && seen.Add(id)) changed |= AdoptConversation(s, id);
             if (changed) { SaveSessions(); Post(SessionList()); }
         }
         finally
@@ -142,8 +146,15 @@ internal sealed class MainForm : Form
     /// <summary>Catches up on the session's conversation right now (before it's stopped or restarted).</summary>
     private void CatchUpConversation(TerminalSession s)
     {
-        if (s.IsRunning && AdoptConversation(s, ConversationReader.ResumableConversation(s.ProcessIds()))) SaveSessions();
+        if (s.IsRunning && AdoptConversation(s, LiveConversation(s))) SaveSessions();
     }
+
+    /// <summary>The saved conversation the running session's agent is in now, or null when that isn't known.</summary>
+    private string? LiveConversation(TerminalSession s) => s.Agent?.LiveConversation(s, s.ProcessIds(), OthersConversations(s));
+
+    /// <summary>The conversations the other sessions are in, which <paramref name="s"/> can't be in.</summary>
+    private HashSet<string> OthersConversations(TerminalSession s) =>
+        sessions.Values.Where(x => x != s).Select(x => x.Info.Conversation).OfType<string>().ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     // ---------------------------------------------------------------- panels
 
@@ -153,6 +164,10 @@ internal sealed class MainForm : Form
     private static string PanelConfigFolder => Path.Combine(SessionStore.AppDataFolder, "panels");
 
     private static string PluginFolder => Path.Combine(SessionStore.AppDataFolder, "plugins");
+
+    /// <summary>Themes of your own (see <see cref="Themes.ThemeCatalog"/>); the app's own are in wwwroot/themes.</summary>
+    private static string ThemeFolder => Path.Combine(SessionStore.AppDataFolder, "themes");
+    private static string BuiltInThemeFolder => Path.Combine(AppContext.BaseDirectory, "wwwroot", "themes");
     private readonly Dictionary<string, PluginInfo> plugins = [];
 
     /// <summary>
@@ -202,16 +217,21 @@ internal sealed class MainForm : Form
         changed = change?.Id == null ? null : new { owner = change.Owner, id = change.Id, created = change.Created },
     };
 
-    /// <summary>Writes the session's --mcp-config file (this run's port and the session's token); null if panels are unavailable.</summary>
-    private string? PanelConfigFile(TerminalSession s)
+    /// <summary>
+    /// How the session reaches the panel server (this run's port and the session's token), writing Claude's --mcp-config
+    /// file; null if panels are unavailable.
+    /// </summary>
+    private PanelLink? PanelLinkFor(TerminalSession s)
     {
         if (panelServer == null) return null;
+        var link = new PanelLink(null, panelServer.Url, panelServer.TokenFor(s.Id));
+        if (s.Agent?.PanelsFromFile != true) return link;   // configured on its command line, if at all
         try
         {
             Directory.CreateDirectory(PanelConfigFolder);
             var path = Path.Combine(PanelConfigFolder, $"mcp-{s.Id}.json");
             File.WriteAllText(path, panelServer.ConfigJson(s.Id));
-            return path;
+            return link with { ConfigFile = path };
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -251,13 +271,21 @@ internal sealed class MainForm : Form
     private void PostAccent() => Post(new { type = "accent", palette = AccentColors.Read(), lightApps = AccentColors.AppsUseLightTheme() });
 
     /// <summary>The window's own colours (title bar, and what shows before the page paints) follow the page's theme.</summary>
-    private void ApplyWindowTheme(bool light)
+    /// <param name="background">The page's background ("#rrggbb"), for a theme with its own.</param>
+    private void ApplyWindowTheme(bool light, string? background = null)
     {
         var dark = light ? 0 : 1;
         Native.DwmSetWindowAttribute(Handle, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, ref dark, sizeof(int));
-        var background = light ? Color.FromArgb(0xee, 0xee, 0xee) : Color.FromArgb(0x1f, 0x1f, 0x1f);
-        webView.DefaultBackgroundColor = background;
-        BackColor = background;
+        var own = background is { Length: 7 } hex && hex[0] == '#' &&
+            int.TryParse(hex[1..], System.Globalization.NumberStyles.HexNumber, null, out var rgb)
+            ? Color.FromArgb(rgb >> 16 & 0xff, rgb >> 8 & 0xff, rgb & 0xff)
+            : (Color?)null;
+        // Such a theme's title bar takes its colour too (Windows 11; earlier versions keep the dark one).
+        var caption = own is { } c ? ColorTranslator.ToWin32(c) : unchecked((int)0xFFFFFFFF) /* DWMWA_COLOR_DEFAULT */;
+        Native.DwmSetWindowAttribute(Handle, 35 /* DWMWA_CAPTION_COLOR */, ref caption, sizeof(int));
+        var color = own ?? (light ? Color.FromArgb(0xee, 0xee, 0xee) : Color.FromArgb(0x1f, 0x1f, 0x1f));
+        webView.DefaultBackgroundColor = color;
+        BackColor = color;
     }
 
     /// <summary>Follows the Windows accent colour when it's changed in Settings.</summary>
@@ -436,6 +464,7 @@ internal sealed class MainForm : Form
     private object SessionList() => new
     {
         type = "sessions",
+        agents = Agents.All.Select(a => a.Describe()),
         projects = projects.Select(p => new { id = p.Id, name = p.Name, color = p.Color }),
         sessions = order.Select(id => sessions[id]).Select(s => new
         {
@@ -552,7 +581,7 @@ internal sealed class MainForm : Form
             case "start":
             {
                 var s = Get(msg);
-                s.Start(Int(msg, "cols"), Int(msg, "rows"), OptStr(msg, "theme"), PanelConfigFile(s));
+                s.Start(Int(msg, "cols"), Int(msg, "rows"), OptStr(msg, "theme"), PanelLinkFor(s));
                 return null;
             }
             case "input":
@@ -568,14 +597,14 @@ internal sealed class MainForm : Form
                 var s = Get(msg);
                 CatchUpConversation(s);   // a session with its own conversation restarts in the one it's in now
                 // Restarting to pick up a new theme: carry on in the exact conversation the session is in.
-                if (Bool(msg, "resume") && s.IsRunning && ConversationReader.ResumableConversation(s.ProcessIds()) is { } live)
+                if (Bool(msg, "resume") && s.IsRunning && LiveConversation(s) is { } live)
                     s.ResumeOnce = live;
                 s.Stop();
-                s.Start(Int(msg, "cols"), Int(msg, "rows"), OptStr(msg, "theme"), PanelConfigFile(s));
+                s.Start(Int(msg, "cols"), Int(msg, "rows"), OptStr(msg, "theme"), PanelLinkFor(s));
                 return null;
             }
             case "theme":
-                ApplyWindowTheme(Bool(msg, "light"));
+                ApplyWindowTheme(Bool(msg, "light"), OptStr(msg, "background"));
                 return null;
             case "stop":
             {
@@ -635,6 +664,8 @@ internal sealed class MainForm : Form
                 {
                     // A --resume typed into the command becomes the session's conversation.
                     var (command, conversation) = TerminalSession.TakeConversation(c.GetString()!.Trim());
+                    // Another agent can't open the old one's conversation.
+                    if (Agents.For(command) != s.Agent) s.Info.Conversation = null;
                     s.Info.Command = command;
                     if (conversation != null) s.Info.Conversation = conversation;
                     // A command that is now a plain claude (e.g. --continue taken out) gets a conversation of its own
@@ -646,7 +677,8 @@ internal sealed class MainForm : Form
                 // The conversation to reopen: one picked from the saved ones, or "new" for a fresh one.
                 if (OptStr(msg, "conversation") is { } pick && TerminalSession.CanTrackConversation(s.Info.Command))
                 {
-                    s.Info.Conversation = pick == "new" ? Guid.NewGuid().ToString()
+                    // Codex picks a new conversation's id itself; the session learns it once Codex has started it.
+                    s.Info.Conversation = pick == "new" ? (s.Agent?.ChoosesConversationId == true ? Guid.NewGuid().ToString() : null)
                         : TerminalSession.IsConversationId(pick) ? pick : throw new ArgumentException("That isn't a conversation id.");
                     s.Info.Command = TerminalSession.StripContinue(s.Info.Command);
                 }
@@ -782,12 +814,19 @@ internal sealed class MainForm : Form
             }
             case "conversation":
             {
-                // The conversation the session's Claude is in: a light outline for the rail, or everything for the
+                // The conversation the session's agent is in: a light outline for the rail, or everything for the
                 // Conversation tab (full). Nothing is sent again while the page already has this version, and a page
                 // that has `count` turns of this conversation only gets its last one (which may have grown) and newer.
                 var s = Get(msg);
                 var full = Bool(msg, "full");
-                var conv = await Task.Run(() => ConversationReader.ForProcesses(s.ProcessIds()));
+                if (s.Agent is not { ShowsConversation: true } agent) return new { found = false };
+                // Follow the agent to the conversation it's in now, so a new session's first prompt, or the conversation
+                // after /new or /clear, shows straight away rather than once the next round of following finds it.
+                var pids = s.ProcessIds();
+                var others = OthersConversations(s);
+                var live = s.IsRunning ? await Task.Run(() => agent.LiveConversation(s, pids, others)) : null;
+                if (AdoptConversation(s, live)) { SaveSessions(); Post(SessionList()); }
+                var conv = await Task.Run(() => agent.ReadConversation(s, pids));
                 if (conv == null) return new { found = false };
                 var same = OptStr(msg, "sessionId") == conv.SessionId;
                 if (same && msg.TryGetProperty("version", out var v) && v.ValueKind == JsonValueKind.Number && v.GetInt64() == conv.Version)
@@ -814,15 +853,20 @@ internal sealed class MainForm : Form
             }
             case "conversations":
             {
+                // Every agent's, latest first; only one agent's when the page asks for it (a session switching conversation).
                 var dir = OptStr(msg, "directory");
-                return await Task.Run(() => ConversationIndex.List(dir, string.IsNullOrWhiteSpace(dir) ? 300 : 100));
+                var agent = OptStr(msg, "agent");
+                var max = string.IsNullOrWhiteSpace(dir) ? 300 : 100;
+                return await Task.Run(() => Agents.All.Where(a => agent == null || a.Id == agent)
+                    .SelectMany(a => a.ListConversations(dir, max))
+                    .OrderByDescending(c => c.Modified).Take(max).ToList());
             }
             case "conversationInfo":
             {
                 // The session's own conversation for its tooltips, running or not: saved is false until Claude has saved it.
                 var s = Get(msg);
                 if (s.Info.Conversation is not { } id) return null;
-                var c = await Task.Run(() => ConversationIndex.Find(id, s.Info.Directory));
+                var c = await Task.Run(() => s.Agent?.FindConversation(id, s.Info.Directory));
                 return new { id, saved = c != null, title = c?.Title, started = c?.Started, modified = c?.Modified };
             }
             case "openUrl":
@@ -864,6 +908,38 @@ internal sealed class MainForm : Form
                 var asked = ids.Select(id => (id, s: sessions.GetValueOrDefault(id))).ToList();
                 return await Task.Run(() => asked.Select(a => ActivityOf(a.id, a.s, have)).ToList());
             }
+            case "plugins.ask":
+            {
+                // A question about sessions, answered by an agent run headless over their conversations (see SessionAssistant).
+                // The page names the sessions, with what their status dots show; a stopped session's saved conversation is read.
+                var question = Str(msg, "question");
+                var history = msg.TryGetProperty("history", out var hist) && hist.ValueKind == JsonValueKind.Array
+                    ? hist.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.Object).Select(x => new AssistantExchange(Str(x, "question"), Str(x, "answer"))).ToList()
+                    : [];
+                var about = msg.TryGetProperty("sessions", out var list) && list.ValueKind == JsonValueKind.Array
+                    ? list.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.Object && sessions.ContainsKey(Str(x, "id"))).Select(x => x.Clone()).ToList()
+                    : [];
+                var briefs = await Task.Run(() => about.Select(x => BriefOf(sessions[Str(x, "id")], Str(x, "name"), OptStr(x, "project"), Str(x, "status"))).ToList());
+                var a = await SessionAssistant.AskAsync(question, history, briefs, DateTime.Now);
+                return new { answer = a.Answer, writer = a.Writer, sessions = a.Sessions };
+            }
+
+            // ---- themes
+            case "themes.list":
+            {
+                // Read again each time, so a theme added or changed shows without restarting.
+                var (themes, problems) = Themes.ThemeCatalog.Load(BuiltInThemeFolder, ThemeFolder);
+                // The names a theme can set, for the page to write every one out when it saves a theme.
+                var names = new { colors = Themes.ThemeCatalog.ColorNames, terminal = Themes.ThemeCatalog.TerminalNames, diff = Themes.ThemeCatalog.DiffNames };
+                return new { folder = ThemeFolder, themes, problems, names };
+            }
+            case "themes.save":
+                // A copy of the theme on screen, as a new file in the themes folder.
+                return Themes.ThemeCatalog.Save(ThemeFolder, BuiltInThemeFolder, msg.GetProperty("theme"));
+            case "themes.openFolder":
+                Directory.CreateDirectory(ThemeFolder);
+                OpenExternal(ThemeFolder);
+                return null;
 
             // ---- git
             case "git.refresh":
@@ -959,8 +1035,8 @@ internal sealed class MainForm : Form
                 return null;
             }
             case "git.suggestMessage":
-                // Visual Studio-style "Generate commit message": Claude describes what Commit would take.
-                return await CommitMessageService.SuggestAsync(GitDir(msg), OptStr(msg, "detail"));
+                // Visual Studio-style "Generate commit message": the session's agent describes what Commit would take.
+                return await CommitMessageService.SuggestAsync(GitDir(msg), OptStr(msg, "detail"), Get(msg).Agent);
             case "git.pr":
             {
                 // The open pull request for the session's branch (GitHub or Azure DevOps), plus links for its menu.
@@ -1024,7 +1100,7 @@ internal sealed class MainForm : Form
         var map = new Dictionary<string, string>();
         foreach (var s in sessions.Values)
         {
-            if (s.IsRunning && ConversationReader.ResumableConversation(s.ProcessIds()) is { } live) map[s.Id] = live;
+            if (s.IsRunning && LiveConversation(s) is { } live) map[s.Id] = live;
             // A Claude session starts when it's first opened, so one not opened since the last update still has that
             // update's note to use: it's passed on rather than lost.
             else if (!s.IsRunning && s.ResumeOnce != null) map[s.Id] = s.ResumeOnce;
@@ -1063,6 +1139,14 @@ internal sealed class MainForm : Form
             mine.TryGetProperty("version", out var v) && v.ValueKind == JsonValueKind.Number)
             from = (int)Math.Clamp(v.GetInt64(), 0, data.Events.Count);
         return new { id, found = true, conversation, version = data.Version, from, events = data.Events.Skip(from).ToArray() };
+    }
+
+    /// <summary>A session as the assistant is told about it: its conversation is the one its agent is in, or the saved one while it's stopped.</summary>
+    private static SessionBrief BriefOf(TerminalSession s, string name, string? project, string status)
+    {
+        var agent = s.Agent;
+        var conv = agent == null ? null : (s.IsRunning ? agent.ReadConversation(s, s.ProcessIds()) : null) ?? agent.ReadSavedConversation(s);
+        return new SessionBrief(s.Id, name.Length > 0 ? name : s.Id, project, s.Info.Directory, status, agent, conv);
     }
 
     private string GitDir(JsonElement msg)

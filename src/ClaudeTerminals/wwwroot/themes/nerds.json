@@ -1,0 +1,7 @@
+{
+  "name": "Nerds",
+  "base": "dark",
+  "font": "Cascadia Mono",
+  "glow": true,
+  "monochrome": true
+}

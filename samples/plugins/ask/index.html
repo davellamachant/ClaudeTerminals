@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Ask</title>
+  <link rel="stylesheet" href="ask.css">
+</head>
+<body>
+  <header class="bar">
+    <label class="scope" title="Which sessions a question is about: every session, one project's, or a single one. Stopped sessions count too, through their saved conversations.">About <select id="scope" aria-label="Which sessions to ask about"></select></label>
+    <span id="status" class="status" title="What the sessions in this scope are doing right now"></span>
+    <button id="help" class="btn icon" title="How Ask works" aria-label="How Ask works">?</button>
+    <button id="clear" class="btn" title="Forget this chat (the sessions are not touched)">Clear</button>
+  </header>
+  <main id="log" tabindex="-1">
+    <section id="helpPanel" class="help" hidden>
+      <h2>How Ask works</h2>
+      <p><b>Asking.</b> Type a question and press Enter. Claude reads the conversations of the sessions in the <i>About</i> scope, your prompts and what each agent answered and did, and writes an answer. It runs once per question, headless, with your own sign-in, the way <i>Suggest a commit message</i> does, so each question counts against your usage. It has no tools and saves nothing, so it can't change anything.</p>
+      <p><b>What it can tell you.</b> What a session is doing or waiting on, what it last changed, which session touched a file, how long ago something happened. When the conversations don't show it, it says so. Long conversations are cut at the top, newest turns kept.</p>
+      <p><b>The sessions it names</b> appear as chips under each answer. Click one to open that session.</p>
+      <p><b>Typing into a session.</b> The box at the bottom left chooses where your text goes. <i>Ask the assistant</i> sends it to Claude. <i>Type into …</i> puts it into that session's terminal as if you had pasted it, for you to finish and send; tick <i>and send it</i> to have Enter pressed for you. <i>Type into…</i> under an answer does the same with the answer. Ask never types into a session that has stopped at a question needing your answer.</p>
+      <p><b>Drafting a message.</b> Ask "write a message for Billing asking it to commit and stop", then use <i>Type into…</i> on the answer. Keep what goes into a plain shell to one line: a shell runs each line as it arrives, while Claude and Codex take several lines as one paste.</p>
+      <p><b>Keys.</b> Enter sends or types; Shift+Enter starts a new line.</p>
+      <p><b>Taking access away.</b> Under the palette button, Plugins › Ask has <i>Stop it seeing your sessions</i>, <i>Stop it asking Claude about your sessions</i> and <i>Stop it typing into your sessions</i>.</p>
+      <p><button id="helpClose" class="btn">Close</button></p>
+    </section>
+    <div id="message" class="message" hidden></div>
+    <div id="chat" class="chat"></div>
+  </main>
+  <footer class="composer">
+    <select id="to" aria-label="Where this goes" title="Where what you type goes: to the assistant as a question, or into a session's terminal as if pasted"></select>
+    <textarea id="input" rows="2" placeholder="Ask about your sessions… (Enter sends, Shift+Enter for a new line)"></textarea>
+    <div class="actions">
+      <label id="sendRow" class="check" hidden title="Press Enter after typing it, so the session starts on it"><input type="checkbox" id="send"> and send it</label>
+      <button id="go" class="btn primary">Ask</button>
+    </div>
+  </footer>
+  <script src="ask.js"></script>
+</body>
+</html>
