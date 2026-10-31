@@ -62,6 +62,9 @@ const PATHS = {
   checkOn: 'M2.5 2.5h11v11h-11zM5 8.2l2 2 4-4.4',
   checkOff: 'M2.5 2.5h11v11h-11z',
   chat: 'M2.5 3h11v7.5H7.5l-3 2.5v-2.5h-2z',
+  bulb: 'M6 12.5h4M6.5 14.5h3M8 1.5a4.5 4.5 0 0 0-2.6 8.2c.4.3.6.7.6 1.2v.6h4v-.6c0-.5.2-.9.6-1.2A4.5 4.5 0 0 0 8 1.5z',
+  gift: 'M2.5 6h11v2.5h-11zM3.5 8.5h9v6h-9zM8 6v8.5M8 6C6.5 3 4 3.5 4.5 5c.3.8 2 1 3.5 1zM8 6c1.5-3 4-2.5 3.5-1-.3.8-2 1-3.5 1z',
+  info: 'M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 1 0 0-13M8 7v4.5M8 4.8h.01',
   sparkle: 'M7 2l1.2 3.3L11.5 6.5 8.2 7.7 7 11 5.8 7.7 2.5 6.5l3.3-1.2zM12 9.5l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z',
 };
 
@@ -4891,7 +4894,125 @@ function setThemePref(pref) {
   applyTheme(before);
 }
 
-/** The version number's menu: updates and release notes. */
+// ------------------------------------------------------------------ notices
+// Tips, offers and news along the top of the window, from notices.json on our site (read by the host, which
+// leaves out what isn't for this version or today). One shows at a time; closing one hides it for good, and the next
+// waits for the next check. Tips and offers can be turned off from the version menu; news can't.
+
+const NOTICES_EVERY_MS = 30 * 60 * 1000;
+const notices = { list: [], shown: null, waiting: false, dismissed: new Set(store.get('dismissedNotices', [])), tips: store.get('showTips', true) };
+const NOTICE_KINDS = { tip: { icon: 'bulb', label: 'Tip' }, offer: { icon: 'gift', label: 'Offer' }, news: { icon: 'info', label: 'News' } };
+
+async function checkNotices() {
+  try {
+    notices.list = await request('notices.check');
+  } catch {
+    return;   // offline, or the file is unreadable: keep what's showing
+  }
+  // Forget closed notices that have left the feed, so the list doesn't grow for ever.
+  const ids = new Set(notices.list.map((n) => n.id));
+  const kept = [...notices.dismissed].filter((id) => ids.has(id));
+  if (kept.length !== notices.dismissed.size) { notices.dismissed = new Set(kept); store.set('dismissedNotices', kept); }
+  notices.waiting = false;
+  renderNotice();
+}
+
+/** A notice's text, with each [label](https://…) in it a link that opens in the browser (the host has checked them). */
+function noticeText(text) {
+  const parts = [];
+  let at = 0;
+  for (const m of text.matchAll(/\[([^[\]\n]+)\]\(([^()\s]+)\)/g)) {
+    parts.push(text.slice(at, m.index));
+    const url = m[2];
+    parts.push(url.startsWith('https://')
+      ? h('a', { class: 'notice-inline-link', href: '#', title: url, onclick: (e) => { e.preventDefault(); request('openUrl', { uri: url }); } }, m[1])
+      : m[1]);
+    at = m.index + m[0].length;
+  }
+  parts.push(text.slice(at));
+  return parts;
+}
+
+// After one's closed, tips and offers wait for the next check (closing one shouldn't bring another); news doesn't.
+const noticeAllowed = (n) => !notices.dismissed.has(n.id) && (n.kind === 'news' || (notices.tips && !notices.waiting));
+
+function renderNotice() {
+  // The one showing (or asked for again) stays until it's closed or leaves the feed; otherwise the first allowed.
+  const n = notices.list.find((x) => x.id === notices.shown?.id && !notices.dismissed.has(x.id)) ?? notices.list.find(noticeAllowed);
+  notices.shown = n ?? null;
+  const bar = $('#noticeBar');
+  bar.hidden = !n;
+  if (!n) { bar.replaceChildren(); return; }
+  const kind = NOTICE_KINDS[n.kind] ?? NOTICE_KINDS.tip;
+  bar.dataset.kind = n.kind;
+  // A named colour has its tone in the stylesheet; a #rrggbb of the notice's own is mixed with the theme there too.
+  const own = n.color?.startsWith('#');
+  bar.dataset.color = own ? 'own' : n.color || 'accent';
+  bar.style.setProperty('--notice', own ? n.color : '');
+  bar.replaceChildren(
+    h('span', { class: 'notice-kind' }, iconEl(kind.icon), kind.label),
+    h('span', { class: 'notice-text' }, noticeText(n.text)),
+    n.linkUrl && h('a', { class: 'notice-link', href: '#', title: n.linkUrl,
+      onclick: (e) => { e.preventDefault(); request('openUrl', { uri: n.linkUrl }); } }, n.linkLabel, iconEl('chevR')),
+    h('button', { class: 'tb-btn notice-close', title: "Close (this one won't show again)", 'aria-label': 'Close', onclick: () => dismissNotice(n) }, iconEl('close')),
+  );
+  bar.oncontextmenu = (e) => {
+    e.preventDefault();
+    showMenu(e.clientX, e.clientY, [
+      { label: "Don't show this again", action: () => dismissNotice(n) },
+      { label: 'All tips and offers…', action: showNoticesDialog },
+      n.kind !== 'news' && { label: 'Show tips and offers', checked: true, action: () => setShowTips(false) },
+    ]);
+  };
+}
+
+function dismissNotice(n) {
+  notices.dismissed.add(n.id);
+  store.set('dismissedNotices', [...notices.dismissed]);
+  notices.waiting = true;
+  renderNotice();
+}
+
+function setShowTips(on) {
+  notices.tips = on;
+  store.set('showTips', on);
+  if (notices.shown?.kind !== 'news') notices.shown = null;
+  if (on) checkNotices(); else renderNotice();
+}
+
+/** Every notice in the feed today, closed or not, in full: one closed by mistake can be shown again. */
+function showNoticesDialog() {
+  const rows = notices.list.map((n) => {
+    const kind = NOTICE_KINDS[n.kind] ?? NOTICE_KINDS.tip;
+    const closed = notices.dismissed.has(n.id);
+    const own = n.color?.startsWith('#');
+    return h('div', { class: 'notice-row' + (closed ? ' closed' : ''), 'data-color': own ? 'own' : n.color || 'accent', style: own ? `--notice:${n.color}` : null },
+      h('div', { class: 'notice-row-head' },
+        h('span', { class: 'notice-kind' }, iconEl(kind.icon), kind.label),
+        closed && h('span', { class: 'dim' }, 'Closed'),
+        notices.shown?.id === n.id && h('span', { class: 'dim' }, 'Showing'),
+        h('span', { class: 'spacer' }),
+        closed && h('button', { class: 'btn', onclick: () => {
+          notices.dismissed.delete(n.id);
+          store.set('dismissedNotices', [...notices.dismissed]);
+          notices.shown = n;
+          renderNotice();
+          showNoticesDialog();
+        } }, 'Show again')),
+      h('div', { class: 'notice-row-text' }, noticeText(n.text)),
+      n.linkUrl && h('a', { class: 'notice-link', href: '#', title: n.linkUrl,
+        onclick: (e) => { e.preventDefault(); request('openUrl', { uri: n.linkUrl }); } }, n.linkLabel, iconEl('chevR')));
+  });
+  openModal('Tips and offers', [
+    rows.length ? h('div', { class: 'notice-rows' }, rows) : h('div', { class: 'dim' }, 'There are no tips, offers or news at the moment.'),
+  ], [
+    h('label', { class: 'check-field' }, h('input', { type: 'checkbox', checked: notices.tips, onchange: (e) => setShowTips(e.target.checked) }), 'Show tips and offers'),
+    h('div', { class: 'spacer' }),
+    h('button', { class: 'btn primary', onclick: closeModal }, 'Close'),
+  ]);
+}
+
+/** The version number's menu: updates, release notes and the tips along the top. */
 function versionMenu(x, y) {
   showMenu(x, y, [
     { label: 'Check for updates', action: () => checkForUpdates(true) },
@@ -4900,6 +5021,8 @@ function versionMenu(x, y) {
       store.set('autoUpdateCheck', updates.auto);
       if (updates.auto) checkForUpdates();
     } },
+    { label: 'Show tips and offers', checked: notices.tips, action: () => setShowTips(!notices.tips) },
+    { label: 'Tips and offers…', action: showNoticesDialog },
     '-',
     { label: `Claude Terminals ${updates.current ?? ''}`.trim() + ' · release notes',
       action: () => request('openUrl', { uri: 'https://github.com/davellamachant/ClaudeTerminals/releases' }) },
@@ -5085,6 +5208,8 @@ $('#appVersion').addEventListener('click', (e) => { const r = e.currentTarget.ge
 // Soon after start (not during it), then every few hours; never when turned off.
 setTimeout(() => { if (updates.auto) checkForUpdates(); }, 15_000);
 setInterval(() => { if (updates.auto) checkForUpdates(); }, UPDATE_EVERY_MS);
+setTimeout(checkNotices, 5_000);
+setInterval(checkNotices, NOTICES_EVERY_MS);
 
 // ------------------------------------------------------------------ scrolling tab rows
 

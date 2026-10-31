@@ -332,6 +332,41 @@ A theme is only data: the app takes the names above and checks each value, so it
 
 A few seconds after starting, and every 6 hours, the app checks this repository's latest GitHub release (an anonymous request; nothing about you or your sessions is sent). When there's a newer version, an **Update to x.y.z** button appears in the title bar, showing what's new. *Update and restart* downloads the installer, checks it against the SHA-256 GitHub publishes for it (it won't run a file that doesn't match), closes the app, installs silently and reopens it. Running sessions carry on in the conversations they were in. The version is shown at the top right and in the window title; clicking it offers *Check for updates* and turns the automatic check off.
 
+### Tips and offers
+
+Now and then a line under the title bar suggests something: a **Tip** about the app, an **Offer** (something from someone else, such as a free subscription), or **News**. They come from `notices.json` in the `downloads` container of our public storage account, under `TerminalsData/` (always that address: the release pipeline builds the account's name into the app from its `StorageAccount` variable, and a build from source without it shows no notices), read a few seconds after starting and every 30 minutes (an anonymous request, like the update check). One shows at a time; its × closes it for good. *Show tips and offers*, in the version number's menu or the line's right-click menu, turns tips and offers off; news still shows. *Tips and offers…*, in the same menus, lists every notice that's current, in full and with its link, and shows one you closed again.
+
+Each notice in the file:
+
+```json
+{
+  "id": "llamalogger-free-year",
+  "kind": "offer",
+  "color": "green",
+  "text": "If you want to start tracking exceptions in one place, check out LlamaLogger. Through Claude Terminals, you can get a 1 year standard subscription for free.",
+  "link": { "label": "Get your free year", "url": "https://example.com" },
+  "from": "2026-11-01",
+  "until": "2027-01-31",
+  "minVersion": "1.1.5"
+}
+```
+
+- **id**: lowercase letters, digits, `.`, `_` and `-`; closing a notice remembers its id, so a changed notice needs a new one.
+- **text**: up to 400 characters. It wraps to fit the window; `\n` starts a new line (up to 4 lines). A link in the text is written as in Markdown, `[www.llamalogger.com](https://www.llamalogger.com)`, and must be `https`; only what it shows counts towards the 400.
+- **kind**: `tip` (the default), `offer` or `news`.
+- **color**: `accent` (the default), `blue`, `green`, `amber`, `orange`, `red`, `purple`, `pink`, `grey`, or a `#rrggbb` of its own. It tints the line and colours the label and link; the text keeps the theme's colour.
+- **link** (optional): an `https` address; the label defaults to *Learn more*.
+- **from**, **until**, **minVersion**, **maxVersion** (optional): the first and last day (UTC) and the versions it shows for.
+
+A notice that doesn't follow these is left out.
+
+**Only signed notices show.** Next to the file, the app fetches `notices.json.p7s`, a signature by our code signing certificate (the one the installer is signed with), and shows nothing unless it's valid for exactly that file: the certificate must be for code signing, issued to the organisation *Llamachant Technology Ltd* and chain to a root Windows trusts. So whoever can change the files in storage, or sits between storage and the app, still can't put words in the banner. To publish:
+
+1. Change [`notices.json`](notices.json) in this repository and merge it to `main` (the tests check that every notice in it is well formed).
+2. Run the **notices** pipeline ([`azure-pipelines-notices.yml`](azure-pipelines-notices.yml)) on `main`. On the agent with the certificate's token, it runs [`tools/sign-notices.cs`](tools/sign-notices.cs), then uploads both files to `downloads/TerminalsData/` (untick *Upload* to only sign; the files stay on the run either way, under *Artifacts › notices*). Within 30 minutes they show.
+
+Notices are judged as of when they were signed, so they keep showing after the certificate expires; changing them after that needs the renewed certificate, which the signing picks up by itself.
+
 ## Building
 
 ```powershell

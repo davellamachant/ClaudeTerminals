@@ -966,6 +966,8 @@ internal sealed class MainForm : Form
             }
             case "app.version":
                 return UpdateService.CurrentVersion.ToString();
+            case "notices.check":
+                return (await NoticeService.CheckAsync()).Select(n => new { id = n.Id, kind = n.Kind, text = n.Text, linkLabel = n.LinkLabel, linkUrl = n.LinkUrl, color = n.Color });
             case "update.check":
             {
                 // The page decides when to ask (at start, then every few hours, or from the menu).

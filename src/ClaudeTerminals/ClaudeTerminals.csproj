@@ -10,7 +10,7 @@
     <ApplicationIcon>app.ico</ApplicationIcon>
 
     <!-- Version shown in Explorer, Apps & Features and the installer. Bump for each release. -->
-    <Version>1.1.4</Version>
+    <Version>1.1.5</Version>
     <Product>Claude Terminals</Product>
     <AssemblyTitle>Claude Terminals</AssemblyTitle>
     <Company>LLAMACHANT TECHNOLOGY LTD</Company>
@@ -31,6 +31,12 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="ClaudeTerminals.Tests" />
+  </ItemGroup>
+
+  <!-- The storage account the notices are read from (see NoticeService), given by the release pipeline
+       (-p:NoticesStorageAccount=…) rather than kept in the repository. A build without it shows no notices. -->
+  <ItemGroup Condition="'$(NoticesStorageAccount)' != ''">
+    <AssemblyMetadata Include="NoticesStorageAccount" Value="$(NoticesStorageAccount)" />
   </ItemGroup>
 
   <!-- Third-party front-end libraries come from web/node_modules (run `npm install` in /web). -->
