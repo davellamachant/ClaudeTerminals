@@ -147,10 +147,20 @@ host.addEventListener('message', (e) => {
     case 'panels': onPanels(m); break;
     case 'typePrompt': typePrompt(m.id, m.text); break;
     case 'newConversations': showNewConversations(m.ids); break;
+    case 'relay': relayChanged(m.state); break;
+    case 'relay.ask': askRelay(m.from, m.to); break;
+    case 'relay.message': onRelayMessage(m); break;
   }
 });
 
 // ------------------------------------------------------------------ state
+
+/**
+ * Messages between sessions (RelayHub on the host): the rules (from, to: a session id, 'project' or '*', decision),
+ * whether they're paused, what waits for your answer ({ from, to, count }), each session's unread count, and the
+ * sessions to tell they have messages once they're idle. Up here, as tile code reads it.
+ */
+const relay = { paused: false, rules: [], waiting: [], unread: {}, told: {}, from: {}, asks: [], asking: null };
 
 const state = {
   sessions: [],              // ordered session objects
@@ -1004,6 +1014,7 @@ function renderTileState(s) {
   if (tab) syncStatus(tab);
   updateProjectIndicators(groupOf(s));
   projectViewChanged(s);
+  relayNotify(s);   // an idle session told of messages it has
 }
 
 /** A project tab's dot: hopping while one of its sessions asks you something, else spinning while one works. */
@@ -5881,6 +5892,27 @@ function permsByPlugin() {
   ];
 }
 
+/** A row of buttons picking one of options ([value, label, tooltip]); onPick gets the value picked. */
+function segChoice(value, options, onPick, label) {
+  return h('div', { class: 'seg perms-seg', role: 'radiogroup', 'aria-label': label }, options.map(([v, text, tip]) => h('button', {
+    class: 'seg-btn' + (value === v ? ' active' : ''), role: 'radio', 'aria-checked': String(value === v), title: tip,
+    onclick: () => { if (value !== v) onPick(v); },
+  }, text)));
+}
+
+const RELAY_WORDS = { allow: 'allowed', ask: 'asks you first', deny: 'not allowed' };
+
+/** "Default: allowed, as …": what a row set to Default comes to, from the rule that decides it then. */
+const relayDefault = (d) => d.label ? `Default follows ${d.label}.` : 'Default asks you first: nothing after this is set.';
+
+const RELAY_CHOICE = { allow: 'Allowed', ask: 'Ask first', deny: 'Not allowed' };
+
+/** What a message from one session to another gets now, at a glance: a tick, a question mark or a no-entry sign, coloured. */
+function relayMark(decision, from, to) {
+  return decisionMark(decision, !to ? RELAY_CHOICE[decision]
+    : { allow: `“${from}” may message “${to}”`, ask: `You’re asked before “${from}” messages “${to}”`, deny: `“${from}” may not message “${to}”` }[decision]);
+}
+
 /** A decision as a coloured mark ('allow', 'ask' or 'deny'), saying tip on hover and to a screen reader. */
 const decisionMark = (decision, tip) =>
   h('span', { class: 'decision-mark ' + decision, title: tip, role: 'img', 'aria-label': tip }, iconEl({ allow: 'markAllow', ask: 'markAsk', deny: 'markDeny' }[decision]));
@@ -5911,15 +5943,220 @@ function pluginChips(s) {
     global !== 'deny' && (outside ? h('span', { class: 'dim' }, ' · not in its projects') : hidden ? h('span', { class: 'dim' }, ' · hidden') : null));
   });
 }
-/** Each session, with the plugins that ask to see sessions and whether each sees it. */
+/** A Default button's label: the word, and under it what it comes to now. */
+const defaultLabel = (d) => [h('span', {}, 'Default'), h('span', { class: 'seg-now' }, RELAY_CHOICE[d.decision])];
+
+/** One messaging rule's row: a name, what Default comes to (if it has one), and its choice. */
+function relayRuleRow(from, to, title, fallback, label) {
+  const d = fallback && relayFallback(fallback);
+  return h('div', { class: 'perms-row' },
+    h('div', { class: 'perms-what' }, h('b', {}, title), d && h('span', { class: 'dim' }, relayDefault(d))),
+    segChoice(relayRule(from, to), [['allow', 'Allowed', 'Messages go through without asking'], fallback ? ['ask', defaultLabel(d), 'As the rules after this one say'] : ['ask', 'Ask first', 'You’re asked the first time'],
+      ['deny', 'Not allowed', 'Messages are refused']], (v) => setRelayRule(from, to, v), label));
+}
+
+/** The global rules, for every session: they decide whatever a session's own rules leave to Default. */
+function permsGlobal() {
+  return h('section', { class: 'perms-card' },
+    h('header', {}, h('b', {}, 'All sessions'), h('span', { class: 'dim' }, 'For every Claude and Codex session, unless its own rules below say otherwise')),
+    // The fallback first, then the narrower rule that can override it, as on each session's card.
+    relayRuleRow('*', '*', 'Messaging any other session', null, 'All sessions: messaging any other session'),
+    relayRuleRow('*', 'project', 'Messaging a session in the same project', [['*', '*']], 'All sessions: messaging a session in the same project'));
+}
+
+/** A session's messaging rows: anyone, its project, then each other agent session, with what each comes to. */
+function permsMessaging(s) {
+  const from = s.id;
+  const others = state.sessions.filter((t) => t.id !== from && agentOf(t.command));
+  const project = projectOf(s);
+  const rows = [
+    // Default for a session's "any" depends on the target's project, so it reads as the global rules for one outside it.
+    relayRuleRow(from, '*', 'Any other session', [['*', '*']], `${s.name}: messaging any other session`),
+    project && relayRuleRow(from, 'project', `Sessions in ${project.name}`, relayLevels(from, true).slice(1), `${s.name}: messaging sessions in ${project.name}`),
+  ];
+  for (const t of others) {
+    const d = relayDecide(from, t.id);
+    const waiting = relay.waiting.find((w) => w.from === from && w.to === t.id);
+    // What Default would come to, whether or not it's the choice now (it's shown on the button either way).
+    const fallback = relayFallback(relayLevels(from, !!s.project && s.project === t.project));
+    const why = d.by === 'pair' ? null : relayDefault(fallback);
+    rows.push(h('div', { class: 'perms-row perms-to ' + d.decision },
+      h('div', { class: 'perms-what' },
+        h('span', { class: 'perms-session' }, relayMark(d.decision, s.name, t.name), h('i', { class: 'dot ' + statusClass(t) }), h('b', {}, t.name), projectTag(t),
+          waiting && h('button', { class: 'chip perms-waiting', title: 'Messages waiting for your answer: click to answer', onclick: () => { askRelay(from, t.id); } }, `${waiting.count} waiting`)),
+        why && h('span', { class: 'dim' }, why)),
+      segChoice(d.by === 'pair' ? d.decision : 'ask', [['allow', 'Allowed', `It may message ${t.name}`], ['ask', defaultLabel(fallback), 'As the rules above say'], ['deny', 'Not allowed', `It may not message ${t.name}`]],
+        (v) => setRelayRule(from, t.id, v), `${s.name}: messaging ${t.name}`)));
+  }
+  if (!others.length) rows.push(h('div', { class: 'perms-row dim' }, 'There’s no other agent session for it to message yet.'));
+  const counts = others.reduce((c, t) => (c[relayDecide(from, t.id).decision]++, c), { allow: 0, ask: 0, deny: 0 });
+  const summary = others.length
+    ? ['allow', 'ask', 'deny'].filter((k) => counts[k]).map((k) => h('span', { class: 'relay-count ' + k }, relayMark(k), `${counts[k]} ${RELAY_CHOICE[k].toLowerCase()}`))
+    : h('span', { class: 'dim' }, 'none yet');
+  const open = permsView.open.has(from) || relay.waiting.some((w) => w.from === from);
+  return h('details', { class: 'perms-sub', open, ontoggle: (e) => { if (e.target.open) permsView.open.add(from); else permsView.open.delete(from); } },
+    h('summary', {}, h('b', {}, 'Messages it may send'), summary), rows);
+}
+
+/** Each session: which sessions it may message (agents only), and which plugins may see it. */
 function permsBySession() {
   const sessions = state.sessions;
   if (!sessions.length) return h('div', { class: 'perms-empty' }, h('p', {}, 'You have no sessions.'));
-  return sessions.map((s) => h('section', { class: 'perms-card' },
-    h('header', {}, h('i', { class: 'dot ' + statusClass(s) }), h('b', {}, s.name), projectTag(s)),
-    h('div', { class: 'perms-row' }, h('div', { class: 'perms-what' }, h('b', {}, 'Plugins'), h('span', { class: 'dim' }, 'Click one to hide this session from it, or show it again.')),
-      h('div', { class: 'perms-who' }, pluginChips(s)))));
+  return [
+    h('p', { class: 'perms-note dim' }, 'Rules go one way: one session may message another without the other being able to answer, except to reply to a message it was sent (for an hour). A message reaches the other agent as a message from a session, not as your prompt. The most specific rule decides; one set to Default leaves it to the next.'),
+    permsGlobal(),
+    ...sessions.map((s) => {
+      const agent = agentOf(s.command);
+      const unread = relay.unread[s.id] ?? 0;
+      return h('section', { class: 'perms-card' },
+        h('header', {}, h('i', { class: 'dot ' + statusClass(s) }), h('b', {}, s.name), projectTag(s), agent && h('span', { class: 'dim' }, agent.name),
+          unread > 0 && h('span', { class: 'chip', title: 'Messages it hasn’t read yet' }, `${unread} unread`)),
+        agent ? permsMessaging(s) : h('div', { class: 'perms-row dim' }, 'Not a coding agent, so it can’t send or read messages.'),
+        h('div', { class: 'perms-row' }, h('div', { class: 'perms-what' }, h('b', {}, 'Plugins'), h('span', { class: 'dim' }, 'Click one to hide this session from it, or show it again.')),
+          h('div', { class: 'perms-who' }, pluginChips(s))));
+    }),
+  ];
 }
+
+// ---- messages between sessions: the rules, your answers, and telling a session it has messages
+
+/** The decision of the rule from → to ('ask' when there's none). */
+const relayRule = (from, to) => relay.rules.find((r) => r.from === from && r.to === to)?.decision ?? 'ask';
+
+/**
+ * The rules after a session's rule for one other session, in the order RelayPolicy tries them: its own for its project
+ * (when the other session is in it) and for anyone, then the global ones (from '*') the same way. [from, to] each.
+ */
+const relayLevels = (from, sameProject) =>
+  [sameProject && [from, 'project'], [from, '*'], sameProject && ['*', 'project'], ['*', '*']].filter(Boolean);
+
+/** How a rule level reads in "as … says". */
+function relayLevelName([from, to]) {
+  const scope = to === 'project' ? 'sessions in the same project' : 'any other session';
+  return from === '*' ? `All sessions’ “${scope}”` : `its own “${to === 'project' ? `sessions in ${projectOf(state.byId.get(from))?.name ?? 'its project'}` : scope}”`;
+}
+
+/** The first of levels with a rule: { decision, label }, or asking with no label when none has one. */
+function relayFallback(levels) {
+  for (const level of levels) {
+    const r = relay.rules.find((x) => x.from === level[0] && x.to === level[1]);
+    if (r) return { decision: r.decision, label: relayLevelName(level) };
+  }
+  return { decision: 'ask', label: null };
+}
+
+/** What a message from → to gets, as RelayPolicy decides it: { decision, by: 'pair' or null, label }. */
+function relayDecide(from, to) {
+  if (relay.paused) return { decision: 'deny', by: null, label: 'Pause messages' };
+  const pair = relay.rules.find((r) => r.from === from && r.to === to);
+  if (pair) return { decision: pair.decision, by: 'pair', label: null };
+  const a = state.byId.get(from), b = state.byId.get(to);
+  return { ...relayFallback(relayLevels(from, !!a?.project && a.project === b?.project)), by: null };
+}
+
+function setRelayRule(from, to, decision) {
+  request('relay.set', { from, to, decision }).catch((e) => toast(e.message, true));
+}
+
+function setRelayPaused(paused) {
+  request('relay.pause', { paused }).catch((e) => toast(e.message, true));
+}
+
+/** The host's relay state changed: redraw, close a question already answered, and tell idle sessions of new messages. */
+function relayChanged(st) {
+  if (!st) return;
+  Object.assign(relay, st);
+  if (relay.asking && !relay.waiting.some((w) => w.from === relay.asking.from && w.to === relay.asking.to)) closeModal();
+  renderPermsPause();
+  permissionsChanged();
+  for (const s of state.sessions) relayNotify(s);
+}
+
+function onRelayMessage(m) {
+  relay.unread[m.to] = m.unread;
+  (relay.from[m.to] ??= new Set()).add(m.from);
+  const s = state.byId.get(m.to);
+  if (s) relayNotify(s);
+  permissionsChanged();
+}
+
+/**
+ * Tells a session's agent it has messages, by typing a line into it and sending it, as you would: only while it's idle
+ * (not working, not asking you something) and you haven't typed into it in the last few seconds, so it never lands in
+ * a prompt you're writing. The messages themselves reach it only through read_messages. Each new message is told once.
+ */
+function relayNotify(s) {
+  const n = relay.unread[s.id] ?? 0;
+  if (!n) { delete relay.told[s.id]; relay.from[s.id]?.clear(); return; }
+  if (n <= (relay.told[s.id] ?? 0)) return;
+  if (!s.running || s.startsOnOpen || !agentOf(s.command) || !['running', 'attention'].includes(statusClass(s))) return;
+  if (performance.now() - s.act.lastIn < 5000) return;   // you're typing in it: the next check tries again
+  relay.told[s.id] = n;
+  const names = [...(relay.from[s.id] ?? [])].map((id) => `"${state.byId.get(id)?.name ?? 'a closed session'}"`);
+  const text = `[Claude Terminals] ${n === 1 ? 'A message has' : `${n} messages have`} come from ${names.length ? names.join(' and ') : 'another session'}. Read ${n === 1 ? 'it' : 'them'} with the read_messages tool.`;
+  s.term.paste(text);
+  setTimeout(() => post({ type: 'input', id: s.id, data: '\r' }), 150);
+}
+
+/** A session asks to message another, with no rule to say: you're asked, one question at a time. */
+function askRelay(from, to) {
+  if (relay.asking?.from === from && relay.asking?.to === to) return;
+  if (!relay.asks.some((a) => a.from === from && a.to === to)) relay.asks.push({ from, to });
+  showRelayAsk();
+}
+
+function showRelayAsk() {
+  if (relay.asking || !$('#modalHost').hidden) return;   // after the dialog that's open (see the check below)
+  let next;
+  // Only what's still waiting: one answered meanwhile (here or in Permissions) is skipped.
+  while ((next = relay.asks.shift()) && !relay.waiting.some((w) => w.from === next.from && w.to === next.to)) { /* answered */ }
+  if (!next) return;
+  const a = state.byId.get(next.from), b = state.byId.get(next.to);
+  if (!a || !b) { showRelayAsk(); return; }
+  relay.asking = next;
+  const project = a.project && a.project === b.project ? projectOf(a) : null;
+  let scope = 'pair';
+  const choice = (value, label) => h('label', { class: 'perms-radio' },
+    h('input', { type: 'radio', name: 'relayScope', value, checked: value === 'pair', onchange: () => { scope = value; } }), label);
+  const answer = (allow) => {
+    const once = allow === null;
+    request('relay.answer', { from: next.from, to: next.to, allow: !!allow, scope: once ? 'once' : scope === 'pair' ? 'session' : scope })
+      .catch((e) => toast(e.message, true));
+    closeModal();
+  };
+  const agentName = (s) => agentOf(s.command)?.name ?? 'the agent';
+  openModal(`Let “${a.name}” message “${b.name}”?`, h('div', {},
+    h('p', {}, `${agentName(a)} in “${a.name}” wants to send a message to ${agentName(b)} in “${b.name}”. It waits until you answer.`),
+    h('p', {}, `The message reaches ${b.name}’s agent as a message from another session, not as your prompt, and it’s told to read it. A message can still ask it to do things, so allow only sessions you’d let work together. ${b.name} can always reply to a message it’s sent.`),
+    h('div', { class: 'perms-radios' }, h('b', {}, 'Your answer is for'),
+      choice('pair', `“${a.name}” messaging “${b.name}”`),
+      project && choice('project', `“${a.name}” messaging any session in ${project.name}`),
+      choice('*', `“${a.name}” messaging any session`)),
+    h('p', { class: 'dim' }, 'You can change it any time in Permissions, on the palette menu.')), [
+    h('button', { class: 'btn', title: 'Drop what it sent, and ask again next time', onclick: () => answer(null) }, 'Not now'),
+    h('button', { class: 'btn', 'data-autofocus': true, onclick: () => answer(false) }, 'Don’t allow'),
+    h('button', { class: 'btn primary', onclick: () => answer(true) }, 'Allow'),
+  ]);
+  // Closed without an answer: it stays waiting (Permissions shows it), and isn't asked again until it messages again.
+  onModalClose = () => { relay.asking = null; setTimeout(showRelayAsk, 300); };
+}
+
+// A question waits for any dialog that's open, and a session that was busy is told of its messages once it's idle.
+setInterval(() => {
+  showRelayAsk();
+  for (const s of state.sessions) relayNotify(s);
+}, 3000);
+
+/** The Pause button on the Permissions view's toolbar. */
+function renderPermsPause() {
+  const b = $('#permsPause');
+  if (!b) return;
+  b.classList.toggle('active', relay.paused);
+  b.setAttribute('aria-pressed', String(relay.paused));
+  b.textContent = relay.paused ? 'Messages paused: resume' : 'Pause messages';
+  b.title = relay.paused ? 'Sessions can’t message each other until you resume' : 'Stop every session messaging another, whatever the rules say, until you resume';
+}
+$('#permsPause')?.addEventListener('click', () => setRelayPaused(!relay.paused));
 
 /** A session as plugins allowed to see sessions are told it. status is statusClass's: exited, asking (needs your answer), attention (finished, waiting for you), working or running (idle). */
 const pluginSessionInfo = (s) => ({
@@ -5994,6 +6231,7 @@ addEventListener('message', (e) => {
 
 // Side panel plugins kept from last time show once the folder has been read.
 loadPlugins().then(() => renderGit());
+request('relay.state').then(relayChanged).catch(() => {});
 loadThemes();
 
 // ------------------------------------------------------------------ boot

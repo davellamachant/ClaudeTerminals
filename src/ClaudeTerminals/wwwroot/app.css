@@ -996,17 +996,35 @@ body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; user-selec
 .perms-row + .perms-row { border-top: 1px solid var(--border-soft); }
 .perms-what { flex: 1 1 260px; min-width: 0; display: grid; gap: 2px; }
 .perms-what span.dim { font-size: 12px; }
+.perms-session { display: flex; align-items: center; gap: 8px; }
 .perms-who { display: flex; flex-wrap: wrap; gap: 6px; }
 .perms-seg { flex: none; align-self: center; }
 .perms-seg .seg-btn { padding: 4px 12px; font-size: 12px; white-space: nowrap; display: inline-flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.25; }
+.perms-seg .seg-now { font-size: 10px; opacity: .75; }
 .perms-note { margin: 0; font-size: 12px; }
 .perms-empty { color: var(--text-dim); }
 .perms-empty .btn { margin-top: 4px; }
+#permsPause.active { color: var(--attention); border-color: var(--attention); }
+.perms-card > header .chip { margin-left: auto; }
+.perms-sub { border-top: 1px solid var(--border-soft); }
+.perms-sub > summary { display: flex; align-items: center; gap: 10px; padding: 8px 12px; cursor: pointer; list-style-position: inside; }
+.perms-sub > summary span { font-size: 12px; }
+.perms-sub[open] > summary { border-bottom: 1px solid var(--border-soft); }
+.perms-sub .perms-row { padding-left: 28px; }
+.perms-sub + .perms-row, .perms-card > .perms-row:first-of-type { border-top: 1px solid var(--border-soft); }
+.perms-waiting { color: var(--attention); border-color: var(--attention); }
 .decision-mark { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%; flex: none; }
 .decision-mark svg.ic { width: 12px; height: 12px; stroke-width: 2; }
 .decision-mark.allow { color: var(--ok); background: color-mix(in srgb, var(--ok) 16%, transparent); }
 .decision-mark.ask { color: var(--attention); background: color-mix(in srgb, var(--attention) 16%, transparent); }
 .decision-mark.deny { color: var(--st-d); background: color-mix(in srgb, var(--st-d) 16%, transparent); }
+.perms-row.perms-to { box-shadow: inset 3px 0 0 var(--relay-line, transparent); }
+.perms-row.perms-to.allow { --relay-line: var(--ok); }
+.perms-row.perms-to.ask { --relay-line: var(--attention); }
+.perms-row.perms-to.deny { --relay-line: var(--st-d); }
+.relay-count { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-dim); }
+.relay-count .decision-mark { width: 16px; height: 16px; }
+.relay-count .decision-mark svg.ic { width: 10px; height: 10px; }
 .plugin-chip { gap: 6px; padding-left: 3px; height: 24px; }
 .plugin-chip .decision-mark { width: 18px; height: 18px; }
 .plugin-chip.deny { color: var(--text-faint); }

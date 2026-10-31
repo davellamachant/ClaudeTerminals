@@ -3,6 +3,7 @@ using System.Text.Json;
 using ClaudeTerminals.Git;
 using ClaudeTerminals.Panels;
 using ClaudeTerminals.Plugins;
+using ClaudeTerminals.Relay;
 using ClaudeTerminals.Sessions;
 using ClaudeTerminals.Terminal;
 using ClaudeTerminals.Updates;
@@ -159,6 +160,30 @@ internal sealed class MainForm : Form
     // ---------------------------------------------------------------- panels
 
     private readonly PanelStore panelStore = new(Path.Combine(SessionStore.AppDataFolder, "panels.json"));
+
+    /// <summary>Messages between sessions, through the panel server's tools; which session may message which is kept in relay.json.</summary>
+    private readonly RelayHub relay = new(new RelayPolicy(Path.Combine(SessionStore.AppDataFolder, "relay.json")));
+
+    private List<RelayPeer> RelayPeers() => order.Select(id => sessions[id]).Where(s => s.Agent != null).Select(s => new RelayPeer(
+        s.Id, s.Info.Name.Length > 0 ? s.Info.Name : s.Id, s.Info.Project, projects.FirstOrDefault(p => p.Id == s.Info.Project)?.Name,
+        s.Agent?.Name, s.IsRunning)).ToList();
+
+    /// <summary>The rules, whether messages are paused, what's waiting for your answer, and each session's unread count.</summary>
+    private object RelayState() => new
+    {
+        paused = relay.Policy.Paused,
+        rules = relay.Policy.Rules().Select(r => new { from = r.From, to = r.To, decision = r.Decision.ToString().ToLowerInvariant() }),
+        waiting = relay.Waiting().Select(w => new { from = w.From, to = w.To, count = w.Count }),
+        unread = sessions.Keys.Select(id => (id, n: relay.Unread(id))).Where(x => x.n > 0).ToDictionary(x => x.id, x => x.n),
+    };
+
+    private static RelayDecision ParseDecision(string s) => s switch
+    {
+        "allow" => RelayDecision.Allow,
+        "deny" => RelayDecision.Deny,
+        "ask" => RelayDecision.Ask,
+        _ => throw new ArgumentException($"There's no decision \"{s}\"."),
+    };
     private PanelServer? panelServer;
 
     private static string PanelConfigFolder => Path.Combine(SessionStore.AppDataFolder, "panels");
@@ -196,7 +221,14 @@ internal sealed class MainForm : Form
     {
         panelStore.KeepOwners(sessions.Keys);
         panelStore.Changed += change => RunOnUi(() => Post(PanelsMessage(change)));
-        var mcp = new PanelMcp(panelStore);
+        relay.Policy.KeepSessions(sessions.Keys);
+        relay.SetPeers(RelayPeers());
+        // The state first, so the page has the message waiting by the time it asks you about it.
+        relay.Asked += ask => RunOnUi(() => { Post(new { type = "relay", state = RelayState() }); Post(new { type = "relay.ask", from = ask.From, to = ask.To }); });
+        relay.Delivered += m => RunOnUi(() => Post(new { type = "relay.message", to = m.To, from = m.From, unread = relay.Unread(m.To) }));
+        relay.Changed += () => RunOnUi(() => Post(new { type = "relay", state = RelayState() }));
+        relay.Policy.Changed += () => RunOnUi(() => Post(new { type = "relay", state = RelayState() }));
+        var mcp = new PanelMcp(panelStore, relay);
         // A first prompt that couldn't go on the command line is typed once Claude is up (it connects as it starts).
         mcp.Initialized += id => RunOnUi(async () =>
         {
@@ -243,6 +275,7 @@ internal sealed class MainForm : Form
     {
         panelServer?.Forget(sessionId);
         panelStore.KeepOwners(sessions.Keys);
+        relay.Policy.KeepSessions(sessions.Keys);
         try { File.Delete(Path.Combine(PanelConfigFolder, $"mcp-{sessionId}.json")); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
@@ -461,7 +494,13 @@ internal sealed class MainForm : Form
 
     private void SaveSessions() => SessionStore.Save(order.Select(id => sessions[id].Info));
 
-    private object SessionList() => new
+    private object SessionList()
+    {
+        relay.SetPeers(RelayPeers());   // the list goes out whenever sessions or projects change
+        return SessionListMessage();
+    }
+
+    private object SessionListMessage() => new
     {
         type = "sessions",
         agents = Agents.All.Select(a => a.Describe()),
@@ -759,6 +798,30 @@ internal sealed class MainForm : Form
             case "panels.close":
                 panelStore.Close(Str(msg, "owner"), Str(msg, "id"));
                 return null;
+
+            // ---- messages between sessions (see RelayHub): the rules, and your answers
+            case "relay.state":
+                return RelayState();
+            case "relay.set":
+                // to: a session id, "project" or "*"; decision: allow, deny or ask (no rule).
+                relay.Policy.Set(Str(msg, "from"), Str(msg, "to"), ParseDecision(Str(msg, "decision")));
+                return null;
+            case "relay.answer":
+            {
+                // Your answer to a session asking to message another: a rule for that session, its project or anyone, or
+                // (dismiss) neither, dropping what's waiting.
+                var from = Str(msg, "from");
+                var to = Str(msg, "to");
+                var scope = Str(msg, "scope");
+                if (scope == "once") { relay.Dismiss(from, to); return null; }
+                relay.Policy.Set(from, scope is RelayPolicy.SameProject or RelayPolicy.Anyone ? scope : to, Bool(msg, "allow") ? RelayDecision.Allow : RelayDecision.Deny);
+                return null;
+            }
+            case "relay.pause":
+                relay.Policy.Paused = Bool(msg, "paused");
+                return null;
+            case "relay.unread":
+                return relay.Unread(Str(msg, "id"));
             case "reorder":
             {
                 var ids = msg.GetProperty("ids").EnumerateArray().Select(x => x.GetString()!).Where(sessions.ContainsKey).ToList();
