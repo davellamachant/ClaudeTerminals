@@ -38,6 +38,13 @@ public sealed class ThemeCatalogTests : IDisposable
         Assert.Equal(("Nerds", "dark", "Cascadia Mono", true, true, true), (nerds.Name, nerds.Base, nerds.Font, nerds.Glow, nerds.Monochrome, nerds.BuiltIn));
         Assert.Null(nerds.Accent);
         Assert.Empty(nerds.Colors);
+        // Written out in full: every colour the page, the terminals and the diff editor can take, so nothing of Dark shows through.
+        var tron = Assert.Single(themes, t => t.Id == "tron");
+        Assert.Equal(("Tron", "dark", "Bahnschrift", true, false, true), (tron.Name, tron.Base, tron.Font, tron.Glow, tron.Monochrome, tron.BuiltIn));
+        Assert.Equal(("#00e5ff", "#087a8c"), (tron.Accent!.Line, tron.Accent.Strong));
+        Assert.Equal(ThemeCatalog.ColorNames.OrderBy(n => n), tron.Colors.Keys.OrderBy(n => n));
+        Assert.Equal(ThemeCatalog.DiffNames.OrderBy(n => n), tron.Diff.Keys.OrderBy(n => n));
+        Assert.Equal(ThemeCatalog.TerminalNames.Except(["selectionForeground"]).OrderBy(n => n), tron.Terminal.Keys.OrderBy(n => n));
     }
 
     [Fact]
