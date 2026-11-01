@@ -1,4 +1,5 @@
-/* The Ask plugin. Its colours follow Claude Terminals' dark and light themes (the app says which, see ask.js). */
+/* The Ask plugin. Its colours follow Claude Terminals' theme: the app sends its own colours and font with the theme message
+   (see dress in ask.js); these dark and light sets stand in until it does. */
 :root {
   --bg: #1e1e1e; --panel: #252526; --border: #3e3e42; --border-soft: #333337; --hover: #37373d;
   --text: #e0e0e0; --text-dim: #9d9d9d; --text-faint: #6f6f6f;
@@ -79,3 +80,5 @@ main { flex: 1; min-height: 0; overflow: auto; padding: 14px; outline: none; }
 .help h2 { margin: 0 0 8px; font-size: 14px; font-weight: 600; }
 .help p { margin: 0 0 8px; } .help p:last-child { margin-bottom: 0; }
 .help i { font-style: normal; color: var(--text); background: var(--code); padding: 0 4px; border-radius: 3px; }
+:root[data-glow] body { text-shadow: 0 0 6px color-mix(in srgb, var(--accent) 30%, transparent); }   /* a theme with a glow (the app says) */
+:root[data-glow] :is(textarea, input, pre, code) { text-shadow: none; }

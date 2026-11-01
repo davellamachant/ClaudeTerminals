@@ -324,3 +324,4 @@ footer .k { display: inline-flex; align-items: center; gap: 5px; }
   --heat1: #2a0a0b; --heat2: #5a1518; --heat3: #b32a2e; --heat4: #ff3b3b;
   --grid-rgb: 255, 59, 59; --cycle: #ffc7c7; --on-text: #1a0405; --heat-mid: #8a2a2e;
 }
+:root[data-glow] body { text-shadow: 0 0 6px color-mix(in srgb, var(--accent) 30%, transparent); }   /* a theme with a glow (the app says) */

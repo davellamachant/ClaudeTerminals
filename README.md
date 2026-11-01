@@ -226,7 +226,7 @@ plugins\
 
 | Message | Direction | What it does |
 |---|---|---|
-| `theme` `{ theme: 'light' \| 'dark', id, name }` | To the plugin | Sent when its page loads and whenever the theme changes. `id` and `name` are the theme file on (`nerds`, one of yours), or null for System, Light and Dark, so a plugin can dress to match. The page is also opened with `?theme=light` or `?theme=dark`, and `?look=<id>` when a theme file is on. |
+| `theme` `{ theme: 'light' \| 'dark', id, name, colors, font, glow }` | To the plugin | Sent when its page loads and whenever the theme changes. `id` and `name` are the theme file on (`nerds`, one of yours), or null for System, Light and Dark. `colors` are the app's own colours by the names in the themes section (`chrome`, `panel`, `text`, `accent`, `accent-strong`, `ok`, `working`, `asking`, …), `font` the theme's font family or null, `glow` whether its text glows, so a plugin can paint itself to match whatever theme is on, as the Ask and Timeline samples do. The page is also opened with `?theme=light` or `?theme=dark`, and `?look=<id>` when a theme file is on. |
 | `command` `{ command, context }` | To the plugin | One of its menu items, or its title bar button, was picked; sent once its page has loaded. `context` says what was clicked (below). |
 | `badge` `{ count }` or `{ dot: true }` | From the plugin | Puts a count (99+ above 99) or a dot on its own tab; `{ count: 0 }` clears it. |
 | `title` `{ title }` | From the plugin | Changes its own tab's caption (up to 60 characters); `{ title: null }` puts its name back. |

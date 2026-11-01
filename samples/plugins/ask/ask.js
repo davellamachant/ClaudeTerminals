@@ -47,7 +47,7 @@ addEventListener('message', (e) => {
     pending.delete(m.requestId);
     if ('error' in m) p.reject(new Error(m.error)); else p.resolve(m.result);
   } else if (m.type === 'claude-terminals:theme') {
-    document.documentElement.dataset.theme = m.theme === 'light' ? 'light' : 'dark';
+    dress(m);
   } else if (m.type === 'claude-terminals:command') {
     // Opened from a session's or a project's menu, or the title bar button: ask about that.
     const c = m.context ?? {};
@@ -57,6 +57,26 @@ addEventListener('message', (e) => {
     $('#input').focus();
   }
 });
+
+// ---- the look: the app's theme down to its colours and font, so this page matches whatever theme is on
+
+/** This page's colours by the app's names for them (see the theme message in the app's README). */
+const ASK_COLORS = { bg: 'chrome', panel: 'panel', border: 'border', 'border-soft': 'border-soft', hover: 'hover-strong', text: 'text', 'text-dim': 'text-dim', 'text-faint': 'text-faint',
+  code: 'code-bg', focus: 'focus', attention: 'attention', asking: 'asking', ok: 'ok', working: 'working', accent: 'accent-strong', danger: 'danger', bubble: 'panel', 'bubble-border': 'border-soft' };
+
+/** Dresses the page for the app's theme: its colours and font when the app sends them, else the dark or light set in ask.css. */
+function dress(m) {
+  const root = document.documentElement;
+  root.dataset.theme = m.theme === 'light' ? 'light' : 'dark';
+  const c = m.colors ?? {};
+  for (const [mine, theirs] of Object.entries(ASK_COLORS)) { if (c[theirs]) root.style.setProperty('--' + mine, c[theirs]); else root.style.removeProperty('--' + mine); }
+  if (c.accent && c.chrome) {   // your own messages: a wash of the accent over the floor
+    root.style.setProperty('--you', `color-mix(in srgb, ${c.accent} 16%, ${c.chrome})`);
+    root.style.setProperty('--you-border', `color-mix(in srgb, ${c.accent} 38%, ${c.chrome})`);
+  } else { root.style.removeProperty('--you'); root.style.removeProperty('--you-border'); }
+  document.body.style.fontFamily = m.font ? `"${m.font}", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif` : '';
+  if (m.glow) root.dataset.glow = ''; else delete root.dataset.glow;
+}
 
 // ---- state
 

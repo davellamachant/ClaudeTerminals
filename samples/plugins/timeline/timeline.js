@@ -48,7 +48,7 @@ addEventListener('message', (e) => {
     pending.delete(m.requestId);
     if ('error' in m) p.reject(new Error(m.error)); else p.resolve(m.result);
   } else if (m.type === 'claude-terminals:theme') {
-    dress(m.theme, m.id);
+    dress(m);
   } else if (m.type === 'claude-terminals:command') {
     // The title bar button or the palette item shows every session; a session's menu item follows that session.
     const c = m.context ?? {};
@@ -60,16 +60,28 @@ addEventListener('message', (e) => {
 });
 
 /** Dresses the page for the app's theme: its dark or light colours, or the Grid when one of the app's Tron themes is on (red for Ares). */
-function dress(theme, id) {
-  const root = document.documentElement;
-  root.dataset.theme = theme === 'light' ? 'light' : 'dark';
+function dress(m) {
+  const root = document.documentElement, id = m.id;
+  root.dataset.theme = m.theme === 'light' ? 'light' : 'dark';
   const grid = id === 'tron-ares' ? 'ares' : id === 'matrix' ? 'matrix' : null;   // the Grid's colour: cyan, red, or Matrix green
-  root.dataset.look = id === 'tron' || grid ? 'tron' : 'app';
+  const tron = id === 'tron' || !!grid;
+  root.dataset.look = tron ? 'tron' : 'app';
   if (grid) root.dataset.grid = grid; else delete root.dataset.grid;
+  // The plain look takes the app's own colours and font, so it matches whatever theme is on (Nerds, one of yours); the Grid
+  // looks paint their own, so nothing is set over them.
+  const c = tron ? {} : (m.colors ?? {});
+  for (const [mine, theirs] of Object.entries(TIMELINE_COLORS)) { if (c[theirs]) root.style.setProperty('--' + mine, c[theirs]); else root.style.removeProperty('--' + mine); }
+  const heat = [['heat1', 14], ['heat2', 32], ['heat3', 60], ['heat4', 100]];
+  for (const [name, pct] of heat) { if (c.accent && c.chrome) root.style.setProperty('--' + name, `color-mix(in srgb, ${c.accent} ${pct}%, ${c.chrome})`); else root.style.removeProperty('--' + name); }
+  document.body.style.fontFamily = !tron && m.font ? `"${m.font}", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif` : '';
+  if (!tron && m.glow) root.dataset.glow = ''; else delete root.dataset.glow;
 }
+/** This page's colours by the app's names for them (see the theme message in the app's README). */
+const TIMELINE_COLORS = { bg: 'chrome', panel: 'panel', border: 'border', 'border-soft': 'border-soft', hover: 'hover-strong', text: 'text', 'text-dim': 'text-dim', 'text-faint': 'text-faint',
+  code: 'code-bg', line: 'border-strong', station: 'text-dim', accent: 'accent-strong', danger: 'danger', working: 'working', asking: 'asking', attention: 'attention', idle: 'ok', stopped: 'text-faint' };
 
 const opened = new URLSearchParams(location.search);   // the app says the theme on the address too, so the first paint matches
-dress(opened.get('theme'), opened.get('look'));
+dress({ theme: opened.get('theme'), id: opened.get('look') });
 
 // ---- state
 
