@@ -3,5 +3,10 @@
   "base": "dark",
   "font": "Cascadia Mono",
   "glow": true,
-  "monochrome": true
+  "monochrome": true,
+  "accents": [
+    { "name": "Green phosphor", "color": "#33ff66" },
+    { "name": "Amber", "color": "#ffb000" },
+    { "name": "Paper white", "color": "#e8e8e8" }
+  ]
 }

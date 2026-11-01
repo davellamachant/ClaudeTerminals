@@ -143,6 +143,38 @@
 :root[data-glow] #app { text-shadow: 0 0 6px color-mix(in srgb, var(--accent) 30%, transparent); }
 :root[data-glow] :is(.xterm, .monaco-editor, textarea, input) { text-shadow: none; }
 :root[data-glow] :is(.modal, .menu, .toast, #railCard) { box-shadow: 0 0 0 1px var(--border), 0 8px 28px color-mix(in srgb, var(--accent) 10%, transparent); }
+/* The Grid (a theme's "grid": true): the window's floor is ruled in faint lines of the accent colour, with a glow at the
+   horizon, and the title bar, tab strips and panels go translucent so it shows through them; terminals, editors, menus
+   and cards keep their own backgrounds. */
+:root[data-grid] body {
+  background:
+    radial-gradient(120% 40% at 50% 100%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 70%),
+    linear-gradient(color-mix(in srgb, var(--accent) 8%, transparent) 1px, transparent 1px) 0 0 / 32px 32px,
+    linear-gradient(90deg, color-mix(in srgb, var(--accent) 8%, transparent) 1px, transparent 1px) 0 0 / 32px 32px,
+    var(--chrome);
+}
+:root:is([data-grid], [data-rain]) :is(#stage, #splitter, #docSplitter) { background: transparent; }
+:root:is([data-grid], [data-rain]) :is(#titlebar, .doc-tabs, .tab-scroller.doc, .dock-group > .tw-title) { background: color-mix(in srgb, var(--chrome-2) 70%, transparent); }
+:root:is([data-grid], [data-rain]) #gitPanel { background: color-mix(in srgb, var(--panel) 55%, transparent); }
+:root:is([data-grid], [data-rain]) .tile-header { background: color-mix(in srgb, var(--panel) 70%, transparent); }
+/* The rain (a theme's "rain": true, see digitalRain in app.js): a canvas fixed behind the page; the terminal's canvas is
+   see-through over it and the tile dims it with the terminal's own background at half strength, so the text reads. */
+#rain { position: fixed; inset: 0; z-index: -1; pointer-events: none; }   /* behind the page's content, over its background */
+:root[data-rain] { background: var(--chrome); }
+:root[data-rain] body { background: transparent; }   /* the body's own background would paint over the canvas; the root's paints under it */
+:root[data-rain] .tile { background: color-mix(in srgb, var(--terminal-bg) 42%, transparent); }
+:root[data-rain] .xterm .xterm-viewport { background-color: transparent !important; }
+/* The terminal itself: its canvas is see-through under a Grid theme (dressCursor in app.js), and the tile paints the same
+   lines over the terminal's own background, fixed to the window so they run on from the floor around it. */
+:root[data-grid] .tile {
+  background:
+    radial-gradient(120% 40% at 50% 100%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 70%),
+    linear-gradient(color-mix(in srgb, var(--accent) 8%, transparent) 1px, transparent 1px) 0 0 / 32px 32px,
+    linear-gradient(90deg, color-mix(in srgb, var(--accent) 8%, transparent) 1px, transparent 1px) 0 0 / 32px 32px,
+    var(--terminal-bg);
+  background-attachment: fixed, fixed, fixed, scroll;   /* the glow at the horizon and the lines run on from the floor around the tile */
+}
+:root[data-grid] .xterm .xterm-viewport { background-color: transparent !important; }   /* xterm paints its viewport black on its own */
 
 /* Project colours are picked for a dark background; their text is deepened to stay readable on a light one. */
 :root[data-theme="light"] .proj-tag,
@@ -463,6 +495,15 @@ button.chip:hover { border-color: var(--border); color: var(--text); }
 .tile-body { position: relative; flex: 1; overflow: hidden; }
 .surface { position: absolute; left: 6px; top: 4px; transform-origin: 0 0; transition: transform .16s ease; }
 .surface .xterm { height: 100%; }
+/* The light cycle cursor (a theme's "cursor": "light-cycle", see lightCycle in app.js): a light cycle drawn on the
+   cursor's cell, riding out over the next two, and ribbons of light that fade behind it, in the terminal's cursor
+   colour, over the screen's canvases. */
+.cycle-layer { position: absolute; inset: 0; pointer-events: none; z-index: 10; overflow: hidden; }
+.cycle-head { position: absolute; color: var(--cycle); filter: drop-shadow(0 0 2px var(--cycle)) drop-shadow(0 0 6px var(--cycle)); animation: cycle-idle 1.8s ease-in-out infinite; }
+.cycle-head svg { display: block; width: 100%; height: 100%; overflow: visible; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+@keyframes cycle-idle { 50% { opacity: .7; } }
+.cycle-trail { position: absolute; background: var(--cycle); box-shadow: 0 0 4px var(--cycle), 0 0 10px var(--cycle); opacity: .85; animation: cycle-fade .8s ease-out forwards; }
+@keyframes cycle-fade { to { opacity: 0; } }
 .tile-cover { position: absolute; inset: 0; cursor: zoom-in; z-index: 2; }
 .tile.expanded .tile-cover { display: none; }
 .tile-exited {
@@ -491,15 +532,17 @@ button.chip:hover { border-color: var(--border); color: var(--text); }
 
 /* ---------------------------------------------------------------- git tool window */
 #gitPanel { flex: none; display: flex; flex-direction: column; background: var(--panel); min-width: 260px; }
-.tw-title { display: flex; align-items: center; gap: 2px; height: 32px; padding: 0 4px 0 2px; border-bottom: 1px solid var(--border-soft); }
-.tw-tabs { display: flex; height: 100%; }
+/* The side panel's tab row: more tabs than fit the width go on to a second line rather than scrolling out of sight. */
+.tw-title { display: flex; align-items: flex-start; gap: 2px; min-height: 32px; padding: 0 4px 0 2px; border-bottom: 1px solid var(--border-soft); }
+.tw-tabs { display: flex; flex-wrap: wrap; min-height: 32px; }
 .tw-tab {
-  border: none; background: transparent; color: var(--text-dim); padding: 0 10px; cursor: pointer; height: 100%;
+  border: none; background: transparent; color: var(--text-dim); padding: 0 10px; cursor: pointer; height: 32px;
   border-bottom: 2px solid transparent; font-weight: 600;
 }
 .tw-tab:hover { color: var(--text); }
 .tw-tab.active { color: var(--text); border-bottom-color: var(--accent); }
-.tw-title .tw-tabs { min-width: 0; overflow-x: auto; scrollbar-width: none; flex: 0 1 auto; }
+.tw-title .tw-tabs { min-width: 0; flex: 1 1 auto; }
+.tw-title > .dock-fold { margin-top: 7px; }   /* level with the first line of tabs */
 .tw-tab { white-space: nowrap; flex: none; }
 .panel-tabs { display: contents; }
 .panel-tab { display: inline-flex; align-items: center; gap: 5px; }
@@ -532,6 +575,8 @@ button.chip:hover { border-color: var(--border); color: var(--text); }
 .dock-divider:hover, .dock-divider.dragging { background: var(--accent-strong); }
 .dock-divider:hover::after, .dock-divider.dragging::after { background: #fff; }
 body.dock-dragging, body.dock-dragging * { cursor: grabbing !important; user-select: none; }
+/* A plugin's page would take the pointer while a tab is dragged over it, and the drag would stop following it */
+body.dock-dragging iframe, body.tab-dragging iframe { pointer-events: none; }
 .dock-ghost {
   position: fixed; z-index: 1000; pointer-events: none; padding: 3px 10px; border-radius: 4px; font-weight: 600;
   background: var(--panel-2); border: 1px solid var(--accent); color: var(--text); box-shadow: 0 4px 14px rgba(0, 0, 0, .35); white-space: nowrap;
@@ -546,6 +591,9 @@ body.dock-dragging, body.dock-dragging * { cursor: grabbing !important; user-sel
 .dock-group.folded .dock-fold .ic { transform: rotate(-90deg); }
 .dock-group.folded > .dock-body { display: none; }
 /* Dropping on the top or bottom edge of a folded group's tab row: a line where the new group goes */
+/* Moving a plugin between the side panel and the document area: what the drop does, written in it */
+.dock-hint.labelled { display: flex; align-items: center; justify-content: center; color: var(--text-strong); font-weight: 600; }
+.dock-hint[hidden] { display: none; }
 .dock-hint.line { border: none; border-radius: 2px; background: var(--accent); box-shadow: 0 0 6px var(--accent); }
 /* A panel Claude has changed since you last looked */
 .tw-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--working); flex: none; }
@@ -870,11 +918,6 @@ img.plugin-ic { width: 16px; height: 16px; flex: none; object-fit: contain; }
 .tab-scroller.doc > .doc-tabs { flex: 1 1 auto; height: 100%; border-bottom: 0; }
 .tab-scroller.doc > .scroll-btn { height: 24px; margin: 0 3px; }
 /* The Git panel's tab row (Git and panel tabs): takes the title's free width, the refresh/hide buttons stay put. */
-.tab-scroller.tw { flex: 0 1 auto; height: 100%; }
-.tab-scroller.tw > .tw-tabs { flex: 0 1 auto; }
-.tab-scroller.tw > .scroll-btn { height: 22px; width: 20px; }
-.tab-scroller.tw > .scroll-btn:first-child { margin-right: 2px; }
-.tab-scroller.tw > .scroll-btn:last-child { margin: 0 2px; }
 /* Title-bar buttons keep their size; the tab rows beside them shrink and scroll instead. */
 #titlebar > .tb-btn, #projectBar > .tb-btn { flex: none; white-space: nowrap; }
 

@@ -9,22 +9,30 @@ namespace ClaudeTerminals.Themes;
 /// <param name="Base">"dark" or "light": what fills in every colour it leaves out, and what Claude and plugins are told.</param>
 /// <param name="Font">A font family for the app's own text (not the terminals'), or null for the usual one.</param>
 /// <param name="Glow">Text glows faintly in the accent colour, as on a phosphor screen.</param>
+/// <param name="Grid">The window's floor is ruled in faint lines of the accent colour, with a glow at the horizon, behind the title bar, tabs and panels.</param>
+/// <param name="Rain">Glyphs rain down the window's floor in the accent colour, behind the title bar, tabs and panels and, dimmed, under the terminals' text.</param>
+/// <param name="Cursor">"light-cycle": the terminals' cursor glows and leaves a ribbon of light fading behind it as it moves. Null for the plain cursor.</param>
 /// <param name="Monochrome">
 /// Everything in shades of the accent colour picked in Accent colour: the page builds the colours from it, under any the
 /// theme sets itself, and builds them again when the accent changes.
 /// </param>
 /// <param name="Accent">Its own accent, in place of the one picked in Accent colour; null keeps that.</param>
+/// <param name="Accents">Accent colours it suggests, offered first in Accent colour while it's on (Tron's cyan, Ares' red…).</param>
 /// <param name="Colors">The page's colours by name (see <see cref="ThemeCatalog.ColorNames"/>).</param>
 /// <param name="Terminal">The terminals' colours, by xterm.js's names (see <see cref="ThemeCatalog.TerminalNames"/>).</param>
 /// <param name="Diff">The diff editor's colours (see <see cref="ThemeCatalog.DiffNames"/>).</param>
 /// <param name="BuiltIn">Shipped with the app, rather than added to the themes folder.</param>
-internal sealed record ThemeInfo(string Id, string Name, string Base, string? Font, bool Glow, bool Monochrome, ThemeAccent? Accent,
+internal sealed record ThemeInfo(string Id, string Name, string Base, string? Font, bool Glow, bool Grid, bool Rain, bool Monochrome, string? Cursor, ThemeAccent? Accent,
+    IReadOnlyList<ThemeAccentChoice> Accents,
     IReadOnlyDictionary<string, string> Colors, IReadOnlyDictionary<string, string> Terminal, IReadOnlyDictionary<string, string> Diff,
     bool BuiltIn);
 
 /// <param name="Line">Lines, ticks and highlights: readable on the theme's background.</param>
 /// <param name="Strong">Fills that carry white text: active tabs, buttons, menus.</param>
 internal sealed record ThemeAccent(string Line, string Strong);
+
+/// <summary>An accent colour a theme suggests: a short name and a #rrggbb.</summary>
+internal sealed record ThemeAccentChoice(string Name, string Color);
 
 /// <summary>
 /// Finds the themes: those shipped in wwwroot/themes, and those in the profile's themes folder. Each is a JSON file such as
@@ -39,6 +47,9 @@ internal static partial class ThemeCatalog
     private static readonly HashSet<string> Reserved = ["system", "light", "dark"];
 
     private const int MaxFileBytes = 64 * 1024;
+
+    /// <summary>How many accent colours a theme can suggest.</summary>
+    public const int MaxAccents = 8;
 
     /// <summary>The page's colours a theme can set: its stylesheet's variables (--chrome, --text-dim, …) without the dashes.</summary>
     public static readonly IReadOnlySet<string> ColorNames = new HashSet<string>(
@@ -180,7 +191,15 @@ internal static partial class ThemeCatalog
             else problems.Add($"{fileName}: font \"{f}\" isn't a font family name (letters, digits, spaces and hyphens).");
         }
         var glow = e.TryGetProperty("glow", out var g) && g.ValueKind == JsonValueKind.True;
+        var grid = e.TryGetProperty("grid", out var gr) && gr.ValueKind == JsonValueKind.True;
+        var rain = e.TryGetProperty("rain", out var ra) && ra.ValueKind == JsonValueKind.True;
         var monochrome = e.TryGetProperty("monochrome", out var m) && m.ValueKind == JsonValueKind.True;
+        string? cursor = null;
+        if (e.TryGetProperty("cursor", out var c))
+        {
+            if (c.ValueKind == JsonValueKind.String && c.GetString() == "light-cycle") cursor = "light-cycle";
+            else problems.Add($"{fileName}: cursor is \"light-cycle\" or left out.");
+        }
 
         ThemeAccent? accent = null;
         if (e.TryGetProperty("accent", out var a) && a.ValueKind == JsonValueKind.Object)
@@ -190,12 +209,47 @@ internal static partial class ThemeCatalog
             else problems.Add($"{fileName}: accent needs a \"line\" and a \"strong\" colour.");
         }
 
-        return new ThemeInfo(id, name, @base, font, glow, monochrome, accent,
+        return new ThemeInfo(id, name, @base, font, glow, grid, rain, monochrome, cursor, accent, Accents(e, fileName, problems),
             Colors(e, "colors", ColorNames, CssColor(), fileName, problems),
             Colors(e, "terminal", TerminalNames, CssColor(), fileName, problems),
             Colors(e, "diff", DiffNames, HexColor(), fileName, problems),
             builtIn);
     }
+
+    /// <summary>
+    /// The accent colours a theme suggests: <c>"accents": [{ "name": "Tron", "color": "#00e5ff" }, …]</c>, each a name of up to
+    /// 24 characters and a #rrggbb, at most <see cref="MaxAccents"/>. One that isn't valid is left out, with why.
+    /// </summary>
+    private static List<ThemeAccentChoice> Accents(JsonElement e, string fileName, List<string> problems)
+    {
+        var result = new List<ThemeAccentChoice>();
+        if (!e.TryGetProperty("accents", out var list)) return result;
+        if (list.ValueKind != JsonValueKind.Array)
+        {
+            problems.Add($"{fileName}: accents is a list of {{ \"name\", \"color\" }}.");
+            return result;
+        }
+        foreach (var item in list.EnumerateArray())
+        {
+            if (result.Count == MaxAccents)
+            {
+                problems.Add($"{fileName}: a theme can suggest up to {MaxAccents} accent colours; the rest are left out.");
+                break;
+            }
+            var name = item.ValueKind == JsonValueKind.Object ? Str(item, "name")?.Trim() : null;
+            var color = item.ValueKind == JsonValueKind.Object ? Str(item, "color") : null;
+            if (name is not { Length: > 0 and <= 24 } || color is null || !SixDigitColor().IsMatch(color))
+                problems.Add($"{fileName}: each of accents needs a \"name\" (up to 24 characters) and a \"color\" written #rrggbb.");
+            else if (result.Any(r => r.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+                problems.Add($"{fileName}: accents has \"{name}\" twice.");
+            else
+                result.Add(new ThemeAccentChoice(name, color.ToLowerInvariant()));
+        }
+        return result;
+    }
+
+    [GeneratedRegex("^#[0-9a-fA-F]{6}$")]
+    private static partial Regex SixDigitColor();
 
     /// <summary>One section's colours: names it knows, with valid values; the rest are left out, with why.</summary>
     private static Dictionary<string, string> Colors(JsonElement e, string section, IReadOnlySet<string> names, Regex valid, string fileName,

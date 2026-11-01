@@ -473,13 +473,83 @@ function themeLook() {
   if (!themes.list.includes(t)) return t;   // the kept look
   const made = t.monochrome ? monochromeLook(accentColour(), t.base === 'light') : {};
   return {
-    id: t.id, name: t.name, base: t.base, font: t.font, glow: t.glow, monochrome: t.monochrome,
+    id: t.id, name: t.name, base: t.base, font: t.font, glow: t.glow, grid: !!t.grid, rain: !!t.rain, monochrome: t.monochrome, cursor: t.cursor ?? null,
     colors: { ...made.colors, ...t.colors }, terminal: { ...made.terminal, ...t.terminal }, diff: { ...made.diff, ...t.diff },
     accent: t.accent ?? made.accent ?? null,
   };
 }
 
 let themeColors = [];   // the colours the theme in use set on the page, to take off again
+// The rain (a theme's "rain": true): glyphs falling down the window's floor in the accent colour, on a canvas fixed behind
+// everything (see #rain in app.css); the title bar, tabs, panels and terminals are see-through over it as over the Grid.
+// Each column is one drop: a bright head, a tail that fades as the canvas is washed with the floor colour each frame.
+const rain = { canvas: null, ctx: null, cols: [], timer: null, colour: '#39ff6a', floor: '#000000' };
+const RAIN_GLYPHS = 'ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ0123456789Z:・"=*+-<>¦|ç';
+const RAIN_CELL = 16, RAIN_MS = 70;
+
+/** Starts the rain, or stops it and takes its canvas away. */
+function digitalRain(on) {
+  if (!on) {
+    clearInterval(rain.timer); rain.timer = null;
+    rain.canvas?.remove(); rain.canvas = rain.ctx = null; rain.cols = [];
+    return;
+  }
+  if (rain.canvas) { rainColours(); return; }
+  const canvas = h('canvas', { id: 'rain', 'aria-hidden': 'true' });
+  document.body.prepend(canvas);
+  rain.canvas = canvas; rain.ctx = canvas.getContext('2d');
+  rainColours();
+  rainSize();
+  const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (still) { for (let i = 0; i < 60; i++) rainFrame(); return; }   // a settled picture, not a moving one
+  rain.timer = setInterval(() => { if (!document.hidden) rainFrame(); }, RAIN_MS);
+}
+
+/** The rain's colours, from the theme on screen: the accent for the glyphs, the chrome for the floor it washes to. */
+function rainColours() {
+  const css = getComputedStyle(document.documentElement);
+  rain.colour = css.getPropertyValue('--accent').trim() || '#39ff6a';
+  rain.floor = css.getPropertyValue('--chrome').trim() || '#000000';
+}
+
+/** Fits the canvas to the window at the device's resolution and starts a drop in every column. */
+function rainSize() {
+  const { canvas, ctx } = rain;
+  if (!canvas) return;
+  const dpr = devicePixelRatio || 1, w = innerWidth, hgt = innerHeight;
+  canvas.width = Math.round(w * dpr); canvas.height = Math.round(hgt * dpr);
+  canvas.style.width = w + 'px'; canvas.style.height = hgt + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = rain.floor; ctx.fillRect(0, 0, w, hgt);
+  const n = Math.ceil(w / RAIN_CELL);
+  rain.cols = Array.from({ length: n }, () => ({ y: -Math.random() * hgt * 1.6 / RAIN_CELL, speed: 0.4 + Math.random() * 0.8 }));   // staggered, so the columns don't all rain at once
+  rain.rows = Math.ceil(hgt / RAIN_CELL);
+}
+
+function rainFrame() {
+  const { ctx, canvas } = rain;
+  if (!ctx) return;
+  const w = canvas.clientWidth, hgt = canvas.clientHeight;
+  ctx.fillStyle = rain.floor; ctx.globalAlpha = 0.16; ctx.fillRect(0, 0, w, hgt); ctx.globalAlpha = 1;   // the tails fade
+  ctx.font = `${RAIN_CELL - 2}px "MS Gothic", "Cascadia Mono", Consolas, monospace`;
+  ctx.textBaseline = 'top';
+  for (let i = 0; i < rain.cols.length; i++) {
+    const c = rain.cols[i];
+    const y = Math.floor(c.y);
+    if (y >= 0 && y < rain.rows + 1) {
+      const glyph = RAIN_GLYPHS[Math.floor(Math.random() * RAIN_GLYPHS.length)];
+      ctx.fillStyle = rain.colour; ctx.globalAlpha = 0.6;
+      ctx.fillText(glyph, i * RAIN_CELL + 1, (y - 1) * RAIN_CELL);   // last cell: back to the accent
+      ctx.fillStyle = '#ffffff'; ctx.globalAlpha = 0.8;
+      ctx.fillText(RAIN_GLYPHS[Math.floor(Math.random() * RAIN_GLYPHS.length)], i * RAIN_CELL + 1, y * RAIN_CELL);   // the head, white-hot
+      ctx.globalAlpha = 1;
+    }
+    c.y += c.speed;
+    if (c.y > rain.rows + 2 && Math.random() < 0.035) { c.y = -Math.random() * 20; c.speed = 0.4 + Math.random() * 0.8; }
+  }
+}
+addEventListener('resize', () => rainSize());
+
 /** Marks the page with the theme: data-theme light or dark for the stylesheet, and a theme's own colours, font and glow. */
 function markTheme(look = themeLook()) {
   const root = document.documentElement;
@@ -490,6 +560,11 @@ function markTheme(look = themeLook()) {
   else root.style.removeProperty('font-family');
   if (look?.glow) root.dataset.glow = '';
   else delete root.dataset.glow;
+  if (look?.grid) root.dataset.grid = '';
+  else delete root.dataset.grid;
+  if (look?.rain) root.dataset.rain = '';
+  else delete root.dataset.rain;
+  digitalRain(!!look?.rain);
 }
 markTheme(themes.last?.id === theme.pref ? themes.last : null);   // the accent isn't known yet: last time's look
 
@@ -499,8 +574,8 @@ async function loadThemes() {
     const r = await request('themes.list');
     const before = themeName();
     Object.assign(themes, { list: r.themes, problems: r.problems, folder: r.folder, names: r.names });
-    // A theme that's gone (its file deleted, or no longer valid) gives way to System.
-    if (!currentTheme() && !BUILT_IN_THEMES.includes(theme.pref)) theme.pref = 'system';
+    // A theme that's gone (its file deleted, or no longer valid) gives way to System, rather than living on as last time's look.
+    if (!BUILT_IN_THEMES.includes(theme.pref) && !themes.list.some((t) => t.id === theme.pref)) theme.pref = 'system';
     applyTheme(before);
   }
   catch (e) { console.error('The themes could not be read', e); }
@@ -605,7 +680,7 @@ function monochromeLook(hex, light) {
 }
 
 /** The accent changed: a monochrome theme is built from it, so everything is recoloured; otherwise only the accent. */
-const accentChanged = () => (currentTheme()?.monochrome ? applyTheme() : applyAccent());
+const accentChanged = () => { if (currentTheme()?.monochrome) applyTheme(); else applyAccent(); rainColours(); };
 
 // How the status dots move (see app.css): picked in Status dots… from the theme menu, and kept per person.
 const DOT_STYLES = [
@@ -636,6 +711,93 @@ const TERM_THEME_LIGHT = {
 };
 /** The terminals' colours: a theme's own over its base's. */
 const termTheme = (look = themeLook()) => ({ ...(isLight() ? TERM_THEME_LIGHT : TERM_THEME_DARK), ...look?.terminal });
+
+// The light cycle cursor (a theme's "cursor": "light-cycle"): the cursor is a light cycle, drawn in the terminal's cursor
+// colour over the cell the cursor is in (its rear wheel on the cell, the rest riding out over the next two), leaving a
+// ribbon of light that fades behind it as it moves, turning at right angles when it changes line. It's a layer over the
+// terminal's screen; xterm's own cursor is made invisible (an underline in the background colour) while it's on.
+const TRAIL_MAX = 48;        // pieces of ribbon kept at once
+const CYCLE_CELLS = 3;       // how many cells wide the light cycle is drawn
+// Side view, facing right, in a 24 by 16 box: two tall wheels with hubs, the canopy sweeping over them, the rider's
+// back, and the white light stripe along the canopy.
+const CYCLE_SVG = '<svg viewBox="0 0 24 16" preserveAspectRatio="xMinYMid meet" aria-hidden="true">' +
+  '<circle cx="5.5" cy="10.5" r="4.6"/><circle cx="18.5" cy="10.5" r="4.6"/>' +
+  '<circle cx="5.5" cy="10.5" r="1.3" fill="currentColor"/><circle cx="18.5" cy="10.5" r="1.3" fill="currentColor"/>' +
+  '<path d="M1.5 8 C3.5 3.6 8 2.2 12 2.6 C16.5 3 20.5 5 22.5 8.5"/><path d="M8.5 6.2 L10.5 3.6"/><path d="M9 10.5 H15"/>' +
+  '<path d="M4 6.4 C8 3.2 15 3 20 5.8" stroke="#fff" stroke-width="1" opacity=".9"/></svg>';
+// A program repainting its screen (a listing streaming by, Claude's own interface) moves the cursor every frame; that's
+// not riding, so past this many moves in half a second only the glow follows, and the ribbon waits for your own moves.
+const BURST_MOVES = 12, BURST_MS = 500;
+const trailsAllowed = () => !matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/**
+ * The terminal's colours as the theme wants them on screen: see-through over the Grid floor (the tile under it paints
+ * the floor's lines, see .tile in app.css), and xterm's own cursor made invisible while the light cycle stands in for it.
+ */
+function dressCursor(s) {
+  const t = termTheme();
+  const theme = { ...t };
+  const look = themeLook();
+  if (look?.grid || look?.rain) theme.background = 'rgba(0, 0, 0, 0)';
+  if (s.cycle) { theme.cursor = t.background; theme.cursorAccent = t.background; }
+  s.term.options.theme = theme;
+  s.term.options.cursorStyle = s.cycle ? 'underline' : 'block';
+}
+
+/** Puts the light cycle on a session's terminal, or takes it off, and sets the terminal's colours either way. */
+function lightCycle(s, on) {
+  if (!on) {
+    if (s.cycle) {
+      s.cycle.move.dispose(); s.cycle.resize.dispose(); s.cycle.layer.remove();
+      s.cycle = null;
+    }
+    dressCursor(s);
+    return;
+  }
+  if (s.cycle) { s.cycle.layer.style.setProperty('--cycle', termTheme().cursor); dressCursor(s); return; }
+  const screen = s.surface.querySelector('.xterm-screen');
+  if (!screen) return;
+  const head = h('div', { class: 'cycle-head', hidden: true });
+  head.innerHTML = CYCLE_SVG;
+  const layer = h('div', { class: 'cycle-layer' }, head);
+  layer.style.setProperty('--cycle', termTheme().cursor);
+  screen.append(layer);
+  const c = { layer, head, last: null, queued: false, pieces: [], moves: [] };
+  const ride = () => {
+    c.queued = false;
+    const term = s.term, b = term.buffer.active;
+    if (b.viewportY !== b.baseY || !term.cols || !term.rows) { head.hidden = true; c.last = null; return; }   // scrolled up: the cursor is off the screen
+    const cw = screen.clientWidth / term.cols, ch = screen.clientHeight / term.rows;
+    const x = b.cursorX, y = b.cursorY;
+    head.hidden = false;
+    Object.assign(head.style, { left: `${x * cw}px`, top: `${y * ch}px`, width: `${cw * CYCLE_CELLS}px`, height: `${ch}px` });
+    const from = c.last;
+    c.last = { x, y };
+    if (!from || (from.x === x && from.y === y)) return;
+    const now = performance.now();
+    c.moves = c.moves.filter((t) => now - t < BURST_MS);
+    c.moves.push(now);
+    if (c.moves.length > BURST_MOVES || !trailsAllowed()) return;
+    // The ribbon, from the rear wheel: down (or up) the old column to the new line, then along it to the new cell.
+    const mid = (v, size) => (v + 0.5) * size;
+    const wheel = (row) => (row + 0.69) * ch;   // the wheels' height in the cell (11 of 16 in CYCLE_SVG)
+    const piece = (left, top, width, height) => {
+      const p = h('div', { class: 'cycle-trail', style: `left:${left}px;top:${top}px;width:${width}px;height:${height}px` });
+      p.addEventListener('animationend', () => { p.remove(); c.pieces = c.pieces.filter((q) => q !== p); });
+      layer.append(p);
+      c.pieces.push(p);
+      while (c.pieces.length > TRAIL_MAX) c.pieces.shift().remove();
+    };
+    if (from.y !== y) piece(mid(from.x, cw) - 1, Math.min(wheel(from.y), wheel(y)), 2, Math.abs(y - from.y) * ch);
+    if (from.x !== x) piece(Math.min(mid(from.x, cw), mid(x, cw)), wheel(y) - 1, Math.abs(x - from.x) * cw, 2);
+  };
+  const queue = () => { if (!c.queued) { c.queued = true; requestAnimationFrame(ride); } };
+  c.move = s.term.onCursorMove(queue);
+  c.resize = s.term.onResize(() => { c.last = null; queue(); });
+  s.cycle = c;
+  dressCursor(s);
+  queue();
+}
 
 /** The diff editor's theme: a theme's, defined from its colours over its base's, or Light's or Dark's. */
 /** A theme's diff colours (ThemeCatalog.DiffNames) and the diff editor's names for them; the syntax colours are rules. */
@@ -746,6 +908,7 @@ function createSession(info) {
     fontSize: state.fontSize,
     lineHeight: 1.0,
     cursorBlink: true,
+    allowTransparency: true,   // so a theme with a Grid floor can show it under the text (dressCursor); must be set before open()
     scrollback: 10000,
     allowProposedApi: true,
     theme: termTheme(),
@@ -766,6 +929,7 @@ function createSession(info) {
       term.loadAddon(gl);
     } catch { /* DOM renderer fallback */ }
   }
+  lightCycle(s, themeLook()?.cursor === 'light-cycle');   // either way dresses the terminal for the theme (see-through over the Grid or the rain)
 
   term.attachCustomKeyEventHandler((e) => terminalKey(s, e));
   term.onData((data) => {
@@ -2100,7 +2264,7 @@ function placePanels() {
   if (!state.panelsLoaded) return;   // until the host has said which panels exist, keep the saved layout as it is
   let changed = false;
   const live = new Set(state.panels.map(panelTab));
-  const pluginGone = (t) => plugins.loaded && pluginById(pluginOfTab(t))?.placement !== 'panel';
+  const pluginGone = (t) => plugins.loaded && (!pluginById(pluginOfTab(t)) || pluginPlacement(pluginById(pluginOfTab(t))) !== 'panel');
   for (const g of dock.groups) {
     const kept = g.tabs.filter((t) => isPluginDockTab(t) ? !pluginGone(t) : !isPanelTab(t) || live.has(t));
     if (kept.length !== g.tabs.length) { g.tabs = kept; changed = true; }
@@ -2178,7 +2342,6 @@ function makeGroupEl(g) {
   g.el = h('div', { class: 'dock-group' }, title, g.body, g.frames);
   g.el.dock = g;
   g.foldBtn = fold;
-  makeScrollable(g.tabsEl, 'tw');
 }
 
 /** A folded group shows only its tab row, so it stays one click away without taking room. */
@@ -2230,8 +2393,7 @@ function renderDockTabs(g, tabs, open) {
     }, h('span', { class: 'panel-tab-title' }, p.title), p.badge && h('span', { class: `tw-badge tone-${tone(p.badge.tone)}` }, p.badge.text),
     (t !== open || g.folded) && isUnseen(p) && h('span', { class: 'tw-dot', title: 'Updated since you last looked', 'aria-label': 'updated' }));
   }));
-  // With many tabs the row scrolls sideways (◀ ▶): keep the open one in view.
-  requestAnimationFrame(() => revealActive(g.tabsEl, '.tw-tab.active'));
+  // More tabs than fit the width go on to a second line (see .tw-tabs in app.css).
 }
 
 function activateTab(g, t) {
@@ -2363,6 +2525,8 @@ function makeDivider(g) {
   /** Where a drop at (x, y) would put the tab, or null for nowhere useful. */
   function dropTarget(x, y) {
     const el = document.elementFromPoint(x, y);
+    // A plugin's tab let go over the document area moves the plugin there, as a tab.
+    if (isPluginDockTab(press.tab) && el?.closest('#docArea, #docTabs')) return { kind: 'doc', label: 'As a tab', rect: $('#docArea').getBoundingClientRect() };
     const groupEl = el?.closest('#dockGroups .dock-group');
     if (!groupEl) return el?.closest('#dockGroups') ? belowEverything(y) : null;
     if (groupEl.hidden) return null;
@@ -2407,6 +2571,8 @@ function makeDivider(g) {
     if (!t) return;
     if (t.kind === 'join') { t.mark?.classList.add(t.side); return; }
     drag.hint.classList.toggle('line', !!t.line);
+    drag.hint.classList.toggle('labelled', !!t.label);
+    drag.hint.textContent = t.label ?? '';
     Object.assign(drag.hint.style, { left: t.rect.left + 'px', top: t.rect.top + 'px', width: t.rect.width + 'px', height: t.rect.height + 'px' });
   }
 
@@ -2419,7 +2585,8 @@ function makeDivider(g) {
     clearMarks();
     swallowClick = true;
     setTimeout(() => { swallowClick = false; }, 0);
-    if (drop && was.target) moveTab(press.tab, was.target);
+    if (drop && was.target?.kind === 'doc') movePlugin(pluginOfTab(press.tab), 'tab', null);
+    else if (drop && was.target) moveTab(press.tab, was.target);
   }
 
   host.addEventListener('pointerdown', (e) => {
@@ -2482,6 +2649,7 @@ function makeDivider(g) {
       p && '-',
       p && { label: 'Close panel…', danger: true, action: () => confirmClosePanel(p) },
       isPluginDockTab(t) && '-',
+      isPluginDockTab(t) && { label: 'Open as a tab', action: () => movePlugin(pluginOfTab(t), 'tab', null) },
       isPluginDockTab(t) && { label: 'Close plugin', action: () => closeDockPlugin(t) },
       ...reopenItems(),
       '-',
@@ -3720,7 +3888,7 @@ function closeDoc(key) {
   if (i < 0) return;
   const wasActive = docs.active === key;
   const wasSide = docs.side === key;
-  if (isPluginTab(docs.tabs[i])) closePluginFrame(docs.tabs[i].pluginId);
+  if (isPluginTab(docs.tabs[i])) { closePluginFrame(docs.tabs[i].pluginId); seatPanelPlugins(); }   // one opened wide goes back to the side panel
   docs.tabs.splice(i, 1);
   // The nearest shown tab after it, else before it, that `ok` accepts.
   const near = (ok) => docs.tabs.slice(i).find((t) => tabShown(t) && ok(t)) || docs.tabs.slice(0, i).reverse().find((t) => tabShown(t) && ok(t));
@@ -4904,9 +5072,10 @@ function applyTheme(before = null) {
   const look = themeLook();
   store.set('themeLook', look);   // so it paints at once on the next start
   markTheme(look);
-  for (const s of state.sessions) s.term.options.theme = termTheme(look);
+  for (const s of state.sessions) lightCycle(s, look?.cursor === 'light-cycle');   // sets the terminal's colours either way
   if (window.monaco) monaco.editor.setTheme(diffTheme(look));
   applyAccent();
+  rainColours();   // the rain takes the accent, which is only now on the page
   for (const f of pluginFrames.values()) postPluginTheme(f.frame);
   // A theme's window and title bar take its own background; Light and Dark keep Windows' own.
   post({ type: 'theme', light: isLight(), background: look?.colors.chrome ?? null });
@@ -5094,6 +5263,8 @@ function themeMenu(x, y) {
   const c = accent.choice;
   const colour = c === 'windows' ? accent.palette?.[3] ?? '#7160e8' : c === 'purple' ? '#7160e8' : c;
   const own = currentTheme();   // a theme with an accent of its own (not a monochrome one: that's built from yours)
+  const suggested = suggestedAccents();
+  const named = suggested.find((a) => a.color === String(c).toLowerCase());
   showMenu(x, y, [
     { header: 'Theme' },
     { icon: themeSwatch('system'), label: 'System (follows Windows)', checked: theme.pref === 'system', action: () => setThemePref('system') },
@@ -5109,7 +5280,8 @@ function themeMenu(x, y) {
     own?.accent
       ? { icon: h('span', { class: 'accent-dot', style: `background:${own.accent.line}` }), label: `${own.name}'s own`,
         action: () => toast(`${own.name} has an accent colour of its own. Choose another theme to change it.`) }
-      : { icon: h('span', { class: 'accent-dot', style: `background:${colour}` }), label: c === 'windows' ? 'Windows accent' : c === 'purple' ? 'Original purple' : 'Custom',
+      : { icon: h('span', { class: 'accent-dot', style: `background:${colour}` }),   // one the theme suggests goes by its name
+        label: named ? named.name : c === 'windows' ? 'Windows accent' : c === 'purple' ? 'Original purple' : 'Custom',
         kbd: 'Change…', action: showAccentDialog },
     '-',
     { header: 'Status dots' },
@@ -5118,7 +5290,7 @@ function themeMenu(x, y) {
     '-',
     { header: 'Plugins' },
     ...plugins.list.flatMap((p) => [
-      { icon: pluginIcon(p.id), label: p.title, kbd: p.placement === 'panel' ? 'Side panel' : '', action: () => openPlugin(p.id) },
+      { icon: pluginIcon(p.id), label: p.title, kbd: pluginPlacement(p) === 'panel' ? 'Side panel' : '', action: () => openPlugin(p.id) },
       ...p.menu.filter((m) => m.where.includes('palette')).map((m) => ({ label: [h('span', { class: 'menu-indent' }), m.label], action: () => openPlugin(p.id, m.command, { menu: 'palette' }) })),
       p.toolbar && hiddenPluginButtons.has(p.id) && { label: [h('span', { class: 'menu-indent' }), 'Show its title bar button'], action: () => setPluginButton(p.id, true) },
     ]),
@@ -5128,6 +5300,9 @@ function themeMenu(x, y) {
     { icon: 'folder', label: plugins.list.length ? 'Open the plugins folder' : 'Add a plugin: open the plugins folder', action: () => request('plugins.openFolder') },
   ]);
 }
+
+/** The accent colours the theme on suggests ({ name, color }), offered first in Accent colour, unless it has an accent of its own. */
+const suggestedAccents = () => { const t = currentTheme(); return t?.accent ? [] : t?.accents ?? []; };
 
 /**
  * Save as a new theme: the theme on screen, whichever it is, written to the themes folder as a file with every colour, to
@@ -5173,6 +5348,9 @@ function themeSnapshot(title) {
     base: themeName(),
     ...(look?.font ? { font: look.font } : {}),
     ...(look?.glow ? { glow: true } : {}),
+    ...(look?.grid ? { grid: true } : {}),
+    ...(look?.rain ? { rain: true } : {}),
+    ...(look?.cursor ? { cursor: look.cursor } : {}),
     accent: { line: value('accent'), strong: value('accent-strong') },
     colors: Object.fromEntries(themes.names.colors.map((n) => [n, value(n)]).filter(([, v]) => v)),
     terminal: Object.fromEntries(themes.names.terminal.filter((n) => terminal[n]).map((n) => [n, terminal[n]])),
@@ -5228,6 +5406,9 @@ function showAccentDialog() {
   const purpleBtn = h('button', { class: 'swatch-auto', title: "The app's own colour", onclick: () => pick('purple') },
     h('span', { class: 'accent-dot', style: 'background:#7160e8' }), 'Original purple');
   const swatches = PROJECT_COLORS.map((c) => h('button', { class: 'swatch', style: `--swatch:${c}`, title: c, onclick: () => pick(c) }));
+  // The theme's own suggestions, by name, first.
+  const theirs = suggestedAccents().map((a) => h('button', { class: 'swatch-auto', title: a.color, 'data-colour': a.color, onclick: () => pick(a.color) },
+    h('span', { class: 'accent-dot', style: `background:${a.color}` }), a.name));
   const note = h('div', { class: 'field help' });
   custom.addEventListener('input', () => pick(custom.value));
 
@@ -5237,7 +5418,8 @@ function showAccentDialog() {
     windowsBtn.classList.toggle('selected', c === 'windows');
     purpleBtn.classList.toggle('selected', c === 'purple');
     for (const sw of swatches) sw.classList.toggle('selected', sw.title === c);
-    const isCustom = /^#/.test(c) && !PROJECT_COLORS.includes(c);
+    for (const b of theirs) b.classList.toggle('selected', b.dataset.colour === String(c).toLowerCase());
+    const isCustom = /^#/.test(c) && !PROJECT_COLORS.includes(c) && !theirs.some((b) => b.dataset.colour === c.toLowerCase());
     customBtn.classList.toggle('selected', isCustom);
     customBtn.style.setProperty('--swatch', isCustom ? c : 'transparent');
     if (/^#/.test(c)) custom.value = c;
@@ -5247,6 +5429,7 @@ function showAccentDialog() {
   }
   let saved = false;
   openModal('Accent colour', [
+    ...(theirs.length ? [h('div', { class: 'field help' }, `Suggested by ${currentTheme().name}`), h('div', { class: 'swatch-row' }, theirs)] : []),
     h('div', { class: 'swatch-row' }, windowsBtn, purpleBtn),
     h('div', { class: 'swatch-row' }, swatches, customBtn, custom),
     note,
@@ -5438,13 +5621,15 @@ function revealActive(row, selector) {
  * (https://<id>.plugin.local/), so it can't reach the app, its files or terminals, or another plugin, and sees sessions only if
  * you allowed it (see pluginRequest).
  *
- * Messages, each { type: 'claude-terminals:<name>', … }. To a plugin: theme { theme: 'light' | 'dark' } (also ?theme= on
- * its address) whenever it changes, and command { command, context } when one of its menu items (or its title bar
+ * Messages, each { type: 'claude-terminals:<name>', … }. To a plugin: theme { theme: 'light' | 'dark', id, name, colors,
+ * font, glow } (the theme file on, if one is, and the page's colours by name so the plugin can match them; also ?theme=
+ * and ?look= on its address) whenever it changes, and command { command, context } when one of its menu items (or its title bar
  * button, see renderPluginButtons) is picked, context
  * saying what was clicked (see pluginMenuItems): a name and folder to go on, not a way into the session. From a plugin, about
- * its own tab and nothing else: badge { count } or { dot: true } ({ count: 0 } clears it), and title { title } (null
- * puts its name back); and request, for what its "access" lets it see (see pluginRequest). Anything else it sends is
- * ignored.
+ * its own tab and nothing else: badge { count } or { dot: true } ({ count: 0 } clears it), title { title } (null puts
+ * its name back), and open { placement, state } to be moved to a document tab or the side panel for now (see
+ * movePlugin; its page starts again there and gets state { placement, state } back); and request, for what its
+ * "access" lets it see (see pluginRequest). Anything else it sends is ignored.
  */
 const plugins = { list: [], problems: [], folder: null, loaded: false };
 const pluginById = (id) => plugins.list.find((p) => p.id === id);
@@ -5456,6 +5641,11 @@ function pluginOfTab(t) { return t.slice('plugin:'.length); }
 
 /** Each plugin with a page up: id → { frame, ready, queue (messages for when it has loaded), badge, title }. */
 const pluginFrames = new Map();
+// A plugin can ask to be moved to the other placement for a while (an "open wide" button in a side panel plugin, say):
+// where each is now when not where its plugin.json says, and the state it sent along to get back once its page is up.
+const pluginPlaces = new Map();
+const pluginHandover = new Map();
+const pluginPlacement = (p) => pluginPlaces.get(p.id) ?? p.placement;
 
 /** Reads the plugins folder again (a plugin added since shows up without restarting). */
 async function loadPlugins() {
@@ -5463,8 +5653,24 @@ async function loadPlugins() {
     const r = await request('plugins.list');
     Object.assign(plugins, { list: r.plugins, problems: r.problems, folder: r.folder, loaded: true });
     renderPluginButtons();
+    seatPanelPlugins();
   }
   catch (e) { console.error('The plugins could not be read', e); }
+}
+
+// A side panel plugin takes a tab in the side panel on its own, so it's there without being opened first; one you
+// closed stays away until you open it again (kept per person).
+const closedPanelPlugins = new Set(store.get('panelPluginsClosed', []));
+const rememberClosedPanelPlugins = () => store.set('panelPluginsClosed', [...closedPanelPlugins]);
+function seatPanelPlugins() {
+  let seated = false;
+  for (const p of plugins.list) {
+    const t = 'plugin:' + p.id;
+    if (pluginPlacement(p) !== 'panel' || closedPanelPlugins.has(p.id) || groupOfTab(t) || !dock.groups.length) continue;
+    dock.groups[dock.groups.length - 1].tabs.push(t);
+    seated = true;
+  }
+  if (seated) { saveDock(); renderGit(); }
 }
 
 /** Opens a plugin where it shows; a command from one of its menu items reaches it once its page has loaded. */
@@ -5472,8 +5678,9 @@ function openPlugin(id, command = null, context = null) {
   const p = pluginById(id);
   if (!p) return;
   if (command != null) sendToPlugin(p, { type: 'claude-terminals:command', command, context });
-  if (p.placement === 'panel') {
+  if (pluginPlacement(p) === 'panel') {
     const t = 'plugin:' + id;
+    if (closedPanelPlugins.delete(id)) rememberClosedPanelPlugins();   // opened again: it seats itself from now on
     if (!groupOfTab(t)) dock.groups[dock.groups.length - 1].tabs.push(t);
     if (!state.gitVisible) { state.gitVisible = true; store.set('gitVisible', true); applyGitVisibility(); }
     activateTab(groupOfTab(t), t);
@@ -5529,6 +5736,8 @@ function pluginFrame(p) {
   if (f) return f;
   const url = new URL(p.url);
   url.searchParams.set('theme', isLight() ? 'light' : 'dark');
+  if (themeLook()?.id) url.searchParams.set('look', themeLook().id);
+  url.searchParams.set('placement', pluginPlacement(p));
   // No allow-same-origin: the page gets an opaque origin, so it can't reach this page, and has no storage to share.
   const frame = h('iframe', { class: 'plugin-frame', sandbox: 'allow-scripts allow-forms allow-modals', referrerpolicy: 'no-referrer', title: p.title, src: url.href });
   f = { frame, ready: false, queue: [], badge: null, title: null };
@@ -5536,6 +5745,11 @@ function pluginFrame(p) {
   frame.addEventListener('load', () => {
     entry.ready = true;
     postPluginTheme(frame);
+    if (pluginHandover.has(p.id)) {   // it was just moved: the state it sent along, back to it
+      const state = pluginHandover.get(p.id);
+      pluginHandover.delete(p.id);
+      frame.contentWindow?.postMessage({ type: 'claude-terminals:state', placement: pluginPlacement(p), state }, '*');
+    }
     for (const m of entry.queue.splice(0)) frame.contentWindow?.postMessage(m, '*');
   });
   pluginFrames.set(p.id, f);
@@ -5548,12 +5762,42 @@ function sendToPlugin(p, message) {
   else f.queue.push(message);
 }
 
-const postPluginTheme = (frame) => frame.contentWindow?.postMessage({ type: 'claude-terminals:theme', theme: isLight() ? 'light' : 'dark' }, '*');
+/** Tells a plugin the theme: light or dark, and which theme file is on (its id and name), if one is, so it can dress to match. */
+// The page's colours a plugin is told, by their names in app.css, so it can paint itself to match whatever theme is on.
+const PLUGIN_THEME_COLORS = ['chrome', 'chrome-2', 'panel', 'panel-2', 'hover', 'hover-strong', 'border', 'border-soft', 'border-strong',
+  'text', 'text-dim', 'text-faint', 'text-strong', 'accent', 'accent-strong', 'focus', 'select', 'terminal-bg', 'code-bg', 'code-fg',
+  'ok', 'working', 'attention', 'asking', 'danger', 'link'];
+const postPluginTheme = (frame) => {
+  const look = themeLook();
+  const css = getComputedStyle(document.documentElement);
+  const colors = Object.fromEntries(PLUGIN_THEME_COLORS.map((n) => [n, css.getPropertyValue('--' + n).trim()]).filter(([, v]) => v));
+  frame.contentWindow?.postMessage({ type: 'claude-terminals:theme', theme: isLight() ? 'light' : 'dark', id: look?.id ?? null, name: look?.name ?? null,
+    colors, font: look?.font ?? null, glow: !!look?.glow }, '*');
+};
 
-/** Its page goes when its tab closes; so do the caption and badge it set, which start afresh next time. */
+/** Its page goes when its tab closes; so do the caption and badge it set, which start afresh next time, and it goes back to where its plugin.json puts it. */
 function closePluginFrame(id) {
   pluginFrames.get(id)?.frame.remove();
   pluginFrames.delete(id);
+  pluginPlaces.delete(id);
+}
+
+/**
+ * Moves a plugin's page to the other placement, the document area ('tab') or the side panel ('panel'), at its own
+ * request: its page starts again there and gets back the state it sent along (the state message), and it returns to
+ * its plugin.json placement when that tab closes.
+ */
+function movePlugin(id, placement, state) {
+  const p = pluginById(id);
+  if (!p) return;
+  if ((placement !== 'tab' && placement !== 'panel') || placement === pluginPlacement(p)) { openPlugin(id); return; }
+  let handover = null;
+  try { const s = JSON.stringify(state ?? null); if (s.length <= 1_000_000) handover = JSON.parse(s); } catch { handover = null; }
+  if (docs.tabs.some((t) => t.key === pluginKey(id))) closeDoc(pluginKey(id));
+  if (groupOfTab('plugin:' + id)) closeDockPlugin('plugin:' + id, false);   // moved, not closed: it comes back to the panel when the tab closes
+  pluginPlaces.set(id, placement);
+  pluginHandover.set(id, handover);
+  openPlugin(id);
 }
 
 /** The plugin's tab caption: what it set, or its title. */
@@ -5585,12 +5829,14 @@ function showDockPlugin(g, t) {
   for (const f of g.frames.children) f.hidden = f !== frame;
 }
 
-function closeDockPlugin(t) {
+/** Closes a side panel plugin's tab; closed by you (`byYou`), it stays out of the panel until you open it again. */
+function closeDockPlugin(t, byYou = true) {
   const g = groupOfTab(t);
   if (!g) return;
   g.tabs.splice(g.tabs.indexOf(t), 1);
   if (!g.tabs.length) removeGroup(g);
   closePluginFrame(pluginOfTab(t));
+  if (byYou) { closedPanelPlugins.add(pluginOfTab(t)); rememberClosedPanelPlugins(); }
   saveDock();
   renderGit();
 }
@@ -5649,7 +5895,7 @@ const PLUGIN_ACCESS = {
       h('p', {}, `${p.title} is a plugin, from ${plugins.folder}\\${p.id}. It asks to see:`),
       h('ul', {},
         h('li', {}, 'your sessions: their names, projects and folders, and whether each is working or waiting for you;'),
-        h('li', {}, 'what Claude did in each: your prompts, the files it read and edited, the commands it ran and the questions it asked;'),
+        h('li', {}, 'what Claude did in each: your prompts, the files it read and edited, the commands it ran, the questions it asked and the tokens each reply used;'),
         h('li', {}, 'how many files each top-level folder of their repositories holds.')),
       h('p', {}, 'It can’t type into a session or change a file. But like any web page it could send what it sees to a website, so allow only a plugin you trust. You can change your answer any time in Permissions, on the palette menu.'),
     ],
@@ -5665,6 +5911,18 @@ const PLUGIN_ACCESS = {
         h('li', {}, 'it reads the answers they send back' + (p.inbox ? ', and messages they send it first (it takes messages);' : ';')),
         h('li', {}, 'every message is in Permissions › Messages.')),
       h('p', {}, 'A message can ask an agent to do things, so allow only a plugin you trust. You can change your answer any time in Permissions, on the palette menu.'),
+    ],
+  },
+  ask: {
+    verb: 'ask Claude about your sessions', title: 'Ask Claude about your sessions',
+    about: 'Put questions about the sessions it sees to Claude, run once each time with your own sign-in, over their conversations. Claude runs with no tools, so it can’t change anything; the plugin sees the answers. Needs “See your sessions” too.',
+    dialog: (p) => [
+      h('p', {}, `${p.title} is a plugin, from ${plugins.folder}\\${p.id}. It asks to put questions about your sessions to Claude:`),
+      h('ul', {},
+        h('li', {}, 'each question runs Claude (or a session’s own agent) once, headless, with your own sign-in, the way Suggest a commit message does, and counts against your usage;'),
+        h('li', {}, 'the question goes with the sessions’ conversations: your prompts, what the agent answered and the tools it used;'),
+        h('li', {}, 'the agent runs with no tools and saves no conversation, so it can’t change anything.')),
+      h('p', {}, 'The plugin sees the answers. Allow only a plugin you trust. You can change your answer any time in Permissions, on the palette menu.'),
     ],
   },
 };
@@ -6391,10 +6649,18 @@ const pluginSessionInfo = (s) => ({
  * With "sessions" access:
  *   sessions            → every session (see pluginSessionInfo)
  *   activity { ids, have } → what Claude did in each: [{ id, found, conversation, version, from, events }], events
- *                          from `from` on ({ t, k, file, text, ok, q }; see ActivityReader). have: id → { conversation,
+ *                          from `from` on ({ t, k, file, text, ok, q, ctx, out }; see ActivityReader). have: id → { conversation,
  *                          version } that the plugin already has, so only what's new comes back
  *   folders { sessionId } → { root, folders: [{ name, files }] }, the session's repository's top-level folders, or null
  *   showSession { sessionId } → opens the session, as clicking its tab would
+ *   showPrompt { sessionId, at, index, text } → opens the session's Conversation tab at the prompt sent at `at` (ISO time;
+ *                          `index`, its number among the prompts, is the fallback): Claude's full-screen mode keeps no
+ *                          terminal scrollback, so the conversation is where a prompt can be jumped to. { index }
+ * With "ask" access (and "sessions"):
+ *   ask { question, ids, history } → { answer, writer, sessions }: an agent run headless (the sessions' own, or Claude)
+ *                          answers the question from the conversations of the sessions named; history is earlier
+ *                          [{ question, answer }] of the same chat, so a follow-up makes sense
+ * Nothing lets a plugin type into a session: what it has to say reaches an agent as a message from it ("message").
  */
 async function pluginRequest(p, m) {
   // A session hidden from the plugin is, to it, a session that doesn't exist.
@@ -6403,7 +6669,7 @@ async function pluginRequest(p, m) {
     if (!sees(m.sessionId)) throw new Error('There is no such session.');
     return state.byId.get(m.sessionId);
   };
-  const NEEDS = { sessions: 'sessions', activity: 'sessions', folders: 'sessions', showSession: 'sessions', messageTargets: 'message', sendMessage: 'message', readMessages: 'message' };
+  const NEEDS = { sessions: 'sessions', activity: 'sessions', folders: 'sessions', showSession: 'sessions', showPrompt: 'sessions', messageTargets: 'message', sendMessage: 'message', readMessages: 'message', ask: 'ask' };
   const kind = NEEDS[m.name];
   if (!kind) throw new Error(`There is no request "${m.name}".`);
   if (!p.access.includes(kind)) throw new Error(`Its plugin.json doesn't ask for "${kind}" access.`);
@@ -6434,6 +6700,32 @@ async function pluginRequest(p, m) {
       return request('relay.pluginSend', { plugin: p.id, to, text, replyTo: typeof m.replyTo === 'string' ? m.replyTo : null });
     }
     case 'readMessages': return request('relay.pluginRead', { plugin: p.id });
+    case 'showPrompt': {
+      // Claude's full-screen mode keeps no terminal scrollback, so the prompt is shown in the session's Conversation tab,
+      // found by when it was sent (the plugin's time comes from the same transcript), else by its number.
+      const s = sessionArg();
+      const at = typeof m.at === 'string' ? Date.parse(m.at) : NaN;
+      if (!s.convFull) await loadConversation(s, true);
+      const turns = s.convFull?.turns ?? [];
+      if (!turns.length) throw new Error('There is no conversation to show for that session.');
+      let i = Number.isFinite(at) ? turns.findIndex((t) => t.time && Math.abs(Date.parse(t.time) - at) < 5000) : -1;
+      if (i < 0 && Number.isInteger(m.index) && turns[m.index]) i = m.index;
+      if (i < 0) i = turns.length - 1;
+      openConversation(s, i);
+      return { index: i };
+    }
+    case 'ask': {
+      if (!p.access.includes('sessions') || !await pluginAllowed(p, 'sessions')) throw new Error('Asking about sessions needs "sessions" access as well.');
+      const question = typeof m.question === 'string' ? m.question.trim().slice(0, 4000) : '';
+      if (!question) throw new Error('There is no question.');
+      const ids = (Array.isArray(m.ids) ? m.ids : []).filter((id) => typeof id === 'string' && sees(id)).slice(0, 50);
+      if (!ids.length) throw new Error('There are no sessions to ask about.');
+      const history = (Array.isArray(m.history) ? m.history : []).slice(-8)
+        .filter((x) => x && typeof x.question === 'string' && typeof x.answer === 'string')
+        .map((x) => ({ question: x.question.slice(0, 4000), answer: x.answer.slice(0, 4000) }));
+      const about = ids.map((id) => { const i = pluginSessionInfo(state.byId.get(id)); return { id, name: i.name, project: i.project, status: i.status }; });
+      return request('plugins.ask', { question, history, sessions: about });
+    }
   }
 }
 
@@ -6448,6 +6740,10 @@ addEventListener('message', (e) => {
     const p = pluginById(id), frame = f.frame;
     const reply = (answer) => frame.contentWindow?.postMessage({ type: 'claude-terminals:response', requestId: m.requestId, ...answer }, '*');
     pluginRequest(p, m).then((result) => reply({ result: result ?? null }), (err) => reply({ error: err.message }));
+    return;
+  }
+  if (m.type === 'claude-terminals:open') {
+    movePlugin(id, m.placement, m.state);
     return;
   }
   if (m.type === 'claude-terminals:badge') {
@@ -6531,8 +6827,24 @@ enableTabDrag($('#docTabs'), {
     docs.tabs.sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key));
     renderDocTabs();
   },
-  outside: { over: dockHint, drop: (key, dir) => (key === 'terminal' ? splitTerminal(dir) : splitDoc(key, dir || null)) },
+  outside: {
+    over: (key, x, y) => { if (panelHint(key, x, y)) { dockHint(null); return 'panel'; } return dockHint(key, x, y); },
+    drop: (key, dir) => (dir === 'panel' ? movePlugin(docs.tabs.find((t) => t.key === key).pluginId, 'panel', null)
+      : key === 'terminal' ? splitTerminal(dir) : splitDoc(key, dir || null)),
+  },
 });
+
+/** Whether a plugin's tab dragged to (x, y) is over the side panel, where it can go instead; shows that, or hides it. */
+const panelDropHint = h('div', { class: 'dock-hint labelled', hidden: true }, 'In the side panel');
+document.body.append(panelDropHint);
+function panelHint(key, x, y) {
+  const t = key && docs.tabs.find((d) => d.key === key);
+  const r = $('#dockGroups').getBoundingClientRect();
+  const over = isPluginTab(t) && state.gitVisible && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+  panelDropHint.hidden = !over;
+  if (over) Object.assign(panelDropHint.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
+  return over;
+}
 
 /**
  * Where a tab dragged into the area would go: near an edge puts it on that side of the terminal, anywhere else on its
@@ -6594,6 +6906,8 @@ $('#docTabs').addEventListener('contextmenu', (e) => {
     ...Object.entries(DOCK_SIDES).map(([dir, side]) => canSplit(t) && { label: side.label, checked: beside && docs.dir === dir, action: () => splitDoc(t.key, dir) }),
     canSplit(t) && { label: 'On its own', checked: !beside, action: () => splitDoc(t.key, null) },
     canSplit(t) && '-',
+    isPluginTab(t) && { label: 'Move to the side panel', action: () => movePlugin(t.pluginId, 'panel', null) },
+    isPluginTab(t) && '-',
     { label: 'Close', kbd: 'Ctrl+W', action: () => closeDoc(t.key) },
   ]);
 });

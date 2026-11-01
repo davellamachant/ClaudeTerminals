@@ -988,7 +988,8 @@ internal sealed class MainForm : Form
                 var others = OthersConversations(s);
                 var live = s.IsRunning ? await Task.Run(() => agent.LiveConversation(s, pids, others)) : null;
                 if (AdoptConversation(s, live)) { SaveSessions(); Post(SessionList()); }
-                var conv = await Task.Run(() => agent.ReadConversation(s, pids));
+                // A stopped session shows the conversation it would resume, so a prompt can still be jumped to in it.
+                var conv = await Task.Run(() => agent.ReadConversation(s, pids) ?? (s.IsRunning ? null : agent.ReadSavedConversation(s)));
                 if (conv == null) return new { found = false };
                 var same = OptStr(msg, "sessionId") == conv.SessionId;
                 if (same && msg.TryGetProperty("version", out var v) && v.ValueKind == JsonValueKind.Number && v.GetInt64() == conv.Version)
@@ -1071,6 +1072,21 @@ internal sealed class MainForm : Form
                 var have = msg.TryGetProperty("have", out var h) && h.ValueKind == JsonValueKind.Object ? h.Clone() : default;
                 var asked = ids.Select(id => (id, s: sessions.GetValueOrDefault(id))).ToList();
                 return await Task.Run(() => asked.Select(a => ActivityOf(a.id, a.s, have)).ToList());
+            }
+            case "plugins.ask":
+            {
+                // A question about sessions, answered by an agent run headless over their conversations (see SessionAssistant).
+                // The page names the sessions, with what their status dots show; a stopped session's saved conversation is read.
+                var question = Str(msg, "question");
+                var history = msg.TryGetProperty("history", out var hist) && hist.ValueKind == JsonValueKind.Array
+                    ? hist.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.Object).Select(x => new AssistantExchange(Str(x, "question"), Str(x, "answer"))).ToList()
+                    : [];
+                var about = msg.TryGetProperty("sessions", out var list) && list.ValueKind == JsonValueKind.Array
+                    ? list.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.Object && sessions.ContainsKey(Str(x, "id"))).Select(x => x.Clone()).ToList()
+                    : [];
+                var briefs = await Task.Run(() => about.Select(x => BriefOf(sessions[Str(x, "id")], Str(x, "name"), OptStr(x, "project"), Str(x, "status"))).ToList());
+                var a = await SessionAssistant.AskAsync(question, history, briefs, DateTime.Now);
+                return new { answer = a.Answer, writer = a.Writer, sessions = a.Sessions };
             }
 
             // ---- themes
@@ -1303,6 +1319,14 @@ internal sealed class MainForm : Form
             mine.TryGetProperty("version", out var v) && v.ValueKind == JsonValueKind.Number)
             from = (int)Math.Clamp(v.GetInt64(), 0, data.Events.Count);
         return new { id, found = true, conversation, version = data.Version, from, events = data.Events.Skip(from).ToArray() };
+    }
+
+    /// <summary>A session as the assistant is told about it: its conversation is the one its agent is in, or the saved one while it's stopped.</summary>
+    private static SessionBrief BriefOf(TerminalSession s, string name, string? project, string status)
+    {
+        var agent = s.Agent;
+        var conv = agent == null ? null : (s.IsRunning ? agent.ReadConversation(s, s.ProcessIds()) : null) ?? agent.ReadSavedConversation(s);
+        return new SessionBrief(s.Id, name.Length > 0 ? name : s.Id, project, s.Info.Directory, status, agent, conv);
     }
 
     private string GitDir(JsonElement msg)

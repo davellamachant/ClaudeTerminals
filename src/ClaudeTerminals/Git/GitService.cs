@@ -36,8 +36,9 @@ internal sealed record CommitInfo(string Sha, string ShortSha, string Author, st
 /// <param name="Prunable">Git still lists the worktree but its folder is gone.</param>
 internal sealed record WorktreeInfo(string Path, string? Branch, bool Bare, bool Prunable = false);
 
-/// <summary>A top-level folder of a repository and how many tracked files it holds.</summary>
-internal sealed record FolderCount(string Name, int Files);
+/// <summary>A folder of a repository and how many tracked files it holds, in it and below.</summary>
+/// <param name="Folders">For a top-level folder, the folders directly in it, biggest first, at most <see cref="GitService.MaxSubfolders"/> of them; empty below that.</param>
+internal sealed record FolderCount(string Name, int Files, IReadOnlyList<FolderCount> Folders);
 
 /// <summary>A repository's top-level folders (see <see cref="GitService.GetTopFoldersAsync"/>), with the main worktree they were counted in.</summary>
 internal sealed record TopFolders(string Root, IReadOnlyList<FolderCount> Folders);
@@ -875,10 +876,14 @@ internal static class GitService
         return await RunAsync(dir, ["commit", "-F", "-"], message);
     }
 
+    /// <summary>The most sub-folders a top-level folder lists (a generated tree can have hundreds; the rest still count in its total).</summary>
+    public const int MaxSubfolders = 40;
+
     /// <summary>
-    /// The repository's top-level folders with how many tracked files each holds, biggest first; files at the root count
-    /// as "(root)". <see cref="TopFolders.Root"/> is the repository's main worktree, so the same repository gives the same
-    /// answer whichever worktree asked. Null when <paramref name="dir"/> isn't in a repository.
+    /// The repository's top-level folders with how many tracked files each holds, biggest first, each with the folders
+    /// directly in it and their counts (a page can show them as a folder's floors); files at the root count as "(root)".
+    /// <see cref="TopFolders.Root"/> is the repository's main worktree, so the same repository gives the same answer
+    /// whichever worktree asked. Null when <paramref name="dir"/> isn't in a repository.
     /// </summary>
     public static async Task<TopFolders?> GetTopFoldersAsync(string dir)
     {
@@ -888,14 +893,23 @@ internal static class GitService
         var root = worktrees.Count > 0 && Directory.Exists(worktrees[0].Path) ? worktrees[0].Path : here;
         var r = await RunAsync(root, ["ls-files", "-z"], maxOutputBytes: 32 * 1024 * 1024);
         var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        var subs = new Dictionary<string, Dictionary<string, int>>(StringComparer.Ordinal);
         foreach (var path in r.Text.Split('\0', StringSplitOptions.RemoveEmptyEntries))
         {
             var slash = path.IndexOf('/');
             var top = slash < 0 ? "(root)" : path[..slash];
             counts[top] = counts.GetValueOrDefault(top) + 1;
+            if (slash < 0) continue;
+            var next = path.IndexOf('/', slash + 1);
+            if (next < 0) continue;   // a file directly in the folder, on no floor of its own
+            var sub = path[(slash + 1)..next];
+            if (!subs.TryGetValue(top, out var inner)) subs[top] = inner = new Dictionary<string, int>(StringComparer.Ordinal);
+            inner[sub] = inner.GetValueOrDefault(sub) + 1;
         }
-        var folders = counts.OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
-            .Select(kv => new FolderCount(kv.Key, kv.Value)).ToList();
+        static IEnumerable<KeyValuePair<string, int>> BiggestFirst(Dictionary<string, int> d) =>
+            d.OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase);
+        var folders = BiggestFirst(counts).Select(kv => new FolderCount(kv.Key, kv.Value,
+            subs.TryGetValue(kv.Key, out var inner) ? BiggestFirst(inner).Take(MaxSubfolders).Select(s => new FolderCount(s.Key, s.Value, [])).ToList() : [])).ToList();
         return new TopFolders(root, folders);
     }
 
