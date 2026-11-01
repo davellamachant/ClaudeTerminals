@@ -2525,6 +2525,8 @@ function makeDivider(g) {
   /** Where a drop at (x, y) would put the tab, or null for nowhere useful. */
   function dropTarget(x, y) {
     const el = document.elementFromPoint(x, y);
+    // A plugin's tab let go over the document area moves the plugin there, as a tab.
+    if (isPluginDockTab(press.tab) && el?.closest('#docArea, #docTabs')) return { kind: 'doc', label: 'As a tab', rect: $('#docArea').getBoundingClientRect() };
     const groupEl = el?.closest('#dockGroups .dock-group');
     if (!groupEl) return el?.closest('#dockGroups') ? belowEverything(y) : null;
     if (groupEl.hidden) return null;
@@ -2569,6 +2571,8 @@ function makeDivider(g) {
     if (!t) return;
     if (t.kind === 'join') { t.mark?.classList.add(t.side); return; }
     drag.hint.classList.toggle('line', !!t.line);
+    drag.hint.classList.toggle('labelled', !!t.label);
+    drag.hint.textContent = t.label ?? '';
     Object.assign(drag.hint.style, { left: t.rect.left + 'px', top: t.rect.top + 'px', width: t.rect.width + 'px', height: t.rect.height + 'px' });
   }
 
@@ -2581,7 +2585,8 @@ function makeDivider(g) {
     clearMarks();
     swallowClick = true;
     setTimeout(() => { swallowClick = false; }, 0);
-    if (drop && was.target) moveTab(press.tab, was.target);
+    if (drop && was.target?.kind === 'doc') movePlugin(pluginOfTab(press.tab), 'tab', null);
+    else if (drop && was.target) moveTab(press.tab, was.target);
   }
 
   host.addEventListener('pointerdown', (e) => {
@@ -2644,6 +2649,7 @@ function makeDivider(g) {
       p && '-',
       p && { label: 'Close panel…', danger: true, action: () => confirmClosePanel(p) },
       isPluginDockTab(t) && '-',
+      isPluginDockTab(t) && { label: 'Open as a tab', action: () => movePlugin(pluginOfTab(t), 'tab', null) },
       isPluginDockTab(t) && { label: 'Close plugin', action: () => closeDockPlugin(t) },
       ...reopenItems(),
       '-',
@@ -6834,8 +6840,24 @@ enableTabDrag($('#docTabs'), {
     docs.tabs.sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key));
     renderDocTabs();
   },
-  outside: { over: dockHint, drop: (key, dir) => (key === 'terminal' ? splitTerminal(dir) : splitDoc(key, dir || null)) },
+  outside: {
+    over: (key, x, y) => { if (panelHint(key, x, y)) { dockHint(null); return 'panel'; } return dockHint(key, x, y); },
+    drop: (key, dir) => (dir === 'panel' ? movePlugin(docs.tabs.find((t) => t.key === key).pluginId, 'panel', null)
+      : key === 'terminal' ? splitTerminal(dir) : splitDoc(key, dir || null)),
+  },
 });
+
+/** Whether a plugin's tab dragged to (x, y) is over the side panel, where it can go instead; shows that, or hides it. */
+const panelDropHint = h('div', { class: 'dock-hint labelled', hidden: true }, 'In the side panel');
+document.body.append(panelDropHint);
+function panelHint(key, x, y) {
+  const t = key && docs.tabs.find((d) => d.key === key);
+  const r = $('#dockGroups').getBoundingClientRect();
+  const over = isPluginTab(t) && state.gitVisible && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+  panelDropHint.hidden = !over;
+  if (over) Object.assign(panelDropHint.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
+  return over;
+}
 
 /**
  * Where a tab dragged into the area would go: near an edge puts it on that side of the terminal, anywhere else on its
@@ -6897,6 +6919,8 @@ $('#docTabs').addEventListener('contextmenu', (e) => {
     ...Object.entries(DOCK_SIDES).map(([dir, side]) => canSplit(t) && { label: side.label, checked: beside && docs.dir === dir, action: () => splitDoc(t.key, dir) }),
     canSplit(t) && { label: 'On its own', checked: !beside, action: () => splitDoc(t.key, null) },
     canSplit(t) && '-',
+    isPluginTab(t) && { label: 'Move to the side panel', action: () => movePlugin(t.pluginId, 'panel', null) },
+    isPluginTab(t) && '-',
     { label: 'Close', kbd: 'Ctrl+W', action: () => closeDoc(t.key) },
   ]);
 });

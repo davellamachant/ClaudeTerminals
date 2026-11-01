@@ -575,6 +575,8 @@ button.chip:hover { border-color: var(--border); color: var(--text); }
 .dock-divider:hover, .dock-divider.dragging { background: var(--accent-strong); }
 .dock-divider:hover::after, .dock-divider.dragging::after { background: #fff; }
 body.dock-dragging, body.dock-dragging * { cursor: grabbing !important; user-select: none; }
+/* A plugin's page would take the pointer while a tab is dragged over it, and the drag would stop following it */
+body.dock-dragging iframe, body.tab-dragging iframe { pointer-events: none; }
 .dock-ghost {
   position: fixed; z-index: 1000; pointer-events: none; padding: 3px 10px; border-radius: 4px; font-weight: 600;
   background: var(--panel-2); border: 1px solid var(--accent); color: var(--text); box-shadow: 0 4px 14px rgba(0, 0, 0, .35); white-space: nowrap;
@@ -589,6 +591,9 @@ body.dock-dragging, body.dock-dragging * { cursor: grabbing !important; user-sel
 .dock-group.folded .dock-fold .ic { transform: rotate(-90deg); }
 .dock-group.folded > .dock-body { display: none; }
 /* Dropping on the top or bottom edge of a folded group's tab row: a line where the new group goes */
+/* Moving a plugin between the side panel and the document area: what the drop does, written in it */
+.dock-hint.labelled { display: flex; align-items: center; justify-content: center; color: var(--text-strong); font-weight: 600; }
+.dock-hint[hidden] { display: none; }
 .dock-hint.line { border: none; border-radius: 2px; background: var(--accent); box-shadow: 0 0 6px var(--accent); }
 /* A panel Claude has changed since you last looked */
 .tw-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--working); flex: none; }
