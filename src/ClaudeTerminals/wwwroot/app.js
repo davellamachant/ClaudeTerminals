@@ -38,6 +38,10 @@ const PATHS = {
   list: 'M5.8 4h7.7M5.8 8h7.7M5.8 12h7.7M2.6 4h.1M2.6 8h.1M2.6 12h.1',
   plug: 'M6 1.5v3M10 1.5v3M4 4.5h8v2.5a4 4 0 0 1-8 0zM8 11v3.5',   // a plugin's tab   // the Project view: a list of the project's worktrees
   shield: 'M8 1.5l5.5 2v4.2c0 3.2-2.3 5.6-5.5 6.8-3.2-1.2-5.5-3.6-5.5-6.8V3.5z',   // the Permissions view
+  link: 'M6.8 9.2l2.4-2.4M7.3 4.7l1-1a2.6 2.6 0 0 1 3.7 3.7l-1 1M8.7 11.3l-1 1a2.6 2.6 0 0 1-3.7-3.7l1-1',   // a session that may message others
+  mail: 'M2 4h12v8.5H2zM2 4.5l6 4.5 6-4.5',   // unread messages
+  save: 'M2.5 2.5h9l2 2v9h-11zM5 2.5v3.5h5v-3.5M5 13.5v-4h6v4',   // Save as a new theme
+  warn: 'M8 2l6.5 11.5h-13zM8 6.5v3.5M8 12h.01',   // something couldn't be loaded
   markAllow: 'M3.5 8.5l3 3 6-7',                                          // Permissions: allowed
   markAsk: 'M5.8 5.8a2.2 2.2 0 1 1 3.2 2c-.7.4-1 .9-1 1.6v.6M8 12.6h.01',  // Permissions: you're asked first
   markDeny: 'M8 2a6 6 0 1 0 0 12A6 6 0 1 0 8 2M3.8 3.8l8.4 8.4',         // Permissions: not allowed
@@ -147,10 +151,21 @@ host.addEventListener('message', (e) => {
     case 'panels': onPanels(m); break;
     case 'typePrompt': typePrompt(m.id, m.text); break;
     case 'newConversations': showNewConversations(m.ids); break;
+    case 'relay': relayChanged(m.state); break;
+    case 'relay.ask': askRelay(m.from, m.to); break;
+    case 'relay.message': onRelayMessage(m); break;
+    case 'plugins.grants': applyGrants(m.grants); break;
   }
 });
 
 // ------------------------------------------------------------------ state
+
+/**
+ * Messages between sessions (RelayHub on the host): the rules (from, to: a session id, 'project' or '*', decision),
+ * whether they're paused, what waits for your answer ({ from, to, count }), each session's unread count, and the
+ * sessions to tell they have messages once they're idle. Up here, as tile code reads it.
+ */
+const relay = { paused: false, rules: [], waiting: [], unread: {}, logVersion: 0, told: {}, from: {}, asks: [], asking: null };
 
 const state = {
   sessions: [],              // ordered session objects
@@ -330,7 +345,7 @@ function projectMenu(p, x, y) {
       '-',
       { label: 'Show only sessions with no project', action: () => showOnlyProject(UNKNOWN) },
       { label: state.hiddenProjects.has(UNKNOWN) ? 'Show alongside the others' : 'Hide', action: () => toggleProject(UNKNOWN) },
-      ...pluginMenuItems('project', { project: null }),
+      ...pluginMenuItems('project', { project: null }, NO_PROJECT),
     ]);
     return;
   }
@@ -346,7 +361,7 @@ function projectMenu(p, x, y) {
     i < state.projects.length - 1 && { label: 'Move right', action: () => moveProject(p, 1) },
     '-',
     { label: 'Delete project…', danger: true, action: () => confirmDeleteProject(p) },
-    ...pluginMenuItems('project', { project: p.name }),
+    ...pluginMenuItems('project', { project: p.name }, p.id),
   ]);
 }
 
@@ -1004,6 +1019,7 @@ function renderTileState(s) {
   if (tab) syncStatus(tab);
   updateProjectIndicators(groupOf(s));
   projectViewChanged(s);
+  relayNotify(s);   // an idle session told of messages it has
 }
 
 /** A project tab's dot: hopping while one of its sessions asks you something, else spinning while one works. */
@@ -1042,6 +1058,7 @@ function renderTileHeader(s) {
     h('span', { class: 'dot ' + statusClass(s), title: statusText(s) }),
     h('span', { class: 'tile-name', title: conversationLine(s) }, s.name),
     projectTag(s),
+    relayTileMark(s),
     h('span', { class: 'tile-title', title: s.title }, s.title),
     gs && h('button', {
       class: 'chip', title: `${gs.count} changed file(s) on ${gs.branch} — show in Git Changes`,
@@ -1362,9 +1379,10 @@ function closeMenu() {
 function showMenu(x, y, items) {
   closeMenu();
   // Pressing on the menu mustn't take focus: after Paste in the terminal's menu, typing has to go on in the terminal.
-  // Items: '-' for a separator ('~' for a lighter, shorter one within a section), { header } for a section title, or { label, action } with optional kbd, danger, and
-  // checked (ticked when true). If any item can be ticked, all get the tick column so their labels line up.
-  const ticks = items.some((it) => it && it.checked !== undefined);
+  // Items: '-' for a separator ('~' for a lighter, shorter one within a section), { header } for a section title, or { label, action } with optional kbd, danger,
+  // checked (ticked when true) and icon (a name from PATHS, or an element such as a plugin's image), which share a column
+  // at the start: a ticked item shows the tick in place of its icon. If any item has either, all get the column.
+  const lead = items.some((it) => it && (it.checked !== undefined || it.icon));
   const menu = h('div', {
     class: 'menu', onmousedown: (e) => e.preventDefault(),
     onmousemove: (e) => e.currentTarget.querySelector('.menu-item.active')?.classList.remove('active'),   // the pointer takes over
@@ -1373,7 +1391,7 @@ function showMenu(x, y, items) {
     : it.header
       ? h('div', { class: 'menu-header' }, it.header)
       : h('div', { class: 'menu-item' + (it.danger ? ' danger' : ''), onclick: () => { closeMenu(); it.action(); } },
-        ticks && h('span', { class: 'menu-check' }, it.checked ? '✓' : ''),
+        lead && h('span', { class: 'menu-icon' }, it.checked ? '✓' : typeof it.icon === 'string' ? iconEl(it.icon) : it.icon ?? ''),
         it.label, it.kbd && h('span', { class: 'kbd' }, it.kbd))));
   $('#menuHost').append(menu);
   const r = menu.getBoundingClientRect();
@@ -1412,6 +1430,7 @@ function sessionMenu(s, x, y, from = 'session') {
     state.expandedId === s.id ? { label: 'Back to all sessions', kbd: 'Shift+Esc', action: collapse } : { label: 'Expand', action: () => expand(s.id) },
     { label: 'Show Git changes', action: () => showGit(s.id) },
     { label: 'Show conversation', action: () => openConversation(s) },
+    { label: 'Permissions…', action: () => openPermissions('session', s.id) },
     { label: `Project view: ${projectName(groupOf(s))}${projectName(groupOf(s)).endsWith('s') ? '’' : '’s'} worktrees side by side`, action: () => openProjectView(groupOf(s)) },
     '-',
     { label: 'Resume a different conversation…', action: () => showResumeDialog(s) },
@@ -2200,7 +2219,7 @@ function renderDockTabs(g, tabs, open) {
       return h('button', {
         class: cls + ' plugin-tab', 'data-tab': t, role: 'tab', 'aria-selected': String(t === open),
         title: `${pluginCaption(id)}: a plugin${p?.description ? '\n' + p.description : ''}`,
-      }, iconEl('plug'), h('span', { class: 'panel-tab-title' }, pluginCaption(id)), pluginBadge(id));
+      }, pluginIcon(id), h('span', { class: 'panel-tab-title' }, pluginCaption(id)), pluginBadge(id));
     }
     if (!isPanelTab(t)) return h('button', { class: cls, 'data-tab': t, role: 'tab', 'aria-selected': String(t === open) }, GIT_TABS[t]);
     const p = panelByTab(t);
@@ -3760,7 +3779,7 @@ function renderDocTabs() {
         onclick: (e) => { if (!e.target.closest('button')) activateDoc(t.key); },
         onmousedown: (e) => { if (e.button === 1) e.preventDefault(); },
         onauxclick: (e) => { if (e.button === 1) closeDoc(t.key); },
-      }, iconEl('plug'), h('span', { class: 'doc-title' }, pluginCaption(t.pluginId)), pluginBadge(t.pluginId, 'badge'),
+      }, pluginIcon(t.pluginId), h('span', { class: 'doc-title' }, pluginCaption(t.pluginId)), pluginBadge(t.pluginId, 'badge'),
       h('button', { class: 'icon-btn small', title: 'Close (Ctrl+W)', onclick: () => closeDoc(t.key) }, iconEl('close')));
     }
     if (isPermsTab(t)) {
@@ -4981,9 +5000,9 @@ function renderNotice() {
   bar.oncontextmenu = (e) => {
     e.preventDefault();
     showMenu(e.clientX, e.clientY, [
-      { label: "Don't show this again", action: () => dismissNotice(n) },
-      { label: 'All tips and offers…', action: showNoticesDialog },
-      n.kind !== 'news' && { label: 'Show tips and offers', checked: true, action: () => setShowTips(false) },
+      { icon: 'close', label: "Don't show this again", action: () => dismissNotice(n) },
+      { icon: 'gift', label: 'All tips and offers…', action: showNoticesDialog },
+      n.kind !== 'news' && { icon: 'bulb', label: 'Show tips and offers', checked: true, action: () => setShowTips(false) },
     ]);
   };
 }
@@ -5037,18 +5056,37 @@ function showNoticesDialog() {
 /** The version number's menu: updates, release notes and the tips along the top. */
 function versionMenu(x, y) {
   showMenu(x, y, [
-    { label: 'Check for updates', action: () => checkForUpdates(true) },
-    { label: 'Check for updates automatically', checked: updates.auto, action: () => {
+    { icon: 'refresh', label: 'Check for updates', action: () => checkForUpdates(true) },
+    { icon: 'down', label: 'Check for updates automatically', checked: updates.auto, action: () => {
       updates.auto = !updates.auto;
       store.set('autoUpdateCheck', updates.auto);
       if (updates.auto) checkForUpdates();
     } },
-    { label: 'Show tips and offers', checked: notices.tips, action: () => setShowTips(!notices.tips) },
-    { label: 'Tips and offers…', action: showNoticesDialog },
+    { icon: 'bulb', label: 'Show tips and offers', checked: notices.tips, action: () => setShowTips(!notices.tips) },
+    { icon: 'gift', label: 'Tips and offers…', action: showNoticesDialog },
     '-',
-    { label: `Claude Terminals ${updates.current ?? ''}`.trim() + ' · release notes',
+    { icon: 'info', label: `Claude Terminals ${updates.current ?? ''}`.trim() + ' · release notes',
       action: () => request('openUrl', { uri: 'https://github.com/davellamachant/ClaudeTerminals/releases' }) },
   ]);
+}
+
+/**
+ * A theme's swatch for the menu: its terminal's background with a dot of its accent (or its text colour). System is
+ * half Light and half Dark.
+ */
+function themeSwatch(t) {
+  if (t === 'system') return h('span', { class: 'theme-swatch', style: 'background:linear-gradient(135deg,#ffffff 50%,#181818 50%)' });
+  const [bg, dot] = t === 'light' ? ['#ffffff', '#1e1e1e'] : t === 'dark' ? ['#181818', '#cccccc']
+    : themeSwatchColours(t);
+  return h('span', { class: 'theme-swatch', style: `background:${bg}` }, h('i', { style: `background:${dot}` }));
+}
+
+/** A theme's background and accent, a monochrome one's as built from your accent colour (see monochromeLook). */
+function themeSwatchColours(t) {
+  const made = t.monochrome ? monochromeLook(accentColour(), t.base === 'light') : {};
+  const terminal = { ...made.terminal, ...t.terminal }, colors = { ...made.colors, ...t.colors };
+  const fallback = t.base === 'light' ? ['#ffffff', '#1e1e1e'] : ['#181818', '#cccccc'];
+  return [terminal.background ?? colors.chrome ?? fallback[0], (t.accent ?? made.accent)?.line ?? terminal.foreground ?? fallback[1]];
 }
 
 /** The theme menu (next to the version number): System, Light, Dark and the themes, and the accent colour. */
@@ -5058,34 +5096,36 @@ function themeMenu(x, y) {
   const own = currentTheme();   // a theme with an accent of its own (not a monochrome one: that's built from yours)
   showMenu(x, y, [
     { header: 'Theme' },
-    { label: 'System (follows Windows)', checked: theme.pref === 'system', action: () => setThemePref('system') },
-    { label: 'Light', checked: theme.pref === 'light', action: () => setThemePref('light') },
-    { label: 'Dark', checked: theme.pref === 'dark', action: () => setThemePref('dark') },
-    ...themes.list.map((t) => ({ label: t.name, checked: theme.pref === t.id, kbd: t.builtIn ? '' : 'Yours', action: () => setThemePref(t.id) })),
-    themes.problems.length > 0 && { label: `${themes.problems.length} theme${themes.problems.length === 1 ? '' : 's'} not loaded`, kbd: 'Why?', action: () => toast(themes.problems.join('\n'), true) },
+    { icon: themeSwatch('system'), label: 'System (follows Windows)', checked: theme.pref === 'system', action: () => setThemePref('system') },
+    { icon: themeSwatch('light'), label: 'Light', checked: theme.pref === 'light', action: () => setThemePref('light') },
+    { icon: themeSwatch('dark'), label: 'Dark', checked: theme.pref === 'dark', action: () => setThemePref('dark') },
+    ...themes.list.map((t) => ({ icon: themeSwatch(t), label: t.name, checked: theme.pref === t.id, kbd: t.builtIn ? '' : 'Yours', action: () => setThemePref(t.id) })),
+    themes.problems.length > 0 && { icon: 'warn', label: `${themes.problems.length} theme${themes.problems.length === 1 ? '' : 's'} not loaded`, kbd: 'Why?', action: () => toast(themes.problems.join('\n'), true) },
     '~',
-    { label: 'Save as a new theme…', action: showSaveThemeDialog },
-    { label: 'Open the themes folder', action: () => request('themes.openFolder') },
+    { icon: 'save', label: 'Save as a new theme…', action: showSaveThemeDialog },
+    { icon: 'folder', label: 'Open the themes folder', action: () => request('themes.openFolder') },
     '-',
     { header: 'Accent colour' },
     own?.accent
-      ? { label: [h('span', { class: 'accent-dot', style: `background:${own.accent.line}` }), `${own.name}'s own`],
+      ? { icon: h('span', { class: 'accent-dot', style: `background:${own.accent.line}` }), label: `${own.name}'s own`,
         action: () => toast(`${own.name} has an accent colour of its own. Choose another theme to change it.`) }
-      : { label: [h('span', { class: 'accent-dot', style: `background:${colour}` }), c === 'windows' ? 'Windows accent' : c === 'purple' ? 'Original purple' : 'Custom'],
+      : { icon: h('span', { class: 'accent-dot', style: `background:${colour}` }), label: c === 'windows' ? 'Windows accent' : c === 'purple' ? 'Original purple' : 'Custom',
         kbd: 'Change…', action: showAccentDialog },
     '-',
     { header: 'Status dots' },
-    { label: DOT_STYLES.find((d) => d.id === dotStyle.id).name, kbd: 'Change…', action: showDotStyleDialog },
+    { icon: h('span', { class: 'menu-dot', 'data-dots': dotStyle.id }, h('span', { class: 'dot attention' })),   // the style in use, waiting for you
+      label: DOT_STYLES.find((d) => d.id === dotStyle.id).name, kbd: 'Change…', action: showDotStyleDialog },
     '-',
     { header: 'Plugins' },
     ...plugins.list.flatMap((p) => [
-      { label: p.title, kbd: p.placement === 'panel' ? 'Side panel' : '', action: () => openPlugin(p.id) },
+      { icon: pluginIcon(p.id), label: p.title, kbd: p.placement === 'panel' ? 'Side panel' : '', action: () => openPlugin(p.id) },
       ...p.menu.filter((m) => m.where.includes('palette')).map((m) => ({ label: [h('span', { class: 'menu-indent' }), m.label], action: () => openPlugin(p.id, m.command, { menu: 'palette' }) })),
       p.toolbar && hiddenPluginButtons.has(p.id) && { label: [h('span', { class: 'menu-indent' }), 'Show its title bar button'], action: () => setPluginButton(p.id, true) },
     ]),
-    { label: 'Permissions', kbd: 'Plugins and sessions', action: () => openPermissions() },
-    plugins.problems.length > 0 && { label: `${plugins.problems.length} couldn't be loaded`, kbd: 'Why?', action: () => toast(plugins.problems.join('\n'), true) },
-    { label: plugins.list.length ? 'Open the plugins folder' : 'Add a plugin: open the plugins folder', action: () => request('plugins.openFolder') },
+    plugins.list.length > 0 && '~',   // the plugins, then what's done about them (as under Theme)
+    { icon: 'shield', label: 'Permissions', kbd: 'Plugins and sessions', action: () => openPermissions() },
+    plugins.problems.length > 0 && { icon: 'warn', label: `${plugins.problems.length} couldn't be loaded`, kbd: 'Why?', action: () => toast(plugins.problems.join('\n'), true) },
+    { icon: 'folder', label: plugins.list.length ? 'Open the plugins folder' : 'Add a plugin: open the plugins folder', action: () => request('plugins.openFolder') },
   ]);
 }
 
@@ -5451,11 +5491,33 @@ const pluginSessionContext = (s) => ({ sessionId: s.id, session: s.name, directo
  * plugin and sends it the item's command with what was clicked: { menu, project } for a project (its name; null for
  * sessions with no project), and { menu, sessionId, session, directory, project } for a session (its id, name, working
  * folder and project's name). That's all a plugin learns: the id names the session, it doesn't open a way into it.
+ *
+ * Only a plugin that may see what was clicked has items there: one that asks for access you haven't refused (see
+ * pluginMenuSight). Until you've answered, its items are there but say only which menu they're on, so choosing one can
+ * bring up the question without the plugin learning the session first. `scopeKey` is a project's key (see scopeKeyOf).
  */
-function pluginMenuItems(where, context) {
-  const items = plugins.list.flatMap((p) => p.menu.filter((m) => m.where.includes(where))
-    .map((m) => ({ label: m.label, kbd: p.title, action: () => openPlugin(p.id, m.command, { menu: where, ...context }) })));
+function pluginMenuItems(where, context, scopeKey = null) {
+  const s = context.sessionId ? state.byId.get(context.sessionId) : null;
+  const items = plugins.list.flatMap((p) => {
+    const sight = pluginMenuSight(p, s, scopeKey);
+    if (sight === 'none') return [];
+    const sent = sight === 'sees' ? { menu: where, ...context } : { menu: where };
+    return p.menu.filter((m) => m.where.includes(where))
+      .map((m) => ({ icon: pluginIcon(p.id), label: m.label, kbd: p.title, action: () => openPlugin(p.id, m.command, sent) }));
+  });
   return items.length ? ['-', { header: 'Plugins' }, ...items] : [];
+}
+
+/**
+ * Whether plugin `p` may see session `s` (or the project `scopeKey`), for its menu items and title bar button: 'sees'
+ * when you've allowed it access and the session is in its projects and not hidden from it; 'asks' while you haven't
+ * answered; 'none' when it asks for no access, you refused all it asks for, or the session or project is kept from it.
+ */
+function pluginMenuSight(p, s, scopeKey = null) {
+  if (!p.access.length || p.access.every((k) => pluginAccessState(p.id, k) === 'deny')) return 'none';
+  if (!p.access.some((k) => pluginAccessState(p.id, k) === 'allow')) return 'asks';
+  if (s) return pluginSeesSession(p.id, s.id) ? 'sees' : 'none';
+  return scopeKey && pluginScope[p.id] && !pluginScope[p.id].projects.includes(scopeKey) ? 'none' : 'sees';
 }
 
 /**
@@ -5496,6 +5558,8 @@ function closePluginFrame(id) {
 
 /** The plugin's tab caption: what it set, or its title. */
 const pluginCaption = (id) => pluginFrames.get(id)?.title ?? pluginById(id)?.title ?? id;
+/** A plugin's icon: the image its plugin.json names (or its title bar button's), else the app's plugin icon. */
+const pluginIcon = (id) => { const src = pluginById(id)?.icon; return src ? h('img', { class: 'ic plugin-ic', src, alt: '', draggable: 'false' }) : iconEl('plug'); };
 
 /** The count or dot it put on its tab, if any. */
 function pluginBadge(id, cls = 'tw-badge') {
@@ -5554,7 +5618,8 @@ function setPluginButton(id, shown) {
  * Each plugin's button, after New Session and Git Changes, set apart. Only an icon, its tooltip starting with the
  * plugin's name, so it can't pass for one of the app's own (such as Update). Clicking it opens the plugin and sends its
  * command, if it has one, with the open session as context ({ menu: 'toolbar', sessionId, session, directory, project },
- * or just { menu: 'toolbar' } with none open). It shows the plugin's badge too, while the plugin is open.
+ * or just { menu: 'toolbar' } with none open, or one it may not see: see pluginMenuSight). It shows the plugin's badge
+ * too, while the plugin is open.
  */
 function renderPluginButtons() {
   fill($('#pluginButtons'), plugins.list.filter((p) => p.toolbar && !hiddenPluginButtons.has(p.id)).map((p) => {
@@ -5563,7 +5628,7 @@ function renderPluginButtons() {
       class: 'tb-btn plugin-btn', title: tip, 'aria-label': tip,
       onclick: () => {
         const s = state.byId.get(state.expandedId);
-        openPlugin(p.id, p.toolbar.command, { menu: 'toolbar', ...(s ? pluginSessionContext(s) : {}) });
+        openPlugin(p.id, p.toolbar.command, { menu: 'toolbar', ...(s && pluginMenuSight(p, s) === 'sees' ? pluginSessionContext(s) : {}) });
       },
       oncontextmenu: (e) => { e.preventDefault(); showMenu(e.clientX, e.clientY, [{ header: p.title }, { label: 'Hide this button', action: () => setPluginButton(p.id, false) }]); },
     }, h('img', { src: p.toolbar.icon, alt: '', draggable: 'false' }), pluginBadge(p.id, 'plugin-btn-count'));
@@ -5589,20 +5654,82 @@ const PLUGIN_ACCESS = {
       h('p', {}, 'It can’t type into a session or change a file. But like any web page it could send what it sees to a website, so allow only a plugin you trust. You can change your answer any time in Permissions, on the palette menu.'),
     ],
   },
+  message: {
+    verb: 'message your sessions', title: 'Message your sessions',
+    about: 'Send messages to the Claude and Codex sessions in the projects you choose, and read their answers' +
+      ' (and, if it takes messages, ones they send it first). Its messages reach an agent as from a plugin, not from you.',
+    dialog: (p) => [
+      h('p', {}, `${p.title} is a plugin, from ${plugins.folder}\\${p.id}. It asks to message your sessions:`),
+      h('ul', {},
+        h('li', {}, 'it can send a message to the Claude or Codex session in a project you choose here, which that agent reads as a message from a plugin, not as your prompt, and may act on;'),
+        h('li', {}, 'it reads the answers they send back' + (p.inbox ? ', and messages they send it first (it takes messages);' : ';')),
+        h('li', {}, 'every message is in Permissions › Messages.')),
+      h('p', {}, 'A message can ask an agent to do things, so allow only a plugin you trust. You can change your answer any time in Permissions, on the palette menu.'),
+    ],
+  },
 };
 
 /**
- * What you decided for each plugin, by plugin id: the kinds you allowed (pluginAccess) and the kinds you refused
- * (pluginDenied), both kept. A kind in neither is asked about the first time the plugin needs it. A plugin is asked
- * about only for what its plugin.json's "access" names. The Permissions view shows and changes all of it.
+ * What you decided for each plugin, as the host keeps it (PluginGrants, in plugin-grants.json), by plugin id:
+ * - pluginAccess / pluginDenied: the kinds you allowed and refused; a kind in neither is asked about the first time the
+ *   plugin needs it, and only kinds its plugin.json's "access" names;
+ * - pluginScope: the projects whose sessions it sees ({ projects: [project id, or NO_PROJECT] }); none there means every
+ *   project, including ones you add later (what a plugin allowed before projects could be chosen keeps);
+ * - pluginHidden: sessions you hid from it one by one, on top of that;
+ * - pluginChanged: plugins whose plugin.json changed since you allowed them, so what you allowed is asked again.
+ * A session it doesn't see is left out of its list, and asking about one is answered as if there were no such session.
+ * Changes here go to the host, which sends back what it kept (plugins.grants); the Permissions view shows all of it.
  */
-const pluginAccess = store.get('pluginAccess', {});
-const pluginDenied = store.get('pluginDenied', {});
+const NO_PROJECT = 'none';
+const pluginAccess = {}, pluginDenied = {}, pluginScope = {}, pluginHidden = {};
+const pluginChanged = new Set();
 const pluginAsking = new Map();    // 'id|kind' → the answer, while you're being asked
+
+/** The host's answers about plugins, in place of what was here. */
+function applyGrants(grants) {
+  for (const map of [pluginAccess, pluginDenied, pluginScope, pluginHidden]) for (const k of Object.keys(map)) delete map[k];
+  pluginChanged.clear();
+  for (const [id, g] of Object.entries(grants ?? {})) {
+    if (g.allowed?.length) pluginAccess[id] = g.allowed;
+    if (g.denied?.length) pluginDenied[id] = g.denied;
+    if (g.projects) pluginScope[id] = { projects: g.projects };
+    if (g.hidden?.length) pluginHidden[id] = g.hidden;
+    if (g.changed) pluginChanged.add(id);
+  }
+  renderPermsButton();
+  checkPluginSight();
+  permissionsChanged();
+}
+
+/**
+ * Read once at start, before any plugin is answered. Answers this page kept itself (before the host kept them) are
+ * handed to the host the first time, and then forgotten here.
+ */
+const grantsReady = (async () => {
+  const OLD = ['pluginAccess', 'pluginDenied', 'pluginScope', 'pluginHidden'];
+  try {
+    const m = await request('plugins.grants');
+    const old = OLD.map((k) => store.get(k, null));
+    if (old.some(Boolean)) {
+      if (!Object.keys(m.grants ?? {}).length) {
+        const [allowed, denied, scope, hidden] = old.map((x) => x ?? {});
+        const ids = new Set([allowed, denied, scope, hidden].flatMap(Object.keys));
+        await request('plugins.grants.import', { grants: Object.fromEntries([...ids].map((id) => [id,
+          { allowed: allowed[id] ?? [], denied: denied[id] ?? [], projects: scope[id]?.projects ?? null, hidden: hidden[id] ?? [] }])) });
+        Object.assign(m, await request('plugins.grants'));
+      }
+      for (const k of OLD) { try { localStorage.removeItem('ct.' + k); } catch { /* gone anyway */ } }
+    }
+    applyGrants(m.grants);
+  } catch (e) { console.error('Your answers about plugins could not be read', e); }
+})();
 
 /** 'allow', 'deny' or 'ask' (not decided yet). By id, so a plugin no longer installed still has its answers. */
 const pluginAccessState = (id, kind) => pluginAccess[id]?.includes(kind) ? 'allow' : pluginDenied[id]?.includes(kind) ? 'deny' : 'ask';
 const pluginMayHave = (p, kind) => p.access.includes(kind) && pluginAccessState(p.id, kind) === 'allow';
+
+/** Tells the host; what it kept comes back as plugins.grants. */
+const sendGrant = (name, args) => request(name, args).catch((e) => toast(e.message, true));
 
 /** Sets what plugin id may do with kind: 'allow', 'deny' or 'ask' (forget the answer, so it's asked again). */
 function setPluginAccess(id, kind, to) {
@@ -5614,8 +5741,8 @@ function setPluginAccess(id, kind, to) {
   };
   put(pluginAccess, to === 'allow');
   put(pluginDenied, to === 'deny');
-  store.set('pluginAccess', pluginAccess);
-  store.set('pluginDenied', pluginDenied);
+  if (to === 'allow') pluginChanged.delete(id);
+  sendGrant('plugins.grant', { id, kind, state: to });
   // Taken away: the page starts over, so it no longer holds what it was shown.
   const f = pluginFrames.get(id);
   if (was === 'allow' && to !== 'allow' && f) { f.ready = false; f.frame.src = f.frame.src; }
@@ -5623,29 +5750,37 @@ function setPluginAccess(id, kind, to) {
   permissionsChanged();
 }
 
-/** Forgets every answer about a plugin (one no longer installed). */
+/** Forgets every answer about a plugin: one no longer installed, or one you reset (it asks again when it next needs to). */
 function forgetPlugin(id) {
-  delete pluginAccess[id];
-  delete pluginDenied[id];
-  delete pluginHidden[id];
-  delete pluginScope[id];
-  store.set('pluginAccess', pluginAccess);
-  store.set('pluginDenied', pluginDenied);
-  store.set('pluginHidden', pluginHidden);
-  store.set('pluginScope', pluginScope);
+  const had = !!pluginAccess[id]?.length;
+  for (const map of [pluginAccess, pluginDenied, pluginScope, pluginHidden]) delete map[id];
+  pluginChanged.delete(id);
+  sendGrant('plugins.forget', { id });
+  // Taken away: the page starts over, so it no longer holds what it was shown.
+  const f = pluginFrames.get(id);
+  if (had && f) { f.ready = false; f.frame.src = f.frame.src; }
+  checkPluginSight();
   permissionsChanged();
 }
 
-/**
- * Which sessions a plugin allowed to see your sessions sees, kept by plugin id:
- * - pluginScope: the projects it sees ({ projects: [project id, or NO_PROJECT] }); none there means every project,
- *   including ones you add later (what a plugin allowed before projects could be chosen keeps);
- * - pluginHidden: sessions you hid from it one by one, on top of that.
- * A session it doesn't see is left out of its list, and asking about one is answered as if there were no such session.
- */
-const NO_PROJECT = 'none';
-const pluginScope = store.get('pluginScope', {});
-const pluginHidden = store.get('pluginHidden', {});
+/** True if you've answered anything about a plugin: what it may do, its projects or the sessions hidden from it. */
+const pluginAnswered = (id) => [pluginAccess, pluginDenied, pluginScope, pluginHidden].some((map) => map[id]);
+
+function confirmResetPlugin(p) {
+  confirmDialog(`Reset ${p.title}`,
+    `Forget everything you answered for ${p.title}: what it may do, its projects, and the sessions hidden from it? It asks you again the next time it needs something.`,
+    'Reset', false, () => forgetPlugin(p.id));
+}
+
+/** A session's own messaging rules (not All sessions' ones). */
+const ownRelayRules = (s) => relay.rules.filter((r) => r.from === s.id);
+
+function confirmResetSession(s) {
+  const rules = ownRelayRules(s);
+  confirmDialog(`Reset ${s.name}`,
+    `Clear ${s.name}’s ${rules.length} messaging rule${rules.length === 1 ? '' : 's'}? It then follows All sessions’ rules, and you’re asked when those don’t say. Plugins it’s hidden from stay as they are.`,
+    'Reset', false, () => { for (const r of rules) setRelayRule(r.from, r.to, 'ask'); });
+}
 
 /** The project key a session counts under for a plugin's projects: its project's id, or NO_PROJECT. */
 const scopeKeyOf = (s) => (groupOf(s) === UNKNOWN ? NO_PROJECT : s.project);
@@ -5679,35 +5814,22 @@ function setPluginSeesSession(id, sessionId, sees) {
   const hidden = new Set(pluginHidden[id] ?? []);
   if (sees) hidden.delete(sessionId); else hidden.add(sessionId);
   if (hidden.size) pluginHidden[id] = [...hidden]; else delete pluginHidden[id];
-  store.set('pluginHidden', pluginHidden);
+  sendGrant('plugins.hidden', { id, sessionId, hidden: !sees });
   checkPluginSight();
   permissionsChanged();
 }
 
 /** Sets the projects a plugin sees: a list of project ids (and NO_PROJECT), or null for every project. */
 function setPluginScope(id, projects) {
-  if (projects) pluginScope[id] = { projects: [...new Set(projects)] }; else delete pluginScope[id];
-  store.set('pluginScope', pluginScope);
+  const list = projects ? [...new Set(projects)] : null;
+  if (list) pluginScope[id] = { projects: list }; else delete pluginScope[id];
+  sendGrant('plugins.projects', { id, projects: list });
   checkPluginSight();
   permissionsChanged();
 }
 
-/** Drops sessions and projects since removed from what plugins see, then checks who no longer sees what. */
+/** Sessions or projects came or went (the host drops those gone from its answers): check who no longer sees what. */
 function prunePluginHidden() {
-  let changed = false;
-  for (const [id, list] of Object.entries(pluginHidden)) {
-    const kept = list.filter((sid) => state.byId.has(sid));
-    if (kept.length === list.length) continue;
-    changed = true;
-    if (kept.length) pluginHidden[id] = kept; else delete pluginHidden[id];
-  }
-  if (changed) store.set('pluginHidden', pluginHidden);
-  let scoped = false;
-  for (const scope of Object.values(pluginScope)) {
-    const kept = scope.projects.filter((k) => k === NO_PROJECT || state.projects.some((pr) => pr.id === k));
-    if (kept.length !== scope.projects.length) { scope.projects = kept; scoped = true; }
-  }
-  if (scoped) store.set('pluginScope', pluginScope);
   checkPluginSight();
 }
 
@@ -5729,7 +5851,7 @@ function scopePicker(id, ok = () => {}) {
   const had = pluginScope[id];
   const open = state.byId.get(state.expandedId) ?? state.byId.get(state.currentId);
   const ticked = new Set(had ? had.projects : open ? [scopeKeyOf(open)] : []);
-  let all = !!(pluginAccess[id]?.includes('sessions') && !had);
+  let all = !!(pluginAccess[id]?.length && !had);   // allowed before projects could be chosen: every project
   const keys = [...state.projects.map((pr) => ({ key: pr.id, name: pr.name, color: projectColor(pr) })),
     ...(state.sessions.some((s) => scopeKeyOf(s) === NO_PROJECT) || ticked.has(NO_PROJECT) ? [{ key: NO_PROJECT, name: 'Sessions with no project', color: null }] : [])];
   const boxes = h('div', { class: 'scope-boxes' }, keys.map((k) => h('label', { class: 'perms-radio' },
@@ -5763,10 +5885,11 @@ function changePluginScope(p) {
 }
 
 /** Whether the plugin may use kind: allowed before, or you allow it now (asked once at a time, and not again once refused). */
-function pluginAllowed(p, kind) {
-  if (!p.access.includes(kind)) return Promise.resolve(false);
+async function pluginAllowed(p, kind) {
+  if (!p.access.includes(kind)) return false;
+  await grantsReady;   // the host's answers, not an empty start
   const st = pluginAccessState(p.id, kind);
-  if (st !== 'ask') return Promise.resolve(st === 'allow');
+  if (st !== 'ask') return st === 'allow';
   const key = p.id + '|' + kind;
   if (!pluginAsking.has(key)) pluginAsking.set(key, askPluginAccess(p, kind).finally(() => pluginAsking.delete(key)));
   return pluginAsking.get(key);
@@ -5784,7 +5907,7 @@ function askPluginAccess(p, kind) {
       resolve(yes);
     };
     let allowBtn;
-    const picker = kind === 'sessions' ? scopePicker(p.id, (enabled) => { if (allowBtn) allowBtn.disabled = !enabled; }) : null;
+    const picker = kind === 'sessions' || kind === 'message' ? scopePicker(p.id, (enabled) => { if (allowBtn) allowBtn.disabled = !enabled; }) : null;
     allowBtn = h('button', { class: 'btn primary', onclick: () => { answer(true); closeModal(); } }, 'Allow');
     openModal(`Let ${p.title} ${PLUGIN_ACCESS[kind].verb}?`, h('div', {}, ...PLUGIN_ACCESS[kind].dialog(p), picker?.el), [
       h('button', { class: 'btn', 'data-autofocus': true, onclick: () => { answer(false); closeModal(); } }, 'Don’t allow'),
@@ -5798,16 +5921,51 @@ function askPluginAccess(p, kind) {
 
 const PERMS_KEY = 'permissions';
 function isPermsTab(t) { return t?.kind === 'permissions'; }   // a declaration: tab code above may run first
-const permsView = { by: store.get('permissionsBy', 'plugin'), open: new Set() };   // by: 'plugin' or 'session'; open: sessions whose messaging rows are unfolded
+/**
+ * by: 'plugin', 'session' or 'messages'; open: sessions whose messaging rows are unfolded; the Messages tab's log as last
+ * read (and the relay.logVersion it was read at), the session it's showing (null: all) and the messages opened in it.
+ */
+const permsView = { by: store.get('permissionsBy', 'plugin'), open: new Set(), log: null, logVersion: -1, logLoading: false, logFor: null, logOpen: new Set() };
 
 /** Opens the Permissions view, a tab like a plugin's, beside whichever session is open. */
-async function openPermissions(by = null) {
+async function openPermissions(by = null, sessionId = null) {
   if (by) setPermsBy(by);
+  if (sessionId && by === 'session') permsView.open.add(sessionId);   // its messaging rows unfolded
+  if (sessionId && by === 'messages') permsView.logFor = sessionId;
   if (!docs.tabs.some((t) => t.key === PERMS_KEY)) docs.tabs.push({ key: PERMS_KEY, kind: 'permissions', preview: false, scrollTop: null });
   activateDoc(PERMS_KEY);
   await loadPlugins();   // a plugin added since shows up
   permissionsChanged();
+  if (sessionId && by === 'session') $(`#permsBody [data-session="${sessionId}"]`)?.scrollIntoView({ block: 'start' });
 }
+
+/**
+ * A session tile's mark: its unread messages (opens them in Permissions › Messages), or a link when it may message a
+ * session by a rule of its own (opens its rules). Reads the relay state directly: tiles are drawn before the
+ * Permissions code below has run.
+ */
+function relayTileMark(s) {
+  const unread = relay.unread[s.id] ?? 0;
+  if (unread) {
+    return h('button', { class: 'chip relay-tile', title: `${unread} unread message${unread === 1 ? '' : 's'} from other sessions: show them`, onclick: () => openPermissions('messages', s.id) },
+      iconEl('mail'), String(unread));
+  }
+  const allows = relay.rules.filter((r) => r.from === s.id && r.decision === 'allow').length;
+  if (!allows) return null;
+  return h('button', { class: 'icon-btn relay-tile', title: 'It may message other sessions by rules of its own: show them', onclick: () => openPermissions('session', s.id) }, iconEl('link'));
+}
+
+/** The title bar's Permissions button: shown once anything is allowed, or a message waits for your answer (counted on it). */
+function renderPermsButton() {
+  const b = $('#btnPerms');
+  if (!b) return;
+  const waiting = relay.waiting.reduce((n, w) => n + w.count, 0);
+  const any = waiting > 0 || relay.rules.some((r) => r.decision === 'allow') || Object.keys(pluginAccess).length > 0;
+  b.hidden = !any;
+  b.title = waiting ? `Permissions: ${waiting} message${waiting === 1 ? '' : 's'} waiting for your answer` : 'Permissions: what plugins and sessions may do';
+  fill(b, iconEl('shield'), waiting ? h('span', { class: 'plugin-btn-count' }, String(Math.min(waiting, 99))) : null);
+}
+$('#btnPerms')?.addEventListener('click', () => openPermissions(relay.waiting.length ? 'session' : null));
 
 function setPermsBy(by) {
   permsView.by = by;
@@ -5839,9 +5997,63 @@ function permsChoice(id, kind, name) {
 }
 
 function renderPermissions() {
-  fill($('#permsBy'), [['plugin', 'By plugin'], ['session', 'By session']].map(([by, label]) =>
+  fill($('#permsBy'), [['plugin', 'By plugin'], ['session', 'By session'], ['messages', 'Messages']].map(([by, label]) =>
     h('button', { class: 'seg-btn' + (permsView.by === by ? ' active' : ''), role: 'tab', 'aria-selected': String(permsView.by === by), onclick: () => setPermsBy(by) }, label)));
-  fill($('#permsBody'), permsView.by === 'session' ? permsBySession() : permsByPlugin());
+  fill($('#permsBody'), permsView.by === 'session' ? permsBySession() : permsView.by === 'messages' ? permsMessages() : permsByPlugin());
+}
+
+// ---- the Messages tab: what sessions sent each other, and what became of each message
+
+const LOG_STATUS = {
+  waiting: { word: 'Waiting for your answer', mark: 'ask' }, delivered: { word: 'Unread', mark: 'allow' }, read: { word: 'Read', mark: 'allow' },
+  refused: { word: 'Not allowed', mark: 'deny' }, dropped: { word: 'Dropped', mark: 'deny' },
+};
+
+/** Reads the log again when it has changed since it was last read (relay.logVersion), then redraws. */
+async function loadRelayLog() {
+  if (permsView.logLoading || permsView.logVersion === relay.logVersion) return;
+  permsView.logLoading = true;
+  try {
+    const version = relay.logVersion;
+    permsView.log = await request('relay.log');
+    permsView.logVersion = version;
+  } catch (e) { toast(e.message, true); }
+  finally { permsView.logLoading = false; }
+  permissionsChanged();
+}
+
+/** The log, newest first, for every session or the one picked; a message opens to its whole text. */
+function permsMessages() {
+  if (permsView.logVersion !== relay.logVersion) loadRelayLog();
+  const name = relayName;
+  const pick = permsView.logFor;
+  const entries = (permsView.log ?? []).filter((e) => !pick || e.from === pick || e.to === pick);
+  const agents = state.sessions.filter((s) => agentOf(s.command));
+  return [
+    h('div', { class: 'log-bar' },
+      h('select', { class: 'log-filter', 'aria-label': 'Show messages of', onchange: (e) => { permsView.logFor = e.target.value || null; permissionsChanged(); } },
+        h('option', { value: '' }, 'Every session'),
+        agents.map((s) => h('option', { value: s.id, selected: s.id === pick }, s.name))),
+      h('span', { class: 'dim' }, `${entries.length} message${entries.length === 1 ? '' : 's'}, the latest 500 are kept`),
+      h('span', { class: 'spacer' }),
+      h('button', { class: 'btn', title: 'Forget what was read, refused or dropped (unread and waiting messages stay)', onclick: () => request('relay.clearLog').catch((e) => toast(e.message, true)) }, 'Clear')),
+    !entries.length ? h('p', { class: 'perms-empty' }, permsView.log ? 'No messages yet.' : 'Loading…')
+    : h('section', { class: 'perms-card log-list' }, entries.map((e) => {
+      const st = LOG_STATUS[e.status] ?? LOG_STATUS.dropped;
+      const first = e.text.split('\n')[0];
+      return h('details', { class: 'log-row ' + e.status, open: permsView.logOpen.has(e.id), ontoggle: (ev) => { if (ev.target.open) permsView.logOpen.add(e.id); else permsView.logOpen.delete(e.id); } },
+        h('summary', {},
+          decisionMark(st.mark, st.word),
+          h('span', { class: 'log-time', title: new Date(e.sent).toLocaleString() }, new Date(e.sent).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })),
+          h('b', {}, name(e.from)), h('span', { class: 'dim' }, '→'), h('b', {}, name(e.to)),
+          h('span', { class: 'log-text' }, first.length > 160 ? first.slice(0, 160) + '…' : first),
+          e.turn > 1 && h('span', { class: 'chip', title: `Message ${e.turn} of this exchange (it stops at 12)` }, `reply ${e.turn - 1}`),
+          e.status === 'waiting'
+            ? h('button', { class: 'chip perms-waiting', title: 'Answer now', onclick: (ev) => { ev.preventDefault(); askRelay(e.from, e.to); } }, st.word)
+            : h('span', { class: 'chip' }, st.word)),
+        h('pre', { class: 'log-full' }, e.text));
+    })),
+  ];
 }
 
 function permsByPlugin() {
@@ -5856,13 +6068,15 @@ function permsByPlugin() {
   }
   return [
     ...asking.map((p) => h('section', { class: 'perms-card' },
-      h('header', {}, iconEl('plug'), h('b', {}, p.title), h('span', { class: 'dim', title: 'Its folder' }, `${plugins.folder}\\${p.id}`)),
+      h('header', {}, pluginIcon(p.id), h('b', {}, p.title), h('span', { class: 'dim', title: 'Its folder' }, `${plugins.folder}\\${p.id}`),
+        pluginChanged.has(p.id) && h('span', { class: 'chip perms-waiting', title: 'What you allowed is asked again: its plugin.json changed since' }, 'Changed since you allowed it'),
+        pluginAnswered(p.id) && h('button', { class: 'link-btn perms-reset', title: 'Forget everything you answered for it, so it asks again', onclick: () => confirmResetPlugin(p) }, 'Reset')),
       p.access.map((kind) => {
         const hidden = kind === 'sessions' ? (pluginHidden[p.id] ?? []).map((id) => state.byId.get(id)).filter(Boolean) : [];
         return h('div', { class: 'perms-row' },
           h('div', { class: 'perms-what' }, h('b', {}, PLUGIN_ACCESS[kind]?.title ?? kind), h('span', { class: 'dim' }, PLUGIN_ACCESS[kind]?.about ?? ''),
             // Which projects: shown once it's allowed (asking picks them; refused, it sees none anyway).
-            kind === 'sessions' && pluginAccessState(p.id, kind) === 'allow' && h('span', { class: 'perms-hidden' },
+            kind === p.access.find((k) => (k === 'sessions' || k === 'message') && pluginAccessState(p.id, k) === 'allow') && h('span', { class: 'perms-hidden' },
               h('span', { class: 'decision-mark scope', 'aria-hidden': 'true' }, iconEl('folder')),
               pluginScope[p.id] ? `Only ${scopeWords(p.id)}` : 'Every project, including ones you add later',
               h('button', { class: 'link-btn', title: 'Choose the projects whose sessions it sees', onclick: () => changePluginScope(p) }, 'Change projects')),
@@ -5881,6 +6095,27 @@ function permsByPlugin() {
         h('button', { class: 'btn', title: 'Forget your answers, so it asks again if it comes back', onclick: () => forgetPlugin(id) }, 'Forget')))),
     plain.length > 0 && h('p', { class: 'perms-note dim' }, `${plain.map((p) => p.title).join(', ')} ${plain.length === 1 ? 'asks' : 'ask'} for nothing beyond ${plain.length === 1 ? 'its' : 'their'} own page.`),
   ];
+}
+
+/** A row of buttons picking one of options ([value, label, tooltip]); onPick gets the value picked. */
+function segChoice(value, options, onPick, label) {
+  return h('div', { class: 'seg perms-seg', role: 'radiogroup', 'aria-label': label }, options.map(([v, text, tip]) => h('button', {
+    class: 'seg-btn' + (value === v ? ' active' : ''), role: 'radio', 'aria-checked': String(value === v), title: tip,
+    onclick: () => { if (value !== v) onPick(v); },
+  }, text)));
+}
+
+const RELAY_WORDS = { allow: 'allowed', ask: 'asks you first', deny: 'not allowed' };
+
+/** "Default: allowed, as …": what a row set to Default comes to, from the rule that decides it then. */
+const relayDefault = (d) => d.label ? `Default follows ${d.label}.` : 'Default asks you first: nothing after this is set.';
+
+const RELAY_CHOICE = { allow: 'Allowed', ask: 'Ask first', deny: 'Not allowed' };
+
+/** What a message from one session to another gets now, at a glance: a tick, a question mark or a no-entry sign, coloured. */
+function relayMark(decision, from, to) {
+  return decisionMark(decision, !to ? RELAY_CHOICE[decision]
+    : { allow: `“${from}” may message “${to}”`, ask: `You’re asked before “${from}” messages “${to}”`, deny: `“${from}” may not message “${to}”` }[decision]);
 }
 
 /** A decision as a coloured mark ('allow', 'ask' or 'deny'), saying tip on hover and to a screen reader. */
@@ -5913,15 +6148,237 @@ function pluginChips(s) {
     global !== 'deny' && (outside ? h('span', { class: 'dim' }, ' · not in its projects') : hidden ? h('span', { class: 'dim' }, ' · hidden') : null));
   });
 }
-/** Each session, with the plugins that ask to see sessions and whether each sees it. */
+/** A Default button's label: the word, and under it what it comes to now. */
+const defaultLabel = (d) => [h('span', {}, 'Default'), h('span', { class: 'seg-now' }, RELAY_CHOICE[d.decision])];
+
+/** One messaging rule's row: a name, what Default comes to (if it has one), and its choice. */
+function relayRuleRow(from, to, title, fallback, label) {
+  const d = fallback && relayFallback(fallback);
+  return h('div', { class: 'perms-row' },
+    h('div', { class: 'perms-what' }, h('b', {}, title), d && h('span', { class: 'dim' }, relayDefault(d))),
+    segChoice(relayRule(from, to), [['allow', 'Allowed', 'Messages go through without asking'], fallback ? ['ask', defaultLabel(d), 'As the rules after this one say'] : ['ask', 'Ask first', 'You’re asked the first time'],
+      ['deny', 'Not allowed', 'Messages are refused']], (v) => setRelayRule(from, to, v), label));
+}
+
+/** The global rules, for every session: they decide whatever a session's own rules leave to Default. */
+function permsGlobal() {
+  return h('section', { class: 'perms-card' },
+    h('header', {}, h('b', {}, 'All sessions'), h('span', { class: 'dim' }, 'For every Claude and Codex session, unless its own rules below say otherwise')),
+    // The fallback first, then the narrower rule that can override it, as on each session's card.
+    relayRuleRow('*', '*', 'Messaging any other session', null, 'All sessions: messaging any other session'),
+    relayRuleRow('*', 'project', 'Messaging a session in the same project', [['*', '*']], 'All sessions: messaging a session in the same project'));
+}
+
+/** A session's messaging rows: anyone, its project, then each other agent session, with what each comes to. */
+function permsMessaging(s) {
+  const from = s.id;
+  const others = state.sessions.filter((t) => t.id !== from && agentOf(t.command));
+  const project = projectOf(s);
+  const rows = [
+    // Default for a session's "any" depends on the target's project, so it reads as the global rules for one outside it.
+    relayRuleRow(from, '*', 'Any other session', [['*', '*']], `${s.name}: messaging any other session`),
+    project && relayRuleRow(from, 'project', `Sessions in ${project.name}`, relayLevels(from, true).slice(1), `${s.name}: messaging sessions in ${project.name}`),
+  ];
+  for (const t of others) {
+    const d = relayDecide(from, t.id);
+    const waiting = relay.waiting.find((w) => w.from === from && w.to === t.id);
+    // What Default would come to, whether or not it's the choice now (it's shown on the button either way).
+    const fallback = relayFallback(relayLevels(from, !!s.project && s.project === t.project));
+    const why = d.by === 'pair' ? null : relayDefault(fallback);
+    rows.push(h('div', { class: 'perms-row perms-to ' + d.decision },
+      h('div', { class: 'perms-what' },
+        h('span', { class: 'perms-session' }, relayMark(d.decision, s.name, t.name), h('i', { class: 'dot ' + statusClass(t) }), h('b', {}, t.name), projectTag(t),
+          waiting && h('button', { class: 'chip perms-waiting', title: 'Messages waiting for your answer: click to answer', onclick: () => { askRelay(from, t.id); } }, `${waiting.count} waiting`)),
+        why && h('span', { class: 'dim' }, why)),
+      segChoice(d.by === 'pair' ? d.decision : 'ask', [['allow', 'Allowed', `It may message ${t.name}`], ['ask', defaultLabel(fallback), 'As the rules above say'], ['deny', 'Not allowed', `It may not message ${t.name}`]],
+        (v) => setRelayRule(from, t.id, v), `${s.name}: messaging ${t.name}`)));
+  }
+  if (!others.length) rows.push(h('div', { class: 'perms-row dim' }, 'There’s no other agent session for it to message yet.'));
+  const counts = others.reduce((c, t) => (c[relayDecide(from, t.id).decision]++, c), { allow: 0, ask: 0, deny: 0 });
+  const summary = others.length
+    ? ['allow', 'ask', 'deny'].filter((k) => counts[k]).map((k) => h('span', { class: 'relay-count ' + k }, relayMark(k), `${counts[k]} ${RELAY_CHOICE[k].toLowerCase()}`))
+    : h('span', { class: 'dim' }, 'none yet');
+  const open = permsView.open.has(from) || relay.waiting.some((w) => w.from === from);
+  return h('details', { class: 'perms-sub', open, ontoggle: (e) => { if (e.target.open) permsView.open.add(from); else permsView.open.delete(from); } },
+    h('summary', {}, h('b', {}, 'Messages it may send'), summary), rows);
+}
+
+/** Each session: which sessions it may message (agents only), and which plugins may see it. */
 function permsBySession() {
   const sessions = state.sessions;
   if (!sessions.length) return h('div', { class: 'perms-empty' }, h('p', {}, 'You have no sessions.'));
-  return sessions.map((s) => h('section', { class: 'perms-card' },
-    h('header', {}, h('i', { class: 'dot ' + statusClass(s) }), h('b', {}, s.name), projectTag(s)),
-    h('div', { class: 'perms-row' }, h('div', { class: 'perms-what' }, h('b', {}, 'Plugins'), h('span', { class: 'dim' }, 'Click one to hide this session from it, or show it again.')),
-      h('div', { class: 'perms-who' }, pluginChips(s)))));
+  return [
+    h('p', { class: 'perms-note dim' }, 'Rules go one way: one session may message another without the other being able to answer, except to reply to a message it was sent (for an hour). A message reaches the other agent as a message from a session, not as your prompt. The most specific rule decides; one set to Default leaves it to the next.'),
+    permsGlobal(),
+    ...sessions.map((s) => {
+      const agent = agentOf(s.command);
+      const unread = relay.unread[s.id] ?? 0;
+      return h('section', { class: 'perms-card', 'data-session': s.id },
+        h('header', {}, h('i', { class: 'dot ' + statusClass(s) }), h('b', {}, s.name), projectTag(s), agent && h('span', { class: 'dim' }, agent.name),
+          unread > 0 && h('span', { class: 'chip', title: 'Messages it hasn’t read yet' }, `${unread} unread`),
+          ownRelayRules(s).length > 0 && h('button', { class: 'link-btn perms-reset', title: 'Clear its own messaging rules, so All sessions’ rules decide', onclick: () => confirmResetSession(s) }, 'Reset')),
+        agent ? permsMessaging(s) : h('div', { class: 'perms-row dim' }, 'Not a coding agent, so it can’t send or read messages.'),
+        h('div', { class: 'perms-row' }, h('div', { class: 'perms-what' }, h('b', {}, 'Plugins'), h('span', { class: 'dim' }, 'Click one to hide this session from it, or show it again.')),
+          h('div', { class: 'perms-who' }, pluginChips(s))));
+    }),
+  ];
 }
+
+// ---- messages between sessions: the rules, your answers, and telling a session it has messages
+
+/** A session's name, or a plugin's ("plugin:<id>") with "(plugin)" after it. */
+function relayName(id) {
+  if (id?.startsWith('plugin:')) { const pid = id.slice('plugin:'.length); return `${pluginById(pid)?.title ?? pid} (plugin)`; }
+  return state.byId.get(id)?.name ?? 'a closed session';
+}
+
+/** The decision of the rule from → to ('ask' when there's none). */
+const relayRule = (from, to) => relay.rules.find((r) => r.from === from && r.to === to)?.decision ?? 'ask';
+
+/**
+ * The rules after a session's rule for one other session, in the order RelayPolicy tries them: its own for its project
+ * (when the other session is in it) and for anyone, then the global ones (from '*') the same way. [from, to] each.
+ */
+const relayLevels = (from, sameProject) =>
+  [sameProject && [from, 'project'], [from, '*'], sameProject && ['*', 'project'], ['*', '*']].filter(Boolean);
+
+/** How a rule level reads in "as … says". */
+function relayLevelName([from, to]) {
+  const scope = to === 'project' ? 'sessions in the same project' : 'any other session';
+  return from === '*' ? `All sessions’ “${scope}”` : `its own “${to === 'project' ? `sessions in ${projectOf(state.byId.get(from))?.name ?? 'its project'}` : scope}”`;
+}
+
+/** The first of levels with a rule: { decision, label }, or asking with no label when none has one. */
+function relayFallback(levels) {
+  for (const level of levels) {
+    const r = relay.rules.find((x) => x.from === level[0] && x.to === level[1]);
+    if (r) return { decision: r.decision, label: relayLevelName(level) };
+  }
+  return { decision: 'ask', label: null };
+}
+
+/** What a message from → to gets, as RelayPolicy decides it: { decision, by: 'pair' or null, label }. */
+function relayDecide(from, to) {
+  if (relay.paused) return { decision: 'deny', by: null, label: 'Pause messages' };
+  const pair = relay.rules.find((r) => r.from === from && r.to === to);
+  if (pair) return { decision: pair.decision, by: 'pair', label: null };
+  const a = state.byId.get(from), b = state.byId.get(to);
+  return { ...relayFallback(relayLevels(from, !!a?.project && a.project === b?.project)), by: null };
+}
+
+function setRelayRule(from, to, decision) {
+  request('relay.set', { from, to, decision }).catch((e) => toast(e.message, true));
+}
+
+function setRelayPaused(paused) {
+  request('relay.pause', { paused }).catch((e) => toast(e.message, true));
+}
+
+/** The host's relay state changed: redraw, close a question already answered, and tell idle sessions of new messages. */
+function relayChanged(st) {
+  if (!st) return;
+  Object.assign(relay, st);
+  if (relay.asking && !relay.waiting.some((w) => w.from === relay.asking.from && w.to === relay.asking.to)) closeModal();
+  renderPermsPause();
+  renderPermsButton();
+  for (const s of state.sessions) renderTileHeader(s);   // their marks
+  permissionsChanged();
+  for (const s of state.sessions) relayNotify(s);
+}
+
+function onRelayMessage(m) {
+  if (m.to.startsWith('plugin:')) {
+    const f = pluginFrames.get(m.to.slice('plugin:'.length));
+    const note = { type: 'claude-terminals:message', unread: m.unread, from: m.from, fromName: relayName(m.from) };
+    if (f?.ready) f.frame.contentWindow?.postMessage(note, '*'); else f?.queue.push(note);
+    permissionsChanged();
+    return;
+  }
+  relay.unread[m.to] = m.unread;
+  (relay.from[m.to] ??= new Set()).add(m.from);
+  const s = state.byId.get(m.to);
+  if (s) { renderTileHeader(s); relayNotify(s); }
+  permissionsChanged();
+}
+
+/**
+ * Tells a session's agent it has messages, by typing a line into it and sending it, as you would: only while it's idle
+ * (not working, not asking you something) and you haven't typed into it in the last few seconds, so it never lands in
+ * a prompt you're writing. The messages themselves reach it only through read_messages. Each new message is told once.
+ */
+function relayNotify(s) {
+  const n = relay.unread[s.id] ?? 0;
+  if (!n) { delete relay.told[s.id]; relay.from[s.id]?.clear(); return; }
+  if (n <= (relay.told[s.id] ?? 0)) return;
+  if (!s.running || s.startsOnOpen || !agentOf(s.command) || !['running', 'attention'].includes(statusClass(s))) return;
+  if (performance.now() - s.act.lastIn < 5000) return;   // you're typing in it: the next check tries again
+  relay.told[s.id] = n;
+  const names = [...(relay.from[s.id] ?? [])].map((id) => `"${relayName(id)}"`);
+  const text = `[Claude Terminals] ${n === 1 ? 'A message has' : `${n} messages have`} come from ${names.length ? names.join(' and ') : 'another session'}. Read ${n === 1 ? 'it' : 'them'} with the read_messages tool, and answer with send_message: the sender doesn't see what you write here.`;
+  s.term.paste(text);
+  setTimeout(() => post({ type: 'input', id: s.id, data: '\r' }), 150);
+}
+
+/** A session asks to message another, with no rule to say: you're asked, one question at a time. */
+function askRelay(from, to) {
+  if (relay.asking?.from === from && relay.asking?.to === to) return;
+  if (!relay.asks.some((a) => a.from === from && a.to === to)) relay.asks.push({ from, to });
+  showRelayAsk();
+}
+
+function showRelayAsk() {
+  if (relay.asking || !$('#modalHost').hidden) return;   // after the dialog that's open (see the check below)
+  let next;
+  // Only what's still waiting: one answered meanwhile (here or in Permissions) is skipped.
+  while ((next = relay.asks.shift()) && !relay.waiting.some((w) => w.from === next.from && w.to === next.to)) { /* answered */ }
+  if (!next) return;
+  const a = state.byId.get(next.from), b = state.byId.get(next.to);
+  if (!a || !b) { showRelayAsk(); return; }
+  relay.asking = next;
+  const project = a.project && a.project === b.project ? projectOf(a) : null;
+  let scope = 'session';
+  const choice = (value, label, tip) => h('label', { class: 'perms-radio', title: tip },
+    h('input', { type: 'radio', name: 'relayScope', value, checked: value === scope, onchange: () => { scope = value; } }), label);
+  const answer = (allow) => {
+    request('relay.answer', { from: next.from, to: next.to, allow, scope }).catch((e) => toast(e.message, true));
+    closeModal();
+  };
+  const agentName = (s) => agentOf(s.command)?.name ?? 'the agent';
+  openModal(`Let “${a.name}” message “${b.name}”?`, h('div', {},
+    h('p', {}, `${agentName(a)} in “${a.name}” wants to send a message to ${agentName(b)} in “${b.name}”. It waits until you answer.`),
+    h('p', {}, `The message reaches ${b.name}’s agent as a message from another session, not as your prompt, and it’s told to read it. A message can still ask it to do things, so allow only sessions you’d let work together. ${b.name} can always reply to a message it’s sent.`),
+    h('div', { class: 'perms-radios' }, h('b', {}, 'Your answer is for'),
+      choice('once', 'This time only', 'What it sent now is delivered or dropped; you’re asked again next time'),
+      choice('session', `“${a.name}” messaging “${b.name}”`),
+      project && choice('project', `“${a.name}” messaging any session in ${project.name}`),
+      choice('*', `“${a.name}” messaging any session`),
+      h('b', { class: 'perms-radios-sub' }, 'Or for every session'),
+      project && choice('all-project', 'Any session messaging a session in the same project', 'A rule under All sessions in Permissions'),
+      choice('all', 'Any session messaging any other session', 'A rule under All sessions in Permissions')),
+    h('p', { class: 'dim' }, 'You can change it any time in Permissions, on the palette menu.')), [
+    h('button', { class: 'btn', 'data-autofocus': true, onclick: () => answer(false) }, 'Don’t allow'),
+    h('button', { class: 'btn primary', onclick: () => answer(true) }, 'Allow'),
+  ]);
+  // Closed without an answer: it stays waiting (Permissions shows it), and isn't asked again until it messages again.
+  onModalClose = () => { relay.asking = null; setTimeout(showRelayAsk, 300); };
+}
+
+// A question waits for any dialog that's open, and a session that was busy is told of its messages once it's idle.
+setInterval(() => {
+  showRelayAsk();
+  for (const s of state.sessions) relayNotify(s);
+}, 3000);
+
+/** The Pause button on the Permissions view's toolbar. */
+function renderPermsPause() {
+  const b = $('#permsPause');
+  if (!b) return;
+  b.classList.toggle('active', relay.paused);
+  b.setAttribute('aria-pressed', String(relay.paused));
+  b.textContent = relay.paused ? 'Messages paused: resume' : 'Pause messages';
+  b.title = relay.paused ? 'Sessions can’t message each other until you resume' : 'Stop every session messaging another, whatever the rules say, until you resume';
+}
+$('#permsPause')?.addEventListener('click', () => setRelayPaused(!relay.paused));
 
 /** A session as plugins allowed to see sessions are told it. status is statusClass's: exited, asking (needs your answer), attention (finished, waiting for you), working or running (idle). */
 const pluginSessionInfo = (s) => ({
@@ -5946,7 +6403,7 @@ async function pluginRequest(p, m) {
     if (!sees(m.sessionId)) throw new Error('There is no such session.');
     return state.byId.get(m.sessionId);
   };
-  const NEEDS = { sessions: 'sessions', activity: 'sessions', folders: 'sessions', showSession: 'sessions' };
+  const NEEDS = { sessions: 'sessions', activity: 'sessions', folders: 'sessions', showSession: 'sessions', messageTargets: 'message', sendMessage: 'message', readMessages: 'message' };
   const kind = NEEDS[m.name];
   if (!kind) throw new Error(`There is no request "${m.name}".`);
   if (!p.access.includes(kind)) throw new Error(`Its plugin.json doesn't ask for "${kind}" access.`);
@@ -5968,6 +6425,15 @@ async function pluginRequest(p, m) {
       expand(s.id);
       return null;
     }
+    // Messages, through the relay as "plugin:<its id>" (the host checks again that it may, and which sessions it sees).
+    case 'messageTargets': return request('relay.pluginTargets', { plugin: p.id });
+    case 'sendMessage': {
+      const text = typeof m.text === 'string' ? m.text : '';
+      const to = typeof m.to === 'string' ? m.to : '';
+      if (!state.byId.has(to) || !pluginSeesSession(p.id, to)) throw new Error('There is no such session.');
+      return request('relay.pluginSend', { plugin: p.id, to, text, replyTo: typeof m.replyTo === 'string' ? m.replyTo : null });
+    }
+    case 'readMessages': return request('relay.pluginRead', { plugin: p.id });
   }
 }
 
@@ -5996,6 +6462,7 @@ addEventListener('message', (e) => {
 
 // Side panel plugins kept from last time show once the folder has been read.
 loadPlugins().then(() => renderGit());
+request('relay.state').then(relayChanged).catch(() => {});
 loadThemes();
 
 // ------------------------------------------------------------------ boot

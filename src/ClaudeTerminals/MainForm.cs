@@ -3,6 +3,7 @@ using System.Text.Json;
 using ClaudeTerminals.Git;
 using ClaudeTerminals.Panels;
 using ClaudeTerminals.Plugins;
+using ClaudeTerminals.Relay;
 using ClaudeTerminals.Sessions;
 using ClaudeTerminals.Terminal;
 using ClaudeTerminals.Updates;
@@ -159,6 +160,54 @@ internal sealed class MainForm : Form
     // ---------------------------------------------------------------- panels
 
     private readonly PanelStore panelStore = new(Path.Combine(SessionStore.AppDataFolder, "panels.json"));
+
+    /// <summary>Messages between sessions, through the panel server's tools; which session may message which is kept in relay.json.</summary>
+    private readonly RelayHub relay = new(new RelayPolicy(Path.Combine(SessionStore.AppDataFolder, "relay.json")),
+        path: Path.Combine(SessionStore.AppDataFolder, "relay-messages.json"));
+
+    /// <summary>Your answers about plugins (see PluginGrants), kept in plugin-grants.json.</summary>
+    private readonly PluginGrants grants = new(Path.Combine(SessionStore.AppDataFolder, "plugin-grants.json"));
+
+    private List<RelayPeer> RelayPeers()
+    {
+        // A session counts in a project only while that project exists (as the page shows it), for plugins' projects too.
+        string? ProjectOf(TerminalSession s) => projects.Any(p => p.Id == s.Info.Project) ? s.Info.Project : null;
+        var list = order.Select(id => sessions[id]).Where(s => s.Agent != null).Select(s => new RelayPeer(
+            s.Id, s.Info.Name.Length > 0 ? s.Info.Name : s.Id, ProjectOf(s), projects.FirstOrDefault(p => p.Id == s.Info.Project)?.Name,
+            s.Agent?.Name, s.IsRunning)).ToList();
+        // Plugins allowed to message sessions take part too, as "plugin:<id>" (see PluginGrants.RelayGate).
+        list.AddRange(plugins.Values.Where(p => p.Access.Contains("message") && grants.State(p.Id, "message") == "allow")
+            .Select(p => new RelayPeer(PluginGrants.PeerPrefix + p.Id, p.Title, null, null, "Plugin", true, p.Inbox)));
+        return list;
+    }
+
+    /// <summary>Your answers about plugins, as the page reads them.</summary>
+    private object GrantsMessage() => new
+    {
+        type = "plugins.grants",
+        grants = grants.Snapshot().ToDictionary(x => x.Key, x => new
+        {
+            allowed = x.Value.Allowed, denied = x.Value.Denied, projects = x.Value.Projects, hidden = x.Value.Hidden, changed = x.Value.Changed,
+        }),
+    };
+
+    /// <summary>The rules, whether messages are paused, what's waiting for your answer, and each session's unread count.</summary>
+    private object RelayState() => new
+    {
+        paused = relay.Policy.Paused,
+        rules = relay.Policy.Rules().Select(r => new { from = r.From, to = r.To, decision = r.Decision.ToString().ToLowerInvariant() }),
+        waiting = relay.Waiting().Select(w => new { from = w.From, to = w.To, count = w.Count }),
+        unread = sessions.Keys.Select(id => (id, n: relay.Unread(id))).Where(x => x.n > 0).ToDictionary(x => x.id, x => x.n),
+        logVersion = relay.LogVersion,
+    };
+
+    private static RelayDecision ParseDecision(string s) => s switch
+    {
+        "allow" => RelayDecision.Allow,
+        "deny" => RelayDecision.Deny,
+        "ask" => RelayDecision.Ask,
+        _ => throw new ArgumentException($"There's no decision \"{s}\"."),
+    };
     private PanelServer? panelServer;
 
     private static string PanelConfigFolder => Path.Combine(SessionStore.AppDataFolder, "panels");
@@ -196,7 +245,17 @@ internal sealed class MainForm : Form
     {
         panelStore.KeepOwners(sessions.Keys);
         panelStore.Changed += change => RunOnUi(() => Post(PanelsMessage(change)));
-        var mcp = new PanelMcp(panelStore);
+        relay.Policy.KeepSessions(sessions.Keys);
+        relay.Gate = grants.RelayGate;
+        relay.SetPeers(RelayPeers());
+        // Answers about plugins change which plugins take part in messages, so the peers are read again too.
+        grants.Changed += () => RunOnUi(() => { relay.SetPeers(RelayPeers()); Post(GrantsMessage()); });
+        // The state first, so the page has the message waiting by the time it asks you about it.
+        relay.Asked += ask => RunOnUi(() => { Post(new { type = "relay", state = RelayState() }); Post(new { type = "relay.ask", from = ask.From, to = ask.To }); });
+        relay.Delivered += m => RunOnUi(() => Post(new { type = "relay.message", to = m.To, from = m.From, unread = relay.Unread(m.To) }));
+        relay.Changed += () => RunOnUi(() => Post(new { type = "relay", state = RelayState() }));
+        relay.Policy.Changed += () => RunOnUi(() => Post(new { type = "relay", state = RelayState() }));
+        var mcp = new PanelMcp(panelStore, relay);
         // A first prompt that couldn't go on the command line is typed once Claude is up (it connects as it starts).
         mcp.Initialized += id => RunOnUi(async () =>
         {
@@ -243,6 +302,7 @@ internal sealed class MainForm : Form
     {
         panelServer?.Forget(sessionId);
         panelStore.KeepOwners(sessions.Keys);
+        relay.Policy.KeepSessions(sessions.Keys);
         try { File.Delete(Path.Combine(PanelConfigFolder, $"mcp-{sessionId}.json")); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
@@ -402,6 +462,7 @@ internal sealed class MainForm : Form
         foreach (var s in sessions.Values) CatchUpConversation(s);   // so each reopens where it was
         foreach (var s in sessions.Values) s.Dispose();
         panelServer?.Dispose();
+        relay.Flush();   // unread and waiting messages, for next time
         base.OnFormClosing(e);
     }
 
@@ -461,7 +522,14 @@ internal sealed class MainForm : Form
 
     private void SaveSessions() => SessionStore.Save(order.Select(id => sessions[id].Info));
 
-    private object SessionList() => new
+    private object SessionList()
+    {
+        relay.SetPeers(RelayPeers());   // the list goes out whenever sessions or projects change
+        grants.Keep(sessions.Keys.ToHashSet(), projects.Select(p => p.Id).ToHashSet());
+        return SessionListMessage();
+    }
+
+    private object SessionListMessage() => new
     {
         type = "sessions",
         agents = Agents.All.Select(a => a.Describe()),
@@ -759,6 +827,100 @@ internal sealed class MainForm : Form
             case "panels.close":
                 panelStore.Close(Str(msg, "owner"), Str(msg, "id"));
                 return null;
+
+            // ---- messages between sessions (see RelayHub): the rules, and your answers
+            case "relay.state":
+                return RelayState();
+            case "relay.set":
+                // to: a session id, "project" or "*"; decision: allow, deny or ask (no rule).
+                relay.Policy.Set(Str(msg, "from"), Str(msg, "to"), ParseDecision(Str(msg, "decision")));
+                return null;
+            case "relay.answer":
+            {
+                // Your answer to a session asking to message another. scope: "once" (this time only: delivered when
+                // allowed, dropped when not), or a rule: "session" (that session), "project" (its project), "*" (anyone),
+                // or for every session "all-project" (the same project) or "all" (anyone).
+                var from = Str(msg, "from");
+                var to = Str(msg, "to");
+                var allow = Bool(msg, "allow");
+                var (ruleFrom, ruleTo) = Str(msg, "scope") switch
+                {
+                    "once" => (null, null),
+                    RelayPolicy.SameProject => (from, RelayPolicy.SameProject),
+                    RelayPolicy.Anyone => (from, RelayPolicy.Anyone),
+                    "all-project" => (RelayPolicy.Anyone, RelayPolicy.SameProject),
+                    "all" => (RelayPolicy.Anyone, RelayPolicy.Anyone),
+                    _ => (from, to),
+                };
+                if (ruleFrom == null) relay.AnswerOnce(from, to, allow);
+                else
+                {
+                    relay.Policy.Set(ruleFrom, ruleTo!, allow ? RelayDecision.Allow : RelayDecision.Deny);
+                    relay.AnswerOnce(from, to, allow);   // what waits, if the rule didn't settle it (a broader rule a closer one overrides)
+                }
+                return null;
+            }
+            case "relay.pause":
+                relay.Policy.Paused = Bool(msg, "paused");
+                return null;
+            case "relay.unread":
+                return relay.Unread(Str(msg, "id"));
+            case "relay.log":
+                return relay.Log().Select(e => new
+                {
+                    id = e.Message.Id, from = e.Message.From, to = e.Message.To, text = e.Message.Text, sent = e.Message.Sent, replyTo = e.Message.ReplyTo,
+                    thread = e.Message.Thread, turn = e.Message.Turn, status = e.Status.ToString().ToLowerInvariant(), at = e.At,
+                });
+            case "relay.clearLog":
+                relay.ClearLog();
+                return null;
+
+            // ---- plugins' messages, asked by the page for a plugin it checked may (the plugin's id is the frame's own)
+            case "relay.pluginTargets":
+                return relay.Others(PluginGrants.PeerPrefix + Str(msg, "plugin")).Where(o => o.Decision == RelayDecision.Allow && !o.Peer.Id.StartsWith(PluginGrants.PeerPrefix))
+                    .Select(o => new { id = o.Peer.Id, name = o.Peer.Name, project = o.Peer.ProjectName, agent = o.Peer.Agent, running = o.Peer.Running });
+            case "relay.pluginSend":
+            {
+                var r = relay.Send(PluginGrants.PeerPrefix + Str(msg, "plugin"), Str(msg, "to"), Str(msg, "text"), OptStr(msg, "replyTo"));
+                return new { outcome = r.Outcome.ToString().ToLowerInvariant(), id = r.Message?.Id };
+            }
+            case "relay.pluginRead":
+                return relay.Read(PluginGrants.PeerPrefix + Str(msg, "plugin")).Select(m => new
+                {
+                    id = m.Id, from = m.From, fromName = relay.Peer(m.From)?.Name, text = m.Text, sent = m.Sent, replyTo = m.ReplyTo, turn = m.Turn,
+                });
+
+            // ---- your answers about plugins (see PluginGrants)
+            case "plugins.grants":
+                return GrantsMessage();
+            case "plugins.grant":
+            {
+                var id = Str(msg, "id");
+                grants.Set(id, Str(msg, "kind"), Str(msg, "state"), plugins.GetValueOrDefault(id)?.ManifestHash);
+                return null;
+            }
+            case "plugins.projects":
+                grants.SetProjects(Str(msg, "id"), msg.TryGetProperty("projects", out var pj) && pj.ValueKind == JsonValueKind.Array
+                    ? pj.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!).ToList() : null);
+                return null;
+            case "plugins.hidden":
+                grants.SetHidden(Str(msg, "id"), Str(msg, "sessionId"), Bool(msg, "hidden"));
+                return null;
+            case "plugins.forget":
+                grants.Forget(Str(msg, "id"));
+                return null;
+            case "plugins.grants.import":
+            {
+                // Answers the page kept itself before they were kept here; taken only into an empty store.
+                if (!msg.TryGetProperty("grants", out var g) || g.ValueKind != JsonValueKind.Object) return null;
+                List<string> List(JsonElement e, string name) => e.TryGetProperty(name, out var a) && a.ValueKind == JsonValueKind.Array
+                    ? a.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!).ToList() : [];
+                grants.Import(g.EnumerateObject().Where(p => p.Value.ValueKind == JsonValueKind.Object).ToDictionary(p => p.Name, p => new PluginGrant(
+                    List(p.Value, "allowed"), List(p.Value, "denied"),
+                    p.Value.TryGetProperty("projects", out var pr) && pr.ValueKind == JsonValueKind.Array ? List(p.Value, "projects") : null,
+                    List(p.Value, "hidden"), null)));
+                return null;
+            }
             case "reorder":
             {
                 var ids = msg.GetProperty("ids").EnumerateArray().Select(x => x.GetString()!).Where(sessions.ContainsKey).ToList();
@@ -884,8 +1046,10 @@ internal sealed class MainForm : Form
             {
                 // Read the plugins folder again, so a plugin added or changed shows without restarting.
                 var (found, problems) = LoadPlugins();
+                grants.Reconcile(found);   // a plugin whose plugin.json changed is asked again
+                relay.SetPeers(RelayPeers());
                 return new { folder = PluginFolder, plugins = found.Select(p => new { id = p.Id, title = p.Title, description = p.Description, url = p.Url, placement = p.Placement,
-                    menu = p.Menu.Select(i => new { label = i.Label, command = i.Command, where = i.Where }), access = p.Access,
+                    menu = p.Menu.Select(i => new { label = i.Label, command = i.Command, where = i.Where }), access = p.Access, inbox = p.Inbox, icon = p.Icon,
                     toolbar = p.Toolbar is { } t ? new { icon = t.Icon, tooltip = t.Tooltip, command = t.Command } : null }), problems };
             }
             case "plugins.openFolder":

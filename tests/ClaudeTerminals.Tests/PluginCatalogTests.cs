@@ -142,8 +142,25 @@ public class PluginCatalogTests : IDisposable
         foreach (var id in new[] { "no-icon", "script-icon", "far-icon" })
         {
             Assert.Null(plugins.Single(p => p.Id == id).Toolbar);
-            Assert.Contains(problems, p => p.StartsWith(id + ":") && p.Contains("needs an icon"));
+            Assert.Contains(problems, p => p.StartsWith(id + ":") && p.Contains("needs to be an image file"));
         }
+    }
+
+    [Fact]
+    public void A_plugin_has_an_icon_of_its_own_or_its_buttons_or_none()
+    {
+        Plugin("own", """{ "icon": "own.svg", "toolbar": { "icon": "button.png" } }""", "index.html", "own.svg", "button.png");
+        Plugin("button", """{ "toolbar": { "icon": "button.png" } }""", "index.html", "button.png");
+        Plugin("none", "{}", "index.html");
+        Plugin("bad", """{ "icon": "index.html" }""", "index.html");
+        var (plugins, problems) = PluginCatalog.Load(folder);
+
+        Assert.StartsWith("data:image/svg+xml;base64,", plugins.Single(p => p.Id == "own").Icon);
+        Assert.StartsWith("data:image/png;base64,", plugins.Single(p => p.Id == "own").Toolbar!.Icon);   // the button keeps its own
+        Assert.Equal(plugins.Single(p => p.Id == "button").Toolbar!.Icon, plugins.Single(p => p.Id == "button").Icon);
+        Assert.Null(plugins.Single(p => p.Id == "none").Icon);   // the app's plugin icon
+        Assert.Null(plugins.Single(p => p.Id == "bad").Icon);    // not an image: the plugin loads, with why
+        Assert.Contains(problems, p => p.StartsWith("bad:") && p.Contains("its icon needs to be an image file"));
     }
 
     [Fact]

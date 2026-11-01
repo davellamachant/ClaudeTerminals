@@ -796,7 +796,9 @@ internal static class GitService
         if (full == null) return false;   // never touch anything outside the repo
         try
         {
-            if (!File.Exists(full)) return true;
+            // Gone already, unless it's only out of sight: Windows may refuse to go through a junction or link it doesn't
+            // trust, and the file behind it is still there, so that's a failure to report, not one done.
+            if (!File.Exists(full)) return !ThroughLink(root, full);
             if (ExistingPathInRepo(root, relativePath) == null) return false;   // ...including through a junction or link
             SendToRecycleBin(full);
             return true;
@@ -805,6 +807,24 @@ internal static class GitService
         {
             return false;
         }
+    }
+
+    /// <summary>True if a folder between <paramref name="root"/> and <paramref name="full"/> (a path inside it) is a junction or link.</summary>
+    private static bool ThroughLink(string root, string full)
+    {
+        var top = Path.GetFullPath(root).TrimEnd('\\');
+        for (var dir = Path.GetDirectoryName(full); dir != null && dir.Length > top.Length; dir = Path.GetDirectoryName(dir))
+        {
+            try
+            {
+                if (new DirectoryInfo(dir).Attributes is var a && (int)a != -1 && a.HasFlag(FileAttributes.ReparsePoint)) return true;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return true;   // can't tell: don't call it done
+            }
+        }
+        return false;
     }
 
     // ---- Remote operations (explicit user actions; they reach the network and may show a credential prompt) ----

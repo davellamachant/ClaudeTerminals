@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Messenger</title>
+  <style>
+    :root { --bg: #1e1e1e; --panel: #252526; --border: #3c3c3c; --text: #d4d4d4; --dim: #9d9d9d; --accent: #3794ff; --you: #2b3a4a; }
+    :root[data-theme="light"] { --bg: #ffffff; --panel: #f3f3f3; --border: #d4d4d4; --text: #1f1f1f; --dim: #6b6b6b; --accent: #0067c0; --you: #e5f0fb; }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body { background: var(--bg); color: var(--text); font: 13px/1.45 "Segoe UI", system-ui, sans-serif; display: flex; flex-direction: column; }
+    header { display: flex; gap: 6px; padding: 8px; border-bottom: 1px solid var(--border); }
+    select, textarea, button { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 4px; }
+    select { flex: 1; min-width: 0; padding: 4px; }
+    button { padding: 4px 10px; cursor: pointer; }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    button:disabled { opacity: .5; cursor: default; }
+    #log { flex: 1; overflow: auto; padding: 8px; display: flex; flex-direction: column; gap: 8px; }
+    .msg { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; white-space: pre-wrap; word-break: break-word; }
+    .msg.you { background: var(--you); align-self: flex-end; max-width: 90%; }
+    .msg .who { color: var(--dim); font-size: 11px; margin-bottom: 2px; }
+    .note { color: var(--dim); font-size: 12px; text-align: center; }
+    footer { display: flex; gap: 6px; padding: 8px; border-top: 1px solid var(--border); }
+    textarea { flex: 1; resize: vertical; min-height: 54px; padding: 6px; }
+  </style>
+</head>
+<body>
+  <header>
+    <select id="to" aria-label="Send to" title="The sessions it may message: the projects you chose for it"></select>
+    <button id="refresh" title="Read the sessions it may message again">↻</button>
+  </header>
+  <div id="log" aria-live="polite"><p class="note">Pick a session and send it a message. Its answer shows here.</p></div>
+  <footer>
+    <textarea id="text" placeholder="A message for the agent (Ctrl+Enter sends)" aria-label="Message"></textarea>
+    <button id="send" class="primary">Send</button>
+  </footer>
+  <script src="messenger.js"></script>
+</body>
+</html>
