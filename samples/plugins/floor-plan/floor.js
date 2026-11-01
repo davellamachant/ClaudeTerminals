@@ -1,15 +1,17 @@
 'use strict';
-// The Floor plan: a project's sessions on a map of its code. The repository's top-level folders are rooms, sized by how
-// many files they hold; every file a session has read or edited is a cell in its room (blue read, amber edited, outlined
-// when two sessions touched it); each session is a person standing at the file it's on, and a card beside the floor
-// tells its story turn by turn. Whoever needs your answer is at the top. The slider at the bottom rewinds through
-// everything that happened; Live follows what's happening now.
+// The Floor plan: a project's sessions on a city of its code. The repository's top-level folders are buildings, their
+// footprint from how many files they hold and their height too; every file a session has read or edited lights a window
+// (blue read, amber edited, outlined when two sessions touched it); each session is a beacon on the street in front of the
+// building it's working in, with a light trail along the streets it came by, and a card beside the city tells its story
+// turn by turn. Whoever needs your answer is at the top. Files outside the repository land on the plaza in front. The
+// slider at the bottom rewinds through everything that happened; Live follows what's happening now.
 //
 // It's a Claude Terminals plugin with "sessions" access (see plugin.json): it asks the app for the sessions, what Claude
-// did in each (read from their conversations) and the repository's folders, every few seconds.
+// did in each (read from their conversations) and the repository's folders, every few seconds. Its colours and font come
+// from the app's theme (the theme message), so it looks right under Tron, Matrix, Nerds or one of your own.
 
 const REFRESH_MS = 2500, FOLDERS_MS = 60_000, MAX_EVENTS = 6000;
-const W = 1000, H = 600, HALL = 50, PAD = 6, CELL = 9, GAP = 3;
+const W = 1000, H = 600, LOT = 3, GAPT = 1, PLAZA_ROWS = 2, MAX_BUILDINGS = 15;
 const COLORS = [1, 2, 3, 4, 5, 6, 7, 8].map((i) => `var(--s${i})`);
 const NO_PROJECT = '\u0000none';   // the project key of sessions in no project
 
@@ -26,10 +28,11 @@ function h(tag, attrs = {}, ...kids) {
 }
 function sv(tag, attrs = {}, ...kids) {
   const e = document.createElementNS('http://www.w3.org/2000/svg', tag);
-  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  for (const [k, v] of Object.entries(attrs)) if (v != null) e.setAttribute(k, v);
   for (const k of kids.flat()) if (k != null) e.append(k instanceof Node ? k : String(k));
   return e;
 }
+const pts = (list) => list.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
 
 // ---- talking to Claude Terminals
 
@@ -45,8 +48,17 @@ function ask(name, args = {}) {
   });
 }
 
-function setTheme(theme) {
-  document.documentElement.dataset.theme = theme === 'light' ? 'light' : 'dark';
+/** This page's colours by the app's names for them (see the theme message in the app's README); its own dark and light sets stand in for an older app. */
+const THEME_COLORS = { bg: 'chrome', chrome: 'chrome-2', panel: 'panel', border: 'border', 'border-soft': 'border-soft', hover: 'hover-strong', text: 'text', 'text-dim': 'text-dim',
+  'text-faint': 'text-faint', 'card-bg': 'panel-2', 'card-border': 'border', focus: 'focus', attention: 'attention', ok: 'ok', working: 'working', accent: 'accent-strong', line: 'accent',
+  read: 'working', edit: 'attention' };
+function dress(m) {
+  const root = document.documentElement;
+  root.dataset.theme = m.theme === 'light' ? 'light' : 'dark';
+  const c = m.colors ?? {};
+  for (const [mine, theirs] of Object.entries(THEME_COLORS)) { if (c[theirs]) root.style.setProperty('--' + mine, c[theirs]); else root.style.removeProperty('--' + mine); }
+  document.body.style.fontFamily = m.font ? `"${m.font}", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif` : '';
+  if (m.glow) root.dataset.glow = ''; else delete root.dataset.glow;
   fp.lanesLen = -1;
   render();
 }
@@ -61,9 +73,9 @@ addEventListener('message', (e) => {
     pending.delete(m.requestId);
     if ('error' in m) p.reject(new Error(m.error)); else p.resolve(m.result);
   } else if (m.type === 'claude-terminals:theme') {
-    setTheme(m.theme);
+    dress(m);
   } else if (m.type === 'claude-terminals:command' && m.context && 'project' in m.context) {
-    // Opened from a project's or a session's menu: that project's floor.
+    // Opened from a project's or a session's menu: that project's city.
     choose(m.context.project ?? NO_PROJECT);
   }
 });
@@ -84,12 +96,12 @@ const lower = (p) => p.replace(/\\/g, '/').replace(/\/$/, '').toLowerCase();
 
 function choose(key) {
   if (fp.projectKey === key) return;
-  Object.assign(fp, { projectKey: key, members: [], data: new Map(), rooms: null, root: null, geometry: null, cells: new Map(), counts: new Map(), shared: new Set(), merged: [], idx: null, focus: null, stageKey: null });
+  Object.assign(fp, { projectKey: key, members: [], data: new Map(), rooms: null, root: null, geometry: null, cells: new Map(), counts: new Map(), shared: new Set(), merged: [], idx: null, focus: null, stageKey: null, world: null });
   stop();
   load();
 }
 
-/** The sessions, the rooms (now and then) and what's new in each conversation; then the floor is drawn again. */
+/** The sessions, the buildings (now and then) and what's new in each conversation; then the city is drawn again. */
 async function load() {
   if (fp.loading) return;
   fp.loading = true;
@@ -103,7 +115,7 @@ async function load() {
     }
     renderProjects(keys);
     const members = fp.sessions.filter((s) => projectKey(s) === fp.projectKey);
-    // Each worktree's repository, now and then: the floor is the repository most of the sessions are in.
+    // Each worktree's repository, now and then: the city is the repository most of the sessions are in.
     for (const s of members) {
       if (!s.worktree) continue;
       const k = lower(s.worktree), had = fp.folders.get(k);
@@ -151,13 +163,13 @@ function renderProjects(keys) {
 }
 $('#project').addEventListener('change', (e) => choose(e.target.value));
 
-// ---- the floor: rooms, and a cell for every file as it first appears
+// ---- the city: buildings on lots, the plaza in front, and a window for every file as it first appears
 
-/** Where a file is: its room (top-level folder of the floor's repository) and its path there, or outside it. */
+/** Where a file is: its building (top-level folder of the city's repository) and its path there, or the plaza outside. */
 function place(file, s) {
   if (!file) return null;
   const f = file.replace(/\\/g, '/'), low = f.toLowerCase(), name = f.split('/').pop();
-  // A session's own worktree counts only if it's a worktree of the floor's repository: another repository's src\ isn't this one's.
+  // A session's own worktree counts only if it's a worktree of the city's repository: another repository's src\ isn't this one's.
   const own = s.worktree && fp.root && lower(fp.folders.get(lower(s.worktree))?.root ?? '') === lower(fp.root) ? s.worktree : null;
   for (const root of [own, fp.root].filter(Boolean).map(lower)) {
     if (!low.startsWith(root + '/')) continue;
@@ -170,7 +182,7 @@ function place(file, s) {
   return { key: 'outside:' + low, rel: f, name, room: null };
 }
 
-/** All sessions' events in time order, with a cell for every file as it first appears, and which files two sessions share. */
+/** All sessions' events in time order, with a window for every file as it first appears, and which files two sessions share. */
 function merge() {
   if (!fp.geometry) geometry();
   const g = fp.geometry, merged = [];
@@ -186,49 +198,88 @@ function merge() {
       const room = p.room ? g.rooms.find((r) => r.name === p.room) : g.hall;
       const i = fp.counts.get(room.name) ?? 0;
       fp.counts.set(room.name, i + 1);
-      const cols = Math.max(1, Math.floor((room.w - 10) / (CELL + GAP)));
-      // A room holds as many rows of cells as fit; files past that share the last slot, which says how many more there are.
-      const rows = Math.max(1, Math.floor((room.h - (room.hall ? 18 : 22)) / (CELL + GAP)));
-      const slot = Math.min(i, cols * rows - 1), overflow = i > cols * rows - 1;
-      fp.cells.set(p.key, { key: p.key, col: slot % cols, x: room.x + 6 + (slot % cols) * (CELL + GAP), y: room.y + (room.hall ? 16 : 20) + Math.floor(slot / cols) * (CELL + GAP), room, name: p.name, path: p.rel, overflow });
+      // A building has as many windows as its faces hold; files past that share the last one, which says how many more there are.
+      const slot = Math.min(i, room.slots.length - 1), overflow = i > room.slots.length - 1;
+      const w = room.slots[slot];
+      fp.cells.set(p.key, { key: p.key, x: w.cx, y: w.cy, room, slot, name: p.name, path: p.rel, overflow });
     }
     (who.get(p.key) ?? who.set(p.key, new Set()).get(p.key)).add(e.si);
   }
   fp.shared = new Set([...who].filter(([, set]) => set.size > 1).map(([k]) => k));
 }
 
-/** The rooms as a squarified treemap (biggest first, top left), with a hallway along the bottom. A small room is drawn
- * bigger than its share (so it can hold some cells), but it's labelled with its own count. */
-function geometry() {
-  const list = fp.rooms ?? [];
-  const kept = list.slice(0, 13).map((r) => ({ name: r.name, files: r.files }));
-  const rest = list.slice(13).reduce((n, r) => n + r.files, 0);
-  if (rest) kept.push({ name: '(other)', files: rest });
-  const rooms = kept.length
-    ? squarify(kept.map((r) => ({ ...r, n: Math.max(r.files, 60) })), PAD, PAD, W - 2 * PAD, H - HALL - 2 * PAD).map((r) => ({ ...r, x: r.x + 2, y: r.y + 2, w: r.w - 4, h: r.h - 4 }))
-    : [];
-  const hall = { name: 'Outside the repository', x: PAD + 2, y: H - HALL + 2, w: W - 2 * PAD - 4, h: HALL - PAD - 2, hall: true };
-  fp.geometry = { rooms, hall, roomSet: new Set(rooms.map((r) => r.name)) };
+/** A small deterministic shuffle, so a building's lit windows scatter the same way every time. */
+function shuffled(n, seed) {
+  let s = seed >>> 0 || 1;
+  const rnd = () => (s = (s * 1103515245 + 12345) % 2147483648) / 2147483648;
+  const out = Array.from({ length: n }, (_, i) => i);
+  for (let i = n - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [out[i], out[j]] = [out[j], out[i]]; }
+  return out;
 }
 
-function squarify(items, x, y, w, h) {
-  const total = items.reduce((n, i) => n + i.n, 0), out = [], scale = (w * h) / total;
-  let rest = items.slice(), rx = x, ry = y, rw = w, rh = h;
-  while (rest.length) {
-    const horiz = rw >= rh, side = horiz ? rh : rw;
-    let row = [], best = Infinity;
-    for (const it of rest) {
-      const cand = [...row, it], len = cand.reduce((n, i) => n + i.n * scale, 0) / side;
-      const worst = Math.max(...cand.map((i) => { const s = (i.n * scale) / len; return Math.max(len / s, s / len); }));
-      if (worst <= best) { row = cand; best = worst; } else break;
+/**
+ * The buildings: the biggest folders at the back, on a square-ish grid of lots, each a block whose footprint and height
+ * grow with its files; the plaza across the front for files outside the repository. Everything is sized to fit the stage.
+ */
+function geometry() {
+  const list = fp.rooms ?? [];
+  const kept = list.slice(0, MAX_BUILDINGS).map((r) => ({ name: r.name, files: r.files }));
+  const rest = list.slice(MAX_BUILDINGS).reduce((n, r) => n + r.files, 0);
+  if (rest) kept.push({ name: '(other)', files: rest });
+  kept.sort((a, b) => b.files - a.files);
+  const n = kept.length;
+  const cols = Math.max(2, Math.ceil(Math.sqrt(Math.max(n, 1)))), rows = Math.max(1, Math.ceil(n / cols));
+  const totalC = cols * (LOT + GAPT) + GAPT, totalR = rows * (LOT + GAPT) + GAPT + PLAZA_ROWS + GAPT;
+  const maxFiles = Math.max(1, ...kept.map((r) => r.files));
+  const zOf = (files) => 16 + Math.round(120 * Math.sqrt(files / maxFiles));
+  const maxZ = kept.length ? Math.max(...kept.map((r) => zOf(r.files))) : 16;
+  const span = (totalC + totalR) / 2;
+  const TW = Math.min((W - 40) / span, 2 * (H - maxZ - 70) / span), TH = TW / 2;
+  const OX = W / 2 - (totalC - totalR) * TW / 4, OY = maxZ + 24;
+  const iso = (c, r, z = 0) => [OX + (c - r) * TW / 2, OY + (c + r) * TH / 2 - z];
+  const buildings = kept.map((r, i) => {
+    const size = Math.max(1, Math.min(LOT, Math.round(Math.sqrt(r.files / maxFiles) * LOT)));
+    const lotC = GAPT + (i % cols) * (LOT + GAPT), lotR = GAPT + Math.floor(i / cols) * (LOT + GAPT);
+    return building(r.name, r.files, lotC + (LOT - size) / 2, lotR + (LOT - size) / 2, size, size, zOf(r.files), iso, TW, TH, i);
+  });
+  // The plaza: a low slab across the front; its roof is paved with the files outside the repository.
+  const hall = building('Outside the repository', 0, GAPT, totalR - PLAZA_ROWS - GAPT, totalC - 2 * GAPT, PLAZA_ROWS, 8, iso, TW, TH, 99, true);
+  fp.geometry = { rooms: buildings, hall, roomSet: new Set(buildings.map((r) => r.name)), iso, TW, TH, totalC, totalR, maxZ };
+}
+
+/** One building: its faces as screen polygons, its door on the street in front, and the windows a file can light, scattered. */
+function building(name, files, c0, r0, sc, sr, z, iso, TW, TH, seed, hall = false) {
+  const base = [iso(c0, r0), iso(c0 + sc, r0), iso(c0 + sc, r0 + sr), iso(c0, r0 + sr)];
+  const top = [iso(c0, r0, z), iso(c0 + sc, r0, z), iso(c0 + sc, r0 + sr, z), iso(c0, r0 + sr, z)];
+  const faces = { left: [base[3], base[2], top[2], top[3]], right: [base[2], base[1], top[1], top[2]], top };
+  const slots = [];
+  if (hall) {
+    // Paving stones on the roof.
+    const nc = sc * 2, nr = sr * 2;
+    for (let i = 0; i < nr; i++) for (let j = 0; j < nc; j++) {
+      const cc = c0 + (j + 0.5) * sc / nc, rr = r0 + (i + 0.5) * sr / nr, dx = TW / nc * sc * .18, dy = TH / nc * sc * .18;
+      const p = iso(cc, rr, z);
+      slots.push({ cx: p[0], cy: p[1], quad: pts([[p[0], p[1] - 2 * dy], [p[0] + 2 * dx, p[1]], [p[0], p[1] + 2 * dy], [p[0] - 2 * dx, p[1]]]) });
     }
-    const len = row.reduce((n, i) => n + i.n * scale, 0) / side;
-    let off = 0;
-    for (const it of row) { const s = (it.n * scale) / len; out.push(horiz ? { ...it, x: rx, y: ry + off, w: len, h: s } : { ...it, x: rx + off, y: ry, w: s, h: len }); off += s; }
-    if (horiz) { rx += len; rw -= len; } else { ry += len; rh -= len; }
-    rest = rest.slice(row.length);
+  } else {
+    // Windows in rows on the two faces that show.
+    const colsL = sr * 4, colsR = sc * 4, rows = Math.max(1, Math.floor((z - 8) / 10));
+    for (let row = 0; row < rows; row++) {
+      const zz = 7 + row * 10;
+      for (let col = 0; col < colsL; col++) {
+        const t = (col + 0.5) / colsL, p = iso(c0, r0 + sr - t * sr, zz), dx = TW / (2 * colsL) * sr * .3, dy = -TH / (2 * colsL) * sr * .3;
+        slots.push({ cx: p[0], cy: p[1] - 2.5, quad: pts([[p[0] - dx, p[1] - dy], [p[0] + dx, p[1] + dy], [p[0] + dx, p[1] + dy - 5], [p[0] - dx, p[1] - dy - 5]]) });
+      }
+      for (let col = 0; col < colsR; col++) {
+        const t = (col + 0.5) / colsR, p = iso(c0 + t * sc, r0 + sr, zz), dx = TW / (2 * colsR) * sc * .3, dy = TH / (2 * colsR) * sc * .3;
+        slots.push({ cx: p[0], cy: p[1] - 2.5, quad: pts([[p[0] - dx, p[1] - dy], [p[0] + dx, p[1] + dy], [p[0] + dx, p[1] + dy - 5], [p[0] - dx, p[1] - dy - 5]]) });
+      }
+    }
   }
-  return out;
+  const order = shuffled(slots.length, seed * 7919 + files + name.length);
+  const door = iso(c0 + sc / 2, r0 + sr + 0.55);
+  const label = iso(c0 + sc / 2, r0 + sr + 0.12);
+  return { name, files, hall, c0, r0, sc, sr, z, faces, slots: order.map((i) => slots[i]), door, label, order: c0 + r0 };
 }
 
 // ---- narration: one plain sentence per event, and the state it leaves the session in
@@ -282,7 +333,7 @@ function turnSummary(tn) {
   return s[0].toUpperCase() + s.slice(1);
 }
 
-/** What the app says a session is doing now (its status dot), as the floor's states. */
+/** What the app says a session is doing now (its status dot), as the city's states. */
 const LIVE = { asking: 'needs', attention: 'done', working: 'busy', running: 'idle', exited: 'off' };
 const LIVE_SHORT = { needs: 'Needs your answer', done: 'Finished, waiting for you', idle: 'Idle', off: 'Not running' };
 
@@ -307,7 +358,8 @@ function compute(idx, live) {
     if (e.key) {
       const c = fp.cells.get(e.key);
       if (c) {
-        p.pos = c; p.trail.push(c);
+        p.pos = c;
+        if (p.trail[p.trail.length - 1]?.room !== c.room) p.trail.push(c);   // the trail runs building to building
         if (e.k === 'edit') cellState[e.key] = 'edit'; else cellState[e.key] ??= 'read';
         (cellWho[e.key] ??= new Map()).set(e.si, { t: e.t, k: e.k });
         p.touched.set(e.key, e.t);
@@ -340,7 +392,7 @@ const liveIdx = () => fp.merged.length;
 const curIdx = () => Math.min(fp.idx ?? liveIdx(), liveIdx());
 const rank = (s) => ({ needs: 0, done: 1, busy: 2, idle: 3, off: 4 }[s]);
 
-/** The stage (rooms, trails, people) is built once per repository and set of sessions; cells are added as files appear. */
+/** The stage (ground, buildings, trails, beacons) is built once per repository and set of sessions; windows light as files appear. */
 function buildStage() {
   const g = fp.geometry, key = (fp.root ?? '') + '|' + fp.members.map((s) => s.id + ':' + s.name).join(',');
   if (fp.stageKey === key && fp.stage) return;
@@ -349,60 +401,74 @@ function buildStage() {
   const host = $('#stage');
   host.replaceChildren();
   const stage = h('div', { class: 'fl-stage' });
-  const svg = sv('svg', { viewBox: `0 0 ${W} ${H}`, 'aria-label': 'Floor plan of the repository' });
+  const svg = sv('svg', { viewBox: `0 0 ${W} ${H}`, 'aria-label': 'The repository as a city' });
   fp.roomEls = new Map(); fp.cellEls = new Map(); fp.moreEls = new Map();
-  for (const r of [...g.rooms, g.hall]) {
-    const el = sv('rect', { class: r.hall ? 'fl-hall' : 'fl-room', x: r.x, y: r.y, width: r.w, height: r.h, rx: 3 });
-    svg.append(el); fp.roomEls.set(r.name, el);
-    const fit = Math.floor((r.w - 12) / 6.4), label = r.name.length <= fit ? r.name : r.name.slice(0, Math.max(3, fit - 1)) + '…';
-    svg.append(sv('text', { class: 'fl-room-name', x: r.x + 6, y: r.y + 12 }, label));
-    if (!r.hall && r.w > 120) svg.append(sv('text', { class: 'fl-room-n', x: r.x + r.w - 6, y: r.y + 12, 'text-anchor': 'end' }, plural(r.files, 'file')));
+  // The ground: streets ruled across the whole block.
+  const ground = sv('g', { class: 'fl-ground' });
+  for (let i = 0; i <= g.totalC; i++) ground.append(sv('line', { x1: g.iso(i, 0)[0], y1: g.iso(i, 0)[1], x2: g.iso(i, g.totalR)[0], y2: g.iso(i, g.totalR)[1] }));
+  for (let i = 0; i <= g.totalR; i++) ground.append(sv('line', { x1: g.iso(0, i)[0], y1: g.iso(0, i)[1], x2: g.iso(g.totalC, i)[0], y2: g.iso(g.totalC, i)[1] }));
+  svg.append(ground);
+  // Buildings back to front, each with its windows dark until a file lights one; their names go on a layer above them all.
+  const labels = sv('g', { class: 'fl-labels' });
+  for (const b of [...g.rooms, g.hall].sort((a, c) => a.order - c.order)) {
+    const el = sv('g', { class: 'fl-bld' + (b.hall ? ' hall' : '') });
+    el.append(sv('polygon', { class: 'face left', points: pts(b.faces.left) }), sv('polygon', { class: 'face right', points: pts(b.faces.right) }),
+      sv('polygon', { class: 'face top', points: pts(b.faces.top) }));
+    const windows = sv('g', { class: 'fl-windows' });
+    for (const w of b.slots) windows.append(sv('polygon', { class: 'fl-dark', points: w.quad }));
+    el.append(windows);
+    el.cellLayer = sv('g'); el.append(el.cellLayer);
+    const fit = Math.floor((b.sc + b.sr + 1) * g.TW / 2 / 6), name = b.name.length <= fit ? b.name : b.name.slice(0, Math.max(3, fit - 1)) + '…';
+    labels.append(sv('text', { class: 'fl-name', x: b.label[0], y: b.label[1] + 11, 'text-anchor': 'middle' }, name));
+    if (!b.hall) labels.append(sv('text', { class: 'fl-n', x: b.label[0], y: b.label[1] + 21, 'text-anchor': 'middle' }, plural(b.files, 'file')));
+    svg.append(el);
+    fp.roomEls.set(b.name, el);
   }
-  fp.cellLayer = sv('g'); svg.append(fp.cellLayer);
+  svg.append(labels);
   fp.trailEls = fp.members.map((s, i) => { const p = sv('path', { class: 'fl-trail', stroke: COLORS[i % COLORS.length], d: '' }); svg.append(p); return p; });
   if (!fp.rooms) {
-    svg.append(sv('text', { class: 'fl-empty', x: W / 2, y: (H - HALL) / 2, 'text-anchor': 'middle' },
-      fp.members.some((s) => s.worktree) ? 'Reading the repository…' : 'No session of this project is in a Git repository, so there are no rooms: everything happens in the hallway.'));
+    svg.append(sv('text', { class: 'fl-empty', x: W / 2, y: H / 2, 'text-anchor': 'middle' },
+      fp.members.some((s) => s.worktree) ? 'Reading the repository…' : 'No session of this project is in a Git repository, so there is no city: everything happens on the plaza.'));
   }
-  stage.append(svg);
+  // The beacons: one per session, on the street in front of the building it's in.
   fp.people = fp.members.map((s, i) => {
     const colour = COLORS[i % COLORS.length];
-    const p = h('div', { class: 'fl-person', 'data-si': i, hidden: true },
-      h('div', { class: 'fl-av', style: `background:${colour};color:${colour}` }, h('span', { style: 'color:#fff' }, fp.initials[i])),
-      h('div', { class: 'fl-badge' }), h('div', { class: 'fl-bubble' }));
+    const p = sv('g', { class: 'fl-person', 'data-si': i, hidden: '' },
+      sv('circle', { class: 'ring', r: 10 }), sv('circle', { class: 'glow', r: 13, fill: colour }), sv('circle', { class: 'av', r: 10, fill: colour }),
+      sv('text', { class: 'ini', y: 3.5, 'text-anchor': 'middle' }, fp.initials[i]),
+      sv('circle', { class: 'badge', cx: 9, cy: -9, r: 6 }), sv('text', { class: 'badge-t', x: 9, y: -6, 'text-anchor': 'middle' }, ''),
+      sv('text', { class: 'bubble', x: 16, y: 4 }, ''));
     p.addEventListener('click', (e) => { e.stopPropagation(); focus(fp.focus === i ? null : i); });
-    stage.append(p);
+    svg.append(p);
     return p;
   });
+  stage.append(svg);
   host.append(stage);
-  fp.unzoom = h('button', { class: 'btn unzoom', hidden: true, onclick: () => focus(null) }, '← Whole floor');
+  fp.unzoom = h('button', { class: 'btn unzoom', hidden: true, onclick: () => focus(null) }, '← Whole city');
   host.append(fp.unzoom);
   fp.stage = stage;
 }
 
-/** The cell's rectangle (made on first sight) and its name, which shows when zoomed in; none for an overflow file. */
+/** The window's polygon (made on first sight), lit in the building it belongs to; none for an overflow file. */
 function cellEl(c) {
   if (c.overflow) return null;
   let el = fp.cellEls.get(c.key);
   if (el) return el;
-  el = sv('rect', { class: 'fl-cell', x: c.x, y: c.y, width: CELL, height: CELL, rx: 1.5, 'data-key': c.key });
-  // Names on neighbouring cells would overlap, so every other column's name sits a line lower.
-  const name = sv('text', { class: 'fl-cell-name', x: c.x, y: c.y + CELL + (c.col % 2 ? 8.5 : 4) }, c.name.length > 22 ? c.name.slice(0, 21) + '…' : c.name);
-  fp.cellLayer.append(el, name);
+  el = sv('polygon', { class: 'fl-cell', points: c.room.slots[c.slot].quad, 'data-key': c.key });
+  fp.roomEls.get(c.room.name)?.cellLayer.append(el);
   fp.cellEls.set(c.key, el);
-  el.nameEl = name;
   return el;
 }
 
-/** "+N more" after a room's last slot when more files were touched there than its cells can show. */
+/** "+N more" by a building's door when more files were touched there than its windows can show. */
 function moreLabels() {
   const more = new Map();
   for (const c of fp.cells.values()) if (c.overflow) more.set(c.room.name, (more.get(c.room.name) ?? 0) + 1);
   for (const [name, el] of fp.moreEls) if (!more.has(name)) { el.remove(); fp.moreEls.delete(name); }
   for (const [name, n] of more) {
-    const slot = [...fp.cells.values()].find((c) => c.overflow && c.room.name === name);
+    const room = fp.geometry.rooms.find((r) => r.name === name) ?? fp.geometry.hall;
     let el = fp.moreEls.get(name);
-    if (!el) { el = sv('text', { class: 'fl-room-n', x: slot.x + CELL + 3, y: slot.y + CELL - 1 }); fp.cellLayer.append(el); fp.moreEls.set(name, el); }
+    if (!el) { el = sv('text', { class: 'fl-n', x: room.label[0], y: room.label[1] + (room.hall ? 22 : 33), 'text-anchor': 'middle' }); fp.roomEls.get(name)?.append(el); fp.moreEls.set(name, el); }
     el.textContent = `+${n} more`;
   }
 }
@@ -415,7 +481,7 @@ function showMessage(text, button) {
 }
 
 function render() {
-  if (fp.problem) { showMessage(/allowed/.test(fp.problem) ? 'The Floor plan isn’t allowed to see your sessions.' : `The Floor plan can’t see your sessions: ${fp.problem}`, h('div', { class: 'hint' }, 'You can let it from the palette menu: Plugins › Floor plan › Let it see your sessions.')); $('#attn').replaceChildren(); return; }
+  if (fp.problem) { showMessage(/allowed/.test(fp.problem) ? 'The Floor plan isn’t allowed to see your sessions.' : `The Floor plan can’t see your sessions: ${fp.problem}`, h('div', { class: 'hint' }, 'You can let it from the palette button, under Plugins.')); return; }
   if (!fp.sessions.length) { showMessage(fp.loading ? 'Reading your sessions…' : 'There are no sessions yet.'); return; }
   if (!fp.members.length) { showMessage(`${projectLabel(fp.projectKey)} has no sessions.`); return; }
   showMessage(null);
@@ -432,25 +498,29 @@ function render() {
     const el = cellEl(c);
     if (!el) continue;
     el.setAttribute('class', `fl-cell ${st ?? ''}${st && fp.shared.has(c.key) && cellWho[c.key]?.size > 1 ? ' shared' : ''}${dim ? ' dim' : ''}`);
-    el.nameEl.classList.toggle('mine', !!mine);
   }
   moreLabels();
   for (const [name, el] of fp.roomEls) el.classList.toggle('active', activeRooms.has(name));
-  const hall = fp.geometry.hall;
+  const g = fp.geometry;
   per.forEach((p, i) => {
     const person = fp.people[i];
     if (!person) return;
-    const pos = p.pos ?? { x: hall.x + 60 + i * 70, y: hall.y + 28 };
-    person.className = `fl-person ${p.state}${pos.x > W * 0.62 ? ' flip' : ''}${f != null && f !== i ? ' dim' : ''}${f === i ? ' focus' : ''}`;
-    // Someone who hasn't started stays off the floor; someone who stopped stays where they were, faded.
-    person.hidden = !p.lastT && p.state === 'off';
-    person.style.left = (pos.x + CELL / 2) / W * 100 + '%';
-    person.style.top = (pos.y + CELL / 2) / H * 100 + '%';
-    person.querySelector('.fl-bubble').textContent = p.short;
-    person.querySelector('.fl-badge').textContent = p.state === 'needs' ? '?' : p.state === 'done' ? '✓' : '';
-    const tr = p.trail.slice(-6);
-    fp.trailEls[i]?.setAttribute('d', tr.length > 1 ? tr.map((c, j) => `${j ? 'L' : 'M'}${c.x + CELL / 2},${c.y + CELL / 2}`).join('') : '');
-    fp.trailEls[i]?.classList.toggle('dim', f != null && f !== i);
+    // On the street in front of the building it's in, or on the paving stone it's on out on the plaza; the ones in no
+    // building yet wait at the plaza's edge, spread out.
+    const door = !p.pos ? [g.hall.door[0] - 90 + i * 60, g.hall.door[1] + 14] : p.pos.room.hall ? [p.pos.x, p.pos.y] : p.pos.room.door;
+    const x = door[0] + (p.pos && !p.pos.room.hall ? (i % 3 - 1) * 14 : 0), y = door[1] + (p.pos && !p.pos.room.hall ? Math.floor(i / 3) * 10 : 0);
+    person.setAttribute('class', `fl-person ${p.state}${x > W * 0.68 ? ' flip' : ''}${f != null && f !== i ? ' dim' : ''}${f === i ? ' focus' : ''}`);
+    // Someone who hasn't started stays off the street; someone who stopped stays where they were, faded.
+    if (!p.lastT && p.state === 'off') person.setAttribute('hidden', ''); else person.removeAttribute('hidden');
+    person.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
+    const bubble = person.querySelector('.bubble');
+    bubble.textContent = p.short;
+    if (x > W * 0.68) { bubble.setAttribute('x', -16); bubble.setAttribute('text-anchor', 'end'); } else { bubble.setAttribute('x', 16); bubble.setAttribute('text-anchor', 'start'); }
+    person.querySelector('.badge-t').textContent = p.state === 'needs' ? '?' : p.state === 'done' ? '✓' : '';
+    const tr = p.trail.slice(-6).map((c) => c.room.hall ? [c.x, c.y] : c.room.door);
+    if (p.pos) tr.push([x, y]);
+    fp.trailEls[i]?.setAttribute('d', tr.length > 1 ? tr.map((d, j) => `${j ? 'L' : 'M'}${d[0].toFixed(1)},${d[1].toFixed(1)}`).join('') : '');
+    fp.trailEls[i]?.setAttribute('class', `fl-trail ${p.state}${f != null && f !== i ? ' dim' : ''}`);
   });
   // Whoever needs your answer, at the top. The answer goes in the session itself: this page can't type into it.
   const attn = $('#attn');
@@ -510,24 +580,23 @@ function showSession(s) {
   ask('showSession', { sessionId: s.id }).catch(() => load());   // gone since: read the sessions again
 }
 
-/** Zooms the floor to where the focused person has been; the others fade. */
+/** Zooms the city to where the focused session has been; the others fade. */
 function focus(i) { fp.focus = i; if (fp.unzoom) fp.unzoom.hidden = i == null; render(); }
 
 function zoom() {
   const stage = fp.stage, host = $('#stage');
   if (!stage) return;
   const p = fp.focus != null ? fp.world?.per[fp.focus] : null;
-  const pts = p ? [...p.trail.slice(-8), p.pos].filter(Boolean) : [];
-  if (!pts.length) { stage.style.transform = ''; stage.style.setProperty('--k', 1); stage.classList.remove('zoomed'); return; }
-  const xs = pts.map((c) => c.x), ys = pts.map((c) => c.y);
-  const bx = Math.min(...xs) - 60, by = Math.min(...ys) - 40, bw = Math.max(...xs) - Math.min(...xs) + CELL + 120, bh = Math.max(...ys) - Math.min(...ys) + CELL + 80;
-  const k = Math.min(3.2, Math.max(1.4, Math.min(W / bw, H / bh)));
+  const points = p ? [...p.trail.slice(-8), p.pos].filter(Boolean).flatMap((c) => [c.room.door, c.room.faces.top[0], c.room.faces.top[2]]) : [];
+  if (!points.length) { stage.style.transform = ''; stage.classList.remove('zoomed'); return; }
+  const xs = points.map((d) => d[0]), ys = points.map((d) => d[1]);
+  const bx = Math.min(...xs) - 50, by = Math.min(...ys) - 40, bw = Math.max(...xs) - Math.min(...xs) + 100, bh = Math.max(...ys) - Math.min(...ys) + 90;
+  const k = Math.min(2.6, Math.max(1.3, Math.min(W / bw, H / bh)));
   const cx = bx + bw / 2, cy = by + bh / 2, u = host.clientWidth / W;
   let tx = host.clientWidth / 2 - cx * u * k, ty = host.clientHeight / 2 - cy * u * k;
   tx = Math.min(0, Math.max(host.clientWidth - W * u * k, tx)); ty = Math.min(0, Math.max(host.clientHeight - H * u * k, ty));
   stage.style.transform = `translate(${tx}px, ${ty}px) scale(${k})`;
-  stage.style.setProperty('--k', k);
-  stage.classList.toggle('zoomed', k >= 2);
+  stage.classList.toggle('zoomed', k >= 1.8);
 }
 
 /** A lane per session under the slider, a tick per event (your prompts brighter), so you can see who was busy when. */
@@ -566,7 +635,7 @@ function play() {
 }
 function goLive() { stop(); fp.idx = null; render(); }
 
-// Tooltips for cells and people.
+// Tooltips for windows and beacons.
 const tip = $('#tip');
 $('#stage').addEventListener('mousemove', (e) => {
   const cell = e.target.closest?.('.fl-cell'), person = e.target.closest?.('.fl-person'), world = fp.world;
@@ -582,7 +651,7 @@ $('#stage').addEventListener('mousemove', (e) => {
   tip.style.top = Math.max(4, e.clientY - tip.offsetHeight - 10) + 'px';
 });
 $('#stage').addEventListener('mouseleave', () => { tip.hidden = true; });
-$('#stage').addEventListener('click', (e) => { if (e.target.classList?.contains('fl-room') || e.target.classList?.contains('fl-hall') || e.target.tagName === 'svg') focus(null); });
+$('#stage').addEventListener('click', (e) => { if (e.target.classList?.contains('face') || e.target.tagName === 'svg' || e.target.tagName === 'line') focus(null); });
 
 $('#play').addEventListener('click', play);
 $('#live').addEventListener('click', goLive);
