@@ -70,7 +70,7 @@ function dress(theme, id) {
 }
 
 // The rain, for the app's Matrix theme: this page is its own frame and can't see the app's, so it rains on a canvas of its
-// own behind the map, dimmer than the app's so the rows read.
+// own behind the map, much fainter than the app's so the rows read.
 const rain = { canvas: null, ctx: null, cols: [], timer: null };
 const RAIN_GLYPHS = 'ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ0123456789Z:・"=*+-<>¦|ç';
 const RAIN_CELL = 14;
@@ -110,9 +110,9 @@ function rainFrame() {
   for (let i = 0; i < rain.cols.length; i++) {
     const c = rain.cols[i], y = Math.floor(c.y);
     if (y >= 0 && y < rain.rows + 1) {
-      ctx.fillStyle = colour; ctx.globalAlpha = 0.45;
+      ctx.fillStyle = colour; ctx.globalAlpha = 0.22;
       ctx.fillText(RAIN_GLYPHS[Math.floor(Math.random() * RAIN_GLYPHS.length)], i * RAIN_CELL + 1, (y - 1) * RAIN_CELL);
-      ctx.fillStyle = '#ffffff'; ctx.globalAlpha = 0.6;
+      ctx.fillStyle = '#ffffff'; ctx.globalAlpha = 0.32;
       ctx.fillText(RAIN_GLYPHS[Math.floor(Math.random() * RAIN_GLYPHS.length)], i * RAIN_CELL + 1, y * RAIN_CELL);
       ctx.globalAlpha = 1;
     }
