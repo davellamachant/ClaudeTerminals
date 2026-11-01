@@ -48,6 +48,20 @@ addEventListener('message', (e) => {
     if ('error' in m) p.reject(new Error(m.error)); else p.resolve(m.result);
   } else if (m.type === 'claude-terminals:theme') {
     dress(m);
+  } else if (m.type === 'claude-terminals:state') {
+    // Just moved between the side panel and a document tab: the chat it sent along comes back.
+    placed(m.placement);
+    const s = m.state;
+    if (s && typeof s === 'object') {
+      if (Array.isArray(s.chat)) st.chat = s.chat.filter((x) => x && typeof x.text === 'string').slice(-200);
+      if (typeof s.scope === 'string') st.wanted = s.scope;
+      if (typeof s.to === 'string') st.to = s.to;
+      if (typeof s.input === 'string') $('#input').value = s.input;
+      applyWanted();
+      renderChat();
+      renderHeader();
+      renderComposer();
+    }
   } else if (m.type === 'claude-terminals:command') {
     // Opened from a session's or a project's menu, or the title bar button: ask about that.
     const c = m.context ?? {};
@@ -57,6 +71,23 @@ addEventListener('message', (e) => {
     $('#input').focus();
   }
 });
+
+// ---- where the page is: the side panel (its usual place) or, on request, a wide document tab for big tables and long code
+
+let placement = new URLSearchParams(location.search).get('placement') === 'tab' ? 'tab' : 'panel';
+function placed(where) {
+  placement = where === 'tab' ? 'tab' : 'panel';
+  const b = $('#place');
+  b.textContent = placement === 'panel' ? 'Open wide' : 'Back to panel';
+  b.title = placement === 'panel' ? 'Open this chat as a wide document tab, for big tables and long code; the chat comes along'
+    : 'Put this chat back in the side panel; the chat comes along';
+}
+$('#place').addEventListener('click', () => {
+  // The app starts the page again in the other place and hands this back (see the state message).
+  const state = { chat: st.chat.filter((m) => !m.pending), scope: st.scope, to: st.to, input: $('#input').value };
+  parent.postMessage({ type: 'claude-terminals:open', placement: placement === 'panel' ? 'tab' : 'panel', state }, '*');
+});
+placed(placement);
 
 // ---- the look: the app's theme down to its colours and font, so this page matches whatever theme is on
 
@@ -327,6 +358,17 @@ function markdown(text) {
       out.append(h('pre', {}, h('code', {}, code.join('\n'))));
       continue;
     }
+    // A table: a header row of cells between pipes, a rule of dashes, then rows. It scrolls sideways in the side panel.
+    const row = /^\s*\|.*\|\s*$/, rule = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
+    if (row.test(line) && i + 1 < lines.length && rule.test(lines[i + 1])) {
+      const cells = (l) => l.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
+      const table = h('table', {}, h('thead', {}, h('tr', {}, ...cells(line).map((c) => h('th', {}, inline(c))))));
+      const body = h('tbody');
+      for (i += 2; i < lines.length && row.test(lines[i]); i++) body.append(h('tr', {}, ...cells(lines[i]).map((c) => h('td', {}, inline(c)))));
+      table.append(body);
+      out.append(h('div', { class: 'table' }, table));
+      continue;
+    }
     const bullet = /^\s*[-*•]\s+/, numbered = /^\s*\d+[.)]\s+/;
     if (bullet.test(line) || numbered.test(line)) {
       const ordered = numbered.test(line);
@@ -340,7 +382,7 @@ function markdown(text) {
       continue;
     }
     const para = [];
-    while (i < lines.length && lines[i].trim() !== '' && !lines[i].startsWith('```') && !bullet.test(lines[i]) && !numbered.test(lines[i])) para.push(lines[i++]);
+    while (i < lines.length && lines[i].trim() !== '' && !lines[i].startsWith('```') && !bullet.test(lines[i]) && !numbered.test(lines[i]) && !(row.test(lines[i]) && rule.test(lines[i + 1] ?? ''))) para.push(lines[i++]);
     const p = h('p', {}, inline(para[0].replace(/^#+\s*/, '')));
     for (const l of para.slice(1)) p.append(h('br'), inline(l));
     out.append(p);

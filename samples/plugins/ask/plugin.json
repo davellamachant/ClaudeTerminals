@@ -2,6 +2,7 @@
   "title": "Ask",
   "description": "A chat beside your sessions: ask what each is doing or waiting on, have a message drafted, and type it into any session",
   "entry": "index.html",
+  "placement": "panel",
   "access": ["sessions", "ask", "type"],
   "toolbar": { "icon": "ask.svg", "tooltip": "ask about your sessions", "command": "open" },
   "menu": [

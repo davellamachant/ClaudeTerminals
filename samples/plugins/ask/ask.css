@@ -82,3 +82,7 @@ main { flex: 1; min-height: 0; overflow: auto; padding: 14px; outline: none; }
 .help i { font-style: normal; color: var(--text); background: var(--code); padding: 0 4px; border-radius: 3px; }
 :root[data-glow] body { text-shadow: 0 0 6px color-mix(in srgb, var(--accent) 30%, transparent); }   /* a theme with a glow (the app says) */
 :root[data-glow] :is(textarea, input, pre, code) { text-shadow: none; }
+.bubble .table { margin: 0 0 8px; overflow-x: auto; }   /* a wide table scrolls sideways in the side panel; Open wide shows it whole */
+.bubble table { border-collapse: collapse; font-size: 12px; }
+.bubble th, .bubble td { border: 1px solid var(--border-soft); padding: 3px 8px; text-align: left; vertical-align: top; white-space: nowrap; }
+.bubble th { background: var(--code); font-weight: 600; }
