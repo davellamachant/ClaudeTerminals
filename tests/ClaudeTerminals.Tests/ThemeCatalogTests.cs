@@ -42,9 +42,15 @@ public sealed class ThemeCatalogTests : IDisposable
         var tron = Assert.Single(themes, t => t.Id == "tron");
         Assert.Equal(("Tron", "dark", "Bahnschrift", true, false, true), (tron.Name, tron.Base, tron.Font, tron.Glow, tron.Monochrome, tron.BuiltIn));
         Assert.Equal(("#00e5ff", "#087a8c"), (tron.Accent!.Line, tron.Accent.Strong));
-        Assert.Equal(ThemeCatalog.ColorNames.OrderBy(n => n), tron.Colors.Keys.OrderBy(n => n));
-        Assert.Equal(ThemeCatalog.DiffNames.OrderBy(n => n), tron.Diff.Keys.OrderBy(n => n));
-        Assert.Equal(ThemeCatalog.TerminalNames.Except(["selectionForeground"]).OrderBy(n => n), tron.Terminal.Keys.OrderBy(n => n));
+        var ares = Assert.Single(themes, t => t.Id == "tron-ares");
+        Assert.Equal(("Tron: Ares", "dark", "Bahnschrift", true, true), (ares.Name, ares.Base, ares.Font, ares.Glow, ares.BuiltIn));
+        Assert.Equal(("#ff3b3b", "#c01818"), (ares.Accent!.Line, ares.Accent.Strong));
+        foreach (var t in new[] { tron, ares })
+        {
+            Assert.Equal(ThemeCatalog.ColorNames.OrderBy(n => n), t.Colors.Keys.OrderBy(n => n));
+            Assert.Equal(ThemeCatalog.DiffNames.OrderBy(n => n), t.Diff.Keys.OrderBy(n => n));
+            Assert.Equal(ThemeCatalog.TerminalNames.Except(["selectionForeground"]).OrderBy(n => n), t.Terminal.Keys.OrderBy(n => n));
+        }
     }
 
     [Fact]
