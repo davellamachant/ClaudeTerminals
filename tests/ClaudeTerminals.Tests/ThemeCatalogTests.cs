@@ -42,11 +42,13 @@ public sealed class ThemeCatalogTests : IDisposable
         var tron = Assert.Single(themes, t => t.Id == "tron");
         Assert.Equal(("Tron", "dark", "Bahnschrift", true, false, true), (tron.Name, tron.Base, tron.Font, tron.Glow, tron.Monochrome, tron.BuiltIn));
         Assert.Equal(("#00e5ff", "#087a8c"), (tron.Accent!.Line, tron.Accent.Strong));
+        Assert.Null(nerds.Cursor);
         var ares = Assert.Single(themes, t => t.Id == "tron-ares");
         Assert.Equal(("Tron: Ares", "dark", "Bahnschrift", true, true), (ares.Name, ares.Base, ares.Font, ares.Glow, ares.BuiltIn));
         Assert.Equal(("#ff3b3b", "#c01818"), (ares.Accent!.Line, ares.Accent.Strong));
         foreach (var t in new[] { tron, ares })
         {
+            Assert.Equal("light-cycle", t.Cursor);
             Assert.Equal(ThemeCatalog.ColorNames.OrderBy(n => n), t.Colors.Keys.OrderBy(n => n));
             Assert.Equal(ThemeCatalog.DiffNames.OrderBy(n => n), t.Diff.Keys.OrderBy(n => n));
             Assert.Equal(ThemeCatalog.TerminalNames.Except(["selectionForeground"]).OrderBy(n => n), t.Terminal.Keys.OrderBy(n => n));
@@ -73,6 +75,7 @@ public sealed class ThemeCatalogTests : IDisposable
             name = "Neon",
             @base = "light",
             font = "Comic Sans; } body { display: none",
+            cursor = "comet",
             colors = new { chrome = "#101010", text = "rgba(255, 0, 255, .8)", accent = "#ff00ff", sneaky = "#000", panel = "url(https://example.com/x.png)" },
             terminal = new { red = "#ff0000", fontSize = "40" },
             diff = new { insertedLine = "rgb(0, 255, 0)", removedLine = "#ff000044" },
@@ -81,11 +84,11 @@ public sealed class ThemeCatalogTests : IDisposable
         var (themes, problems) = ThemeCatalog.Load(builtIn, user);
 
         var neon = Assert.Single(themes);
-        Assert.Equal(("neon", "light", null, false), (neon.Id, neon.Base, neon.Font, neon.BuiltIn));
+        Assert.Equal(("neon", "light", null, null, false), (neon.Id, neon.Base, neon.Font, neon.Cursor, neon.BuiltIn));
         Assert.Equal(new Dictionary<string, string> { ["chrome"] = "#101010", ["text"] = "rgba(255, 0, 255, .8)" }, neon.Colors);
         Assert.Equal(new Dictionary<string, string> { ["red"] = "#ff0000" }, neon.Terminal);
         Assert.Equal(new Dictionary<string, string> { ["removedLine"] = "#ff000044" }, neon.Diff);   // the editor only takes hex
-        Assert.Equal(6, problems.Count);   // the font, colors.accent and .sneaky, panel's url, fontSize, and the diff's rgb()
+        Assert.Equal(7, problems.Count);   // the font, the cursor, colors.accent and .sneaky, panel's url, fontSize, and the diff's rgb()
         Assert.All(problems, p => Assert.StartsWith("Neon.json: ", p));
     }
 

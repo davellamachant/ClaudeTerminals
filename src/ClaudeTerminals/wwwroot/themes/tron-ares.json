@@ -3,6 +3,7 @@
   "base": "dark",
   "font": "Bahnschrift",
   "glow": true,
+  "cursor": "light-cycle",
   "accent": { "line": "#ff3b3b", "strong": "#c01818" },
   "colors": {
     "chrome": "#130607", "chrome-2": "#0e0405", "chrome-3": "#0a0303",
