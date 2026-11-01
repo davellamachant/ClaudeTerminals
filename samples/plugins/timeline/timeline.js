@@ -90,6 +90,7 @@ const st = {
   sessions: [],                              // what the app says about each session (see the app's pluginSessionInfo)
   data: new Map(),                           // session id → { conversation, version, found, events: [{ t (ms), k, file, text, ok, q, ctx, out }] }
   mode: stored('timeline.mode', 'all'),      // 'all' | 'one'
+  open: new Set(),                           // 'session|prompt|kind' counts opened into what happened (This session)
   pinned: null,                              // in 'one' mode, a session chosen from its menu; otherwise the open tab's
   window: stored('timeline.window', 60),     // minutes shown
   summary: null,                             // { pending, error, text, when, names } from the last Summarise
@@ -312,21 +313,35 @@ function stops(s, since) {
   prompts.forEach(([p, i], n) => {
     const end = n === 0 ? ev.length : prompts[n - 1][1];
     const turn = ev.slice(i + 1, end);
-    const counts = {};
+    const groups = {};   // bead kind → the turn's events of that kind, so a count can open into what happened
     let out = 0;
-    for (const e of turn) { const kind = BEAD[e.k]; if (kind) counts[kind] = (counts[kind] ?? 0) + 1; out += e.out ?? 0; }
+    for (const e of turn) { const kind = BEAD[e.k]; if (kind) (groups[kind] ??= []).push(e); out += e.out ?? 0; }
     const live = n === 0 && (s.status === 'working' || s.status === 'asking');
+    const promptIndex = ev.slice(0, i + 1).filter((e) => e.k === 'prompt').length - 1;
+    const keyOf = (kind) => `${s.id}|${promptIndex}|${kind}`;
+    const openKinds = Object.keys(groups).filter((kind) => st.open.has(keyOf(kind)));
     list.append(h('div', { class: 'stop' + (live ? ' ' + s.status : '') },
       h('div', { class: 't' }, ago(p.t)),
       h('div', { class: 'rail' }, h('i')),
       h('div', { class: 'body' },
-        h('div', { class: 'prompt', title: 'Show this prompt in the session', 'data-session': s.id, 'data-at': new Date(p.t).toISOString(), 'data-index': ev.slice(0, i + 1).filter((e) => e.k === 'prompt').length - 1 }, p.text),
+        h('div', { class: 'prompt', title: 'Show this prompt in the session', 'data-session': s.id, 'data-at': new Date(p.t).toISOString(), 'data-index': promptIndex }, p.text),
         h('div', { class: 'did' }, n === 0 && s.status === 'working' ? describe(s).intent : didOf(turn)),
-        (Object.keys(counts).length || out) ? h('div', { class: 'beads' },
-          ...Object.entries(counts).map(([kind, c]) => h('span', {}, h('span', { class: 'bead ' + kind }), plural(c, BEAD_NAME[kind]))),
-          out ? h('span', { class: 'cost' }, k(out) + ' tokens written') : null) : null)));
+        (Object.keys(groups).length || out) ? h('div', { class: 'beads' },
+          ...Object.entries(groups).map(([kind, list]) => h('button', {
+            class: 'count' + (st.open.has(keyOf(kind)) ? ' on' : ''), title: `${st.open.has(keyOf(kind)) ? 'Hide' : 'Show'} the ${plural(list.length, BEAD_NAME[kind])}`,
+            onclick: () => { const key = keyOf(kind); if (!st.open.delete(key)) st.open.add(key); render(); },
+          }, h('span', { class: 'bead ' + kind }), plural(list.length, BEAD_NAME[kind]))),
+          out ? h('span', { class: 'cost' }, k(out) + ' tokens written') : null) : null,
+        ...openKinds.map((kind) => detail(kind, groups[kind])))));
   });
   return list;
+}
+
+/** What happened, one line each, under a count that was opened: the file, command, search or question, when, and a failure. */
+function detail(kind, list) {
+  return h('ul', { class: 'detail' },
+    ...list.map((e) => h('li', { class: e.ok === false ? 'bad' : '', title: [e.file, e.text].filter(Boolean).join('\n') },
+      h('span', { class: 'bead ' + kind }), h('span', { class: 'what' }, doing(e)), h('span', { class: 't' }, ago(e.t)))));
 }
 
 function tokensLine(list, since) {

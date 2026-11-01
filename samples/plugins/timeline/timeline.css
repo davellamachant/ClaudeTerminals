@@ -125,6 +125,17 @@ main { flex: 1; min-height: 0; overflow: auto; padding: 8px 12px 12px; outline: 
 .stop .beads .bead, .legend .bead, .legend .st { position: static; transform: none; }
 .stop .beads .bead.test, .legend .bead.test { transform: rotate(45deg); }
 .stop .cost { margin-left: auto; }
+/* A count opens into what happened: one line per edit, read, command, test run or question. */
+.stop .beads .count { display: inline-flex; align-items: center; gap: 5px; border: 0; background: none; padding: 0; color: inherit; font: inherit; cursor: pointer; }
+.stop .beads .count:hover, .stop .beads .count.on { color: var(--text); }
+.stop .detail { margin: 4px 0 0; padding: 0 0 0 4px; list-style: none; font-size: 11px; color: var(--text-dim); }
+.stop .detail li { display: flex; align-items: baseline; gap: 6px; padding: 1px 0; }
+.stop .detail .bead { position: static; transform: none; flex: none; align-self: center; }
+.stop .detail .bead.test { transform: rotate(45deg); }
+.stop .detail .what { min-width: 0; overflow-wrap: anywhere; }
+.stop .detail .t { margin-left: auto; flex: none; color: var(--text-faint); font-size: 10px; }
+.stop .detail .bad .what { color: var(--danger); }
+.stop .detail .bad .what::after { content: " · failed"; }
 
 /* ---- the summary (the one thing that costs a call) */
 .summary { position: relative; margin: 4px 0 10px; padding: 8px 30px 8px 12px; border-left: 3px solid var(--accent); background: var(--panel); border-radius: 0 6px 6px 0; font-size: 12px; }
