@@ -38,7 +38,7 @@ internal sealed record PluginButton(string Icon, string? Tooltip, string? Comman
 
 /// <summary>
 /// Finds the plugins in the profile's plugins folder: each subfolder holding a plugin.json such as
-/// <c>{ "title": "Floor plan", "description": "…", "entry": "index.html", "placement": "panel",
+/// <c>{ "title": "Session board", "description": "…", "entry": "index.html", "placement": "panel",
 /// "menu": [{ "label": "…", "command": "…", "where": ["session", "sessionTab"] }], "access": ["sessions"] }</c>. A plugin is
 /// only a page: it runs in a sandboxed frame and can't reach the app's bridge. It's given no session, file or terminal,
 /// except what its "access" asks to see once you've allowed it: read only, and through the app's page.
