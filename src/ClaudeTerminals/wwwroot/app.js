@@ -473,13 +473,83 @@ function themeLook() {
   if (!themes.list.includes(t)) return t;   // the kept look
   const made = t.monochrome ? monochromeLook(accentColour(), t.base === 'light') : {};
   return {
-    id: t.id, name: t.name, base: t.base, font: t.font, glow: t.glow, grid: !!t.grid, monochrome: t.monochrome, cursor: t.cursor ?? null,
+    id: t.id, name: t.name, base: t.base, font: t.font, glow: t.glow, grid: !!t.grid, rain: !!t.rain, monochrome: t.monochrome, cursor: t.cursor ?? null,
     colors: { ...made.colors, ...t.colors }, terminal: { ...made.terminal, ...t.terminal }, diff: { ...made.diff, ...t.diff },
     accent: t.accent ?? made.accent ?? null,
   };
 }
 
 let themeColors = [];   // the colours the theme in use set on the page, to take off again
+// The rain (a theme's "rain": true): glyphs falling down the window's floor in the accent colour, on a canvas fixed behind
+// everything (see #rain in app.css); the title bar, tabs, panels and terminals are see-through over it as over the Grid.
+// Each column is one drop: a bright head, a tail that fades as the canvas is washed with the floor colour each frame.
+const rain = { canvas: null, ctx: null, cols: [], timer: null, colour: '#39ff6a', floor: '#000000' };
+const RAIN_GLYPHS = 'ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ0123456789Z:・"=*+-<>¦|ç';
+const RAIN_CELL = 16, RAIN_MS = 70;
+
+/** Starts the rain, or stops it and takes its canvas away. */
+function digitalRain(on) {
+  if (!on) {
+    clearInterval(rain.timer); rain.timer = null;
+    rain.canvas?.remove(); rain.canvas = rain.ctx = null; rain.cols = [];
+    return;
+  }
+  if (rain.canvas) { rainColours(); return; }
+  const canvas = h('canvas', { id: 'rain', 'aria-hidden': 'true' });
+  document.body.prepend(canvas);
+  rain.canvas = canvas; rain.ctx = canvas.getContext('2d');
+  rainColours();
+  rainSize();
+  const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (still) { for (let i = 0; i < 60; i++) rainFrame(); return; }   // a settled picture, not a moving one
+  rain.timer = setInterval(() => { if (!document.hidden) rainFrame(); }, RAIN_MS);
+}
+
+/** The rain's colours, from the theme on screen: the accent for the glyphs, the chrome for the floor it washes to. */
+function rainColours() {
+  const css = getComputedStyle(document.documentElement);
+  rain.colour = css.getPropertyValue('--accent').trim() || '#39ff6a';
+  rain.floor = css.getPropertyValue('--chrome').trim() || '#000000';
+}
+
+/** Fits the canvas to the window at the device's resolution and starts a drop in every column. */
+function rainSize() {
+  const { canvas, ctx } = rain;
+  if (!canvas) return;
+  const dpr = devicePixelRatio || 1, w = innerWidth, hgt = innerHeight;
+  canvas.width = Math.round(w * dpr); canvas.height = Math.round(hgt * dpr);
+  canvas.style.width = w + 'px'; canvas.style.height = hgt + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = rain.floor; ctx.fillRect(0, 0, w, hgt);
+  const n = Math.ceil(w / RAIN_CELL);
+  rain.cols = Array.from({ length: n }, () => ({ y: -Math.random() * hgt * 3 / RAIN_CELL, speed: 0.4 + Math.random() * 0.7 }));   // staggered, so only some columns rain at once
+  rain.rows = Math.ceil(hgt / RAIN_CELL);
+}
+
+function rainFrame() {
+  const { ctx, canvas } = rain;
+  if (!ctx) return;
+  const w = canvas.clientWidth, hgt = canvas.clientHeight;
+  ctx.fillStyle = rain.floor; ctx.globalAlpha = 0.16; ctx.fillRect(0, 0, w, hgt); ctx.globalAlpha = 1;   // the tails fade
+  ctx.font = `${RAIN_CELL - 2}px "MS Gothic", "Cascadia Mono", Consolas, monospace`;
+  ctx.textBaseline = 'top';
+  for (let i = 0; i < rain.cols.length; i++) {
+    const c = rain.cols[i];
+    const y = Math.floor(c.y);
+    if (y >= 0 && y < rain.rows + 1) {
+      const glyph = RAIN_GLYPHS[Math.floor(Math.random() * RAIN_GLYPHS.length)];
+      ctx.fillStyle = rain.colour; ctx.globalAlpha = 0.5;
+      ctx.fillText(glyph, i * RAIN_CELL + 1, (y - 1) * RAIN_CELL);   // last cell: back to the accent
+      ctx.fillStyle = '#ffffff'; ctx.globalAlpha = 0.8;
+      ctx.fillText(RAIN_GLYPHS[Math.floor(Math.random() * RAIN_GLYPHS.length)], i * RAIN_CELL + 1, y * RAIN_CELL);   // the head, white-hot
+      ctx.globalAlpha = 1;
+    }
+    c.y += c.speed;
+    if (c.y > rain.rows + 2 && Math.random() < 0.015) { c.y = -Math.random() * 30; c.speed = 0.4 + Math.random() * 0.7; }
+  }
+}
+addEventListener('resize', () => rainSize());
+
 /** Marks the page with the theme: data-theme light or dark for the stylesheet, and a theme's own colours, font and glow. */
 function markTheme(look = themeLook()) {
   const root = document.documentElement;
@@ -492,6 +562,9 @@ function markTheme(look = themeLook()) {
   else delete root.dataset.glow;
   if (look?.grid) root.dataset.grid = '';
   else delete root.dataset.grid;
+  if (look?.rain) root.dataset.rain = '';
+  else delete root.dataset.rain;
+  digitalRain(!!look?.rain);
 }
 markTheme(themes.last?.id === theme.pref ? themes.last : null);   // the accent isn't known yet: last time's look
 
@@ -607,7 +680,7 @@ function monochromeLook(hex, light) {
 }
 
 /** The accent changed: a monochrome theme is built from it, so everything is recoloured; otherwise only the accent. */
-const accentChanged = () => (currentTheme()?.monochrome ? applyTheme() : applyAccent());
+const accentChanged = () => { if (currentTheme()?.monochrome) applyTheme(); else applyAccent(); rainColours(); };
 
 // How the status dots move (see app.css): picked in Status dots… from the theme menu, and kept per person.
 const DOT_STYLES = [
@@ -664,7 +737,8 @@ const trailsAllowed = () => !matchMedia('(prefers-reduced-motion: reduce)').matc
 function dressCursor(s) {
   const t = termTheme();
   const theme = { ...t };
-  if (themeLook()?.grid) theme.background = 'rgba(0, 0, 0, 0)';
+  const look = themeLook();
+  if (look?.grid || look?.rain) theme.background = 'rgba(0, 0, 0, 0)';
   if (s.cycle) { theme.cursor = t.background; theme.cursorAccent = t.background; }
   s.term.options.theme = theme;
   s.term.options.cursorStyle = s.cycle ? 'underline' : 'block';
@@ -4995,6 +5069,7 @@ function applyTheme(before = null) {
   for (const s of state.sessions) lightCycle(s, look?.cursor === 'light-cycle');   // sets the terminal's colours either way
   if (window.monaco) monaco.editor.setTheme(diffTheme(look));
   applyAccent();
+  rainColours();   // the rain takes the accent, which is only now on the page
   for (const f of pluginFrames.values()) postPluginTheme(f.frame);
   // A theme's window and title bar take its own background; Light and Dark keep Windows' own.
   post({ type: 'theme', light: isLight(), background: look?.colors.chrome ?? null });
@@ -5262,6 +5337,7 @@ function themeSnapshot(title) {
     ...(look?.font ? { font: look.font } : {}),
     ...(look?.glow ? { glow: true } : {}),
     ...(look?.grid ? { grid: true } : {}),
+    ...(look?.rain ? { rain: true } : {}),
     ...(look?.cursor ? { cursor: look.cursor } : {}),
     accent: { line: value('accent'), strong: value('accent-strong') },
     colors: Object.fromEntries(themes.names.colors.map((n) => [n, value(n)]).filter(([, v]) => v)),
