@@ -2,6 +2,7 @@
   "title": "Messenger",
   "description": "Send a message to a Claude or Codex session and see the answers, or the messages sessions send it",
   "entry": "index.html",
+  "icon": "icon.svg",
   "placement": "panel",
   "access": ["message"],
   "inbox": true,

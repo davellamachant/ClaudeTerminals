@@ -1049,7 +1049,7 @@ internal sealed class MainForm : Form
                 grants.Reconcile(found);   // a plugin whose plugin.json changed is asked again
                 relay.SetPeers(RelayPeers());
                 return new { folder = PluginFolder, plugins = found.Select(p => new { id = p.Id, title = p.Title, description = p.Description, url = p.Url, placement = p.Placement,
-                    menu = p.Menu.Select(i => new { label = i.Label, command = i.Command, where = i.Where }), access = p.Access, inbox = p.Inbox,
+                    menu = p.Menu.Select(i => new { label = i.Label, command = i.Command, where = i.Where }), access = p.Access, inbox = p.Inbox, icon = p.Icon,
                     toolbar = p.Toolbar is { } t ? new { icon = t.Icon, tooltip = t.Tooltip, command = t.Command } : null }), problems };
             }
             case "plugins.openFolder":

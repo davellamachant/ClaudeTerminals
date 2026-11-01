@@ -717,7 +717,10 @@ span.combo-btn { pointer-events: none; }   /* a list's arrow only shows; the lis
 .menu-sep { height: 1px; background: var(--border); margin: 4px 2px; }
 .menu-sep.subtle { background: var(--border-soft); margin: 3px 24px; }   /* within a section: indented like the labels */
 .menu-header { padding: 6px 10px 3px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; color: var(--text-faint); cursor: default; }
-.menu-check { width: 12px; flex: none; text-align: center; }
+.menu-check { width: 16px; flex: none; display: flex; align-items: center; justify-content: center; }   /* a tick or an icon */
+.menu-check svg.ic { width: 14px; height: 14px; }
+img.plugin-ic { width: 16px; height: 16px; flex: none; object-fit: contain; }
+.menu-check img.plugin-ic { width: 14px; height: 14px; }
 
 #toastHost { position: fixed; right: 16px; bottom: 16px; z-index: 300; display: flex; flex-direction: column; gap: 8px; }
 .toast { padding: 8px 12px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--border); max-width: 420px; box-shadow: 0 8px 24px rgba(0, 0, 0, .4); white-space: pre-wrap; }

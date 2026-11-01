@@ -14,8 +14,11 @@ namespace ClaudeTerminals.Plugins;
 /// <param name="Toolbar">Its button in the title bar, beside New Session and Git Changes, if it has one.</param>
 /// <param name="Inbox">Whether sessions may message it ("inbox": true), as well as it them; it needs "message" access too.</param>
 /// <param name="ManifestHash">Its plugin.json's SHA-256: access you allowed is asked again when it changes (see PluginGrants).</param>
+/// <param name="Icon">Its icon, shown beside its name in menus, its tab and Permissions: "icon" in its plugin.json, else its
+/// title bar button's, as a data: URL (see <see cref="PluginButton"/>); null for the app's plugin icon.</param>
 internal sealed record PluginInfo(string Id, string Title, string? Description, string Entry, string Folder, string Placement,
-    IReadOnlyList<PluginMenuItem> Menu, IReadOnlyList<string> Access, PluginButton? Toolbar = null, bool Inbox = false, string ManifestHash = "")
+    IReadOnlyList<PluginMenuItem> Menu, IReadOnlyList<string> Access, PluginButton? Toolbar = null, bool Inbox = false, string ManifestHash = "",
+    string? Icon = null)
 {
     public string Host => PluginCatalog.HostFor(Id);
     public string Url => $"https://{Host}/{Entry}";
@@ -98,10 +101,13 @@ internal static partial class PluginCatalog
                     problems.Add($"{name}: placement must be \"tab\" or \"panel\"");
                     continue;
                 }
+                var button = ButtonOf(root, dir, name, problems);
+                var icon = Str(root, "icon") is { } own ? ImageOf(dir, own, name, "its icon", problems) : null;
                 plugins.Add(new PluginInfo(id, title, Str(root, "description"), entry, Path.GetFullPath(dir), placement, MenuOf(root, name, problems),
-                    AccessOf(root, name, problems), ButtonOf(root, dir, name, problems),
+                    AccessOf(root, name, problems), button,
                     Inbox: root.TryGetProperty("inbox", out var inbox) && inbox.ValueKind == JsonValueKind.True,
-                    ManifestHash: Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes))));
+                    ManifestHash: Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)),
+                    Icon: icon ?? button?.Icon));
             }
             catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
             {
@@ -185,22 +191,32 @@ internal static partial class PluginCatalog
     private static PluginButton? ButtonOf(JsonElement root, string dir, string name, List<string> problems)
     {
         if (!root.TryGetProperty("toolbar", out var t) || t.ValueKind != JsonValueKind.Object) return null;
-        var icon = Str(t, "icon")?.Replace('\\', '/').TrimStart('/');
-        if (icon == null || !IconTypes.TryGetValue(Path.GetExtension(icon), out var type) || !InFolder(dir, icon))
-        {
-            problems.Add($"{name}: its toolbar button needs an icon, an image file inside its folder ({string.Join(", ", IconTypes.Keys)})");
-            return null;
-        }
-        var bytes = File.ReadAllBytes(Path.Combine(dir, icon));
-        if (bytes.Length > MaxIconBytes)
-        {
-            problems.Add($"{name}: its toolbar icon is over {MaxIconBytes / 1024} KB");
-            return null;
-        }
+        if (ImageOf(dir, Str(t, "icon"), name, "its toolbar button's icon", problems) is not { } icon) return null;
         var tooltip = Str(t, "tooltip")?.Trim();
         var command = Str(t, "command");
-        return new PluginButton($"data:{type};base64,{Convert.ToBase64String(bytes)}", tooltip is { Length: > 0 } ? tooltip[..Math.Min(tooltip.Length, 80)] : null,
+        return new PluginButton(icon, tooltip is { Length: > 0 } ? tooltip[..Math.Min(tooltip.Length, 80)] : null,
             command is { Length: > 0 and <= 200 } ? command : null);
+    }
+
+    /// <summary>
+    /// An image file in the plugin's folder as a data: URL (the app page can't load it from the plugin's address), or null,
+    /// with why, when it isn't one, is outside the folder or is over <see cref="MaxIconBytes"/>.
+    /// </summary>
+    private static string? ImageOf(string dir, string? file, string name, string what, List<string> problems)
+    {
+        var path = file?.Replace('\\', '/').TrimStart('/');
+        if (path == null || !IconTypes.TryGetValue(Path.GetExtension(path), out var type) || !InFolder(dir, path))
+        {
+            problems.Add($"{name}: {what} needs to be an image file inside its folder ({string.Join(", ", IconTypes.Keys)})");
+            return null;
+        }
+        var bytes = File.ReadAllBytes(Path.Combine(dir, path));
+        if (bytes.Length > MaxIconBytes)
+        {
+            problems.Add($"{name}: {what} is over {MaxIconBytes / 1024} KB");
+            return null;
+        }
+        return $"data:{type};base64,{Convert.ToBase64String(bytes)}";
     }
 
     /// <summary>True when <paramref name="relative"/> names an existing file inside <paramref name="dir"/> (no "..", no other drive).</summary>

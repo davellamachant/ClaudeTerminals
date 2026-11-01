@@ -40,6 +40,8 @@ const PATHS = {
   shield: 'M8 1.5l5.5 2v4.2c0 3.2-2.3 5.6-5.5 6.8-3.2-1.2-5.5-3.6-5.5-6.8V3.5z',   // the Permissions view
   link: 'M6.8 9.2l2.4-2.4M7.3 4.7l1-1a2.6 2.6 0 0 1 3.7 3.7l-1 1M8.7 11.3l-1 1a2.6 2.6 0 0 1-3.7-3.7l1-1',   // a session that may message others
   mail: 'M2 4h12v8.5H2zM2 4.5l6 4.5 6-4.5',   // unread messages
+  save: 'M2.5 2.5h9l2 2v9h-11zM5 2.5v3.5h5v-3.5M5 13.5v-4h6v4',   // Save as a new theme
+  warn: 'M8 2l6.5 11.5h-13zM8 6.5v3.5M8 12h.01',   // something couldn't be loaded
   markAllow: 'M3.5 8.5l3 3 6-7',                                          // Permissions: allowed
   markAsk: 'M5.8 5.8a2.2 2.2 0 1 1 3.2 2c-.7.4-1 .9-1 1.6v.6M8 12.6h.01',  // Permissions: you're asked first
   markDeny: 'M8 2a6 6 0 1 0 0 12A6 6 0 1 0 8 2M3.8 3.8l8.4 8.4',         // Permissions: not allowed
@@ -1377,9 +1379,11 @@ function closeMenu() {
 function showMenu(x, y, items) {
   closeMenu();
   // Pressing on the menu mustn't take focus: after Paste in the terminal's menu, typing has to go on in the terminal.
-  // Items: '-' for a separator ('~' for a lighter, shorter one within a section), { header } for a section title, or { label, action } with optional kbd, danger, and
-  // checked (ticked when true). If any item can be ticked, all get the tick column so their labels line up.
-  const ticks = items.some((it) => it && it.checked !== undefined);
+  // Items: '-' for a separator ('~' for a lighter, shorter one within a section), { header } for a section title, or { label, action } with optional kbd, danger,
+  // checked (ticked when true) and icon (a name from PATHS, or an element such as a plugin's image), which share a column
+  // at the start. If any item has either, all get the column so their labels line up.
+  const ticks = items.some((it) => it && (it.checked !== undefined || it.icon));
+  const lead = (it) => it.checked ? '✓' : typeof it.icon === 'string' ? iconEl(it.icon) : it.icon ?? '';
   const menu = h('div', {
     class: 'menu', onmousedown: (e) => e.preventDefault(),
     onmousemove: (e) => e.currentTarget.querySelector('.menu-item.active')?.classList.remove('active'),   // the pointer takes over
@@ -1388,7 +1392,7 @@ function showMenu(x, y, items) {
     : it.header
       ? h('div', { class: 'menu-header' }, it.header)
       : h('div', { class: 'menu-item' + (it.danger ? ' danger' : ''), onclick: () => { closeMenu(); it.action(); } },
-        ticks && h('span', { class: 'menu-check' }, it.checked ? '✓' : ''),
+        ticks && h('span', { class: 'menu-check' }, lead(it)),
         it.label, it.kbd && h('span', { class: 'kbd' }, it.kbd))));
   $('#menuHost').append(menu);
   const r = menu.getBoundingClientRect();
@@ -2216,7 +2220,7 @@ function renderDockTabs(g, tabs, open) {
       return h('button', {
         class: cls + ' plugin-tab', 'data-tab': t, role: 'tab', 'aria-selected': String(t === open),
         title: `${pluginCaption(id)}: a plugin${p?.description ? '\n' + p.description : ''}`,
-      }, iconEl('plug'), h('span', { class: 'panel-tab-title' }, pluginCaption(id)), pluginBadge(id));
+      }, pluginIcon(id), h('span', { class: 'panel-tab-title' }, pluginCaption(id)), pluginBadge(id));
     }
     if (!isPanelTab(t)) return h('button', { class: cls, 'data-tab': t, role: 'tab', 'aria-selected': String(t === open) }, GIT_TABS[t]);
     const p = panelByTab(t);
@@ -3774,7 +3778,7 @@ function renderDocTabs() {
         onclick: (e) => { if (!e.target.closest('button')) activateDoc(t.key); },
         onmousedown: (e) => { if (e.button === 1) e.preventDefault(); },
         onauxclick: (e) => { if (e.button === 1) closeDoc(t.key); },
-      }, iconEl('plug'), h('span', { class: 'doc-title' }, pluginCaption(t.pluginId)), pluginBadge(t.pluginId, 'badge'),
+      }, pluginIcon(t.pluginId), h('span', { class: 'doc-title' }, pluginCaption(t.pluginId)), pluginBadge(t.pluginId, 'badge'),
       h('button', { class: 'icon-btn small', title: 'Close (Ctrl+W)', onclick: () => closeDoc(t.key) }, iconEl('close')));
     }
     if (isPermsTab(t)) {
@@ -5076,16 +5080,16 @@ function themeMenu(x, y) {
     { label: 'Light', checked: theme.pref === 'light', action: () => setThemePref('light') },
     { label: 'Dark', checked: theme.pref === 'dark', action: () => setThemePref('dark') },
     ...themes.list.map((t) => ({ label: t.name, checked: theme.pref === t.id, kbd: t.builtIn ? '' : 'Yours', action: () => setThemePref(t.id) })),
-    themes.problems.length > 0 && { label: `${themes.problems.length} theme${themes.problems.length === 1 ? '' : 's'} not loaded`, kbd: 'Why?', action: () => toast(themes.problems.join('\n'), true) },
+    themes.problems.length > 0 && { icon: 'warn', label: `${themes.problems.length} theme${themes.problems.length === 1 ? '' : 's'} not loaded`, kbd: 'Why?', action: () => toast(themes.problems.join('\n'), true) },
     '~',
-    { label: 'Save as a new theme…', action: showSaveThemeDialog },
-    { label: 'Open the themes folder', action: () => request('themes.openFolder') },
+    { icon: 'save', label: 'Save as a new theme…', action: showSaveThemeDialog },
+    { icon: 'folder', label: 'Open the themes folder', action: () => request('themes.openFolder') },
     '-',
     { header: 'Accent colour' },
     own?.accent
-      ? { label: [h('span', { class: 'accent-dot', style: `background:${own.accent.line}` }), `${own.name}'s own`],
+      ? { icon: h('span', { class: 'accent-dot', style: `background:${own.accent.line}` }), label: `${own.name}'s own`,
         action: () => toast(`${own.name} has an accent colour of its own. Choose another theme to change it.`) }
-      : { label: [h('span', { class: 'accent-dot', style: `background:${colour}` }), c === 'windows' ? 'Windows accent' : c === 'purple' ? 'Original purple' : 'Custom'],
+      : { icon: h('span', { class: 'accent-dot', style: `background:${colour}` }), label: c === 'windows' ? 'Windows accent' : c === 'purple' ? 'Original purple' : 'Custom',
         kbd: 'Change…', action: showAccentDialog },
     '-',
     { header: 'Status dots' },
@@ -5093,14 +5097,14 @@ function themeMenu(x, y) {
     '-',
     { header: 'Plugins' },
     ...plugins.list.flatMap((p) => [
-      { label: p.title, kbd: p.placement === 'panel' ? 'Side panel' : '', action: () => openPlugin(p.id) },
+      { icon: pluginIcon(p.id), label: p.title, kbd: p.placement === 'panel' ? 'Side panel' : '', action: () => openPlugin(p.id) },
       ...p.menu.filter((m) => m.where.includes('palette')).map((m) => ({ label: [h('span', { class: 'menu-indent' }), m.label], action: () => openPlugin(p.id, m.command, { menu: 'palette' }) })),
       p.toolbar && hiddenPluginButtons.has(p.id) && { label: [h('span', { class: 'menu-indent' }), 'Show its title bar button'], action: () => setPluginButton(p.id, true) },
     ]),
     plugins.list.length > 0 && '~',   // the plugins, then what's done about them (as under Theme)
-    { label: 'Permissions', kbd: 'Plugins and sessions', action: () => openPermissions() },
-    plugins.problems.length > 0 && { label: `${plugins.problems.length} couldn't be loaded`, kbd: 'Why?', action: () => toast(plugins.problems.join('\n'), true) },
-    { label: plugins.list.length ? 'Open the plugins folder' : 'Add a plugin: open the plugins folder', action: () => request('plugins.openFolder') },
+    { icon: 'shield', label: 'Permissions', kbd: 'Plugins and sessions', action: () => openPermissions() },
+    plugins.problems.length > 0 && { icon: 'warn', label: `${plugins.problems.length} couldn't be loaded`, kbd: 'Why?', action: () => toast(plugins.problems.join('\n'), true) },
+    { icon: 'folder', label: plugins.list.length ? 'Open the plugins folder' : 'Add a plugin: open the plugins folder', action: () => request('plugins.openFolder') },
   ]);
 }
 
@@ -5511,6 +5515,8 @@ function closePluginFrame(id) {
 
 /** The plugin's tab caption: what it set, or its title. */
 const pluginCaption = (id) => pluginFrames.get(id)?.title ?? pluginById(id)?.title ?? id;
+/** A plugin's icon: the image its plugin.json names (or its title bar button's), else the app's plugin icon. */
+const pluginIcon = (id) => { const src = pluginById(id)?.icon; return src ? h('img', { class: 'ic plugin-ic', src, alt: '', draggable: 'false' }) : iconEl('plug'); };
 
 /** The count or dot it put on its tab, if any. */
 function pluginBadge(id, cls = 'tw-badge') {
@@ -5994,7 +6000,7 @@ function permsByPlugin() {
   }
   return [
     ...asking.map((p) => h('section', { class: 'perms-card' },
-      h('header', {}, iconEl('plug'), h('b', {}, p.title), h('span', { class: 'dim', title: 'Its folder' }, `${plugins.folder}\\${p.id}`),
+      h('header', {}, pluginIcon(p.id), h('b', {}, p.title), h('span', { class: 'dim', title: 'Its folder' }, `${plugins.folder}\\${p.id}`),
         pluginChanged.has(p.id) && h('span', { class: 'chip perms-waiting', title: 'What you allowed is asked again: its plugin.json changed since' }, 'Changed since you allowed it')),
       p.access.map((kind) => {
         const hidden = kind === 'sessions' ? (pluginHidden[p.id] ?? []).map((id) => state.byId.get(id)).filter(Boolean) : [];
