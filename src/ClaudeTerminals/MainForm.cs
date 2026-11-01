@@ -988,7 +988,8 @@ internal sealed class MainForm : Form
                 var others = OthersConversations(s);
                 var live = s.IsRunning ? await Task.Run(() => agent.LiveConversation(s, pids, others)) : null;
                 if (AdoptConversation(s, live)) { SaveSessions(); Post(SessionList()); }
-                var conv = await Task.Run(() => agent.ReadConversation(s, pids));
+                // A stopped session shows the conversation it would resume, so a prompt can still be jumped to in it.
+                var conv = await Task.Run(() => agent.ReadConversation(s, pids) ?? (s.IsRunning ? null : agent.ReadSavedConversation(s)));
                 if (conv == null) return new { found = false };
                 var same = OptStr(msg, "sessionId") == conv.SessionId;
                 if (same && msg.TryGetProperty("version", out var v) && v.ValueKind == JsonValueKind.Number && v.GetInt64() == conv.Version)
