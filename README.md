@@ -274,7 +274,7 @@ plugins\
   - `"sessionTab"`: a session tab's right-click menu.
 
   In the project and session menus, plugins' items are under a **Plugins** heading at the end, each with its plugin's name beside it.
-- **`access`:** what it asks for beyond its own page, one or a list: `"sessions"` (see **Seeing your sessions** below), `"message"` (see **Messaging your sessions**), `"ask"` (to put questions about them to Claude) and `"type"` (to type into them). Leave it out and it gets nothing.
+- **`access`:** what it asks for beyond its own page, one or a list: `"sessions"` (see **Seeing your sessions** below), `"message"` (see **Messaging your sessions**), and `"ask"` (to put questions about them to Claude). Leave it out and it gets nothing. No access lets a plugin type into a session as you: what it has to say reaches an agent as a message from it.
 - **`inbox`:** `true` lets sessions message it first, not only answer what it sends them (it needs `"message"` access too).
 - **`toolbar`:** a button in the title bar, after New Session and Git Changes, set apart from them. **`icon`** is an image file in the plugin's folder (SVG, PNG, ICO, GIF, JPEG or WebP, up to 64 KB); the button shows only the icon, never text, so it can't pass for one of the app's own buttons. Its tooltip is the plugin's name, then **`tooltip`** if given. Clicking it opens the plugin and sends **`command`**, if given, with the open session as context. The plugin's badge shows on its button too. Right-click the button › **Hide this button** to hide it; the plugin's **Show its title bar button** in the palette menu brings it back.
 
@@ -334,12 +334,6 @@ When a message comes for it, the app sends `message` `{ unread, from, fromName }
 | Request | Answer |
 |---|---|
 | `ask` `{ question, ids, history }` | `{ answer, writer, sessions }`: the agent's answer (light Markdown), the name of the agent that wrote it, and the ids of the sessions it was about. `ids` names the sessions to ask about (stopped ones too: their saved conversations are read); `history` is earlier `[{ question, answer }]` of the same chat, the last eight, so a follow-up makes sense. |
-
-**Typing into your sessions.** A plugin with `"access": ["type"]` can type into a session's terminal, as if you had pasted the text, and press Enter for you when it says so. You're asked before it may, since what it types reaches the agent there as a prompt; a toast says each time it types. It can't type into a session that has stopped at a question needing your answer, so it can never answer one for you. Text with several lines is pasted as one piece into Claude and Codex, which take a bracketed paste; a plain shell runs each line as it arrives, so a plugin should keep what it types into one to a single line. **Stop it typing into your sessions** in the palette menu takes it away again.
-
-| Request | Answer |
-|---|---|
-| `type` `{ sessionId, text, send }` | Types `text` (up to 20,000 characters) into the running session, and presses Enter when `send` is true: `{ sent }`. An error names why not: the session isn't running, or is waiting for your answer. |
 
 **Reset.** A plugin's card in Permissions › By plugin has **Reset** once you've answered anything about it: it forgets what it may do, its projects and the sessions hidden from it, so it asks again. A session's card in By session has **Reset** once it has rules of its own: they're cleared, and All sessions' rules decide.
 

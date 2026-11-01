@@ -186,11 +186,12 @@ public class PluginCatalogTests : IDisposable
         Assert.Empty(PluginCatalog.Load(Path.Combine(folder, "none")).Plugins);
 
     [Fact]
-    public void A_plugin_can_ask_for_asking_and_typing_too()
+    public void A_plugin_can_ask_for_asking_but_not_typing()
     {
+        // Typing into a session would reach its agent as you: a plugin messages it instead ("message").
         Plugin("ask", """{ "access": ["type", "ask", "sessions"] }""", "index.html");
         var (plugins, problems) = PluginCatalog.Load(folder);
-        Assert.Empty(problems);
-        Assert.Equal(["sessions", "ask", "type"], plugins.Single().Access);   // in the catalog's order
+        Assert.Equal(["sessions", "ask"], plugins.Single().Access);   // in the catalog's order
+        Assert.Contains("\"type\", which there isn't", Assert.Single(problems));
     }
 }

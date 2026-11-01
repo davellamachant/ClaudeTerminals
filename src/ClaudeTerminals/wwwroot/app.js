@@ -5923,18 +5923,6 @@ const PLUGIN_ACCESS = {
       h('p', {}, 'The plugin sees the answers. Allow only a plugin you trust. You can change your answer any time in Permissions, on the palette menu.'),
     ],
   },
-  type: {
-    verb: 'type into your sessions', title: 'Type into your sessions',
-    about: 'Type into the running sessions it sees, as if you had pasted it, and press Enter when it says so: what it types reaches the agent as your prompt. Never into a session waiting for your answer.',
-    dialog: (p) => [
-      h('p', {}, `${p.title} is a plugin, from ${plugins.folder}\\${p.id}. It asks to type into your sessions:`),
-      h('ul', {},
-        h('li', {}, 'text goes into a running session’s terminal as if you had pasted it, for you to send, or sent for you (Enter pressed) when the plugin says so;'),
-        h('li', {}, 'what it types reaches the agent there as a prompt, so it can set a session to work;'),
-        h('li', {}, 'it can’t type into a session that has stopped at a question needing your answer.')),
-      h('p', {}, 'A toast says each time it types. Allow only a plugin you trust. You can change your answer any time in Permissions, on the palette menu.'),
-    ],
-  },
 };
 
 /**
@@ -6670,9 +6658,7 @@ const pluginSessionInfo = (s) => ({
  *   ask { question, ids, history } → { answer, writer, sessions }: an agent run headless (the sessions' own, or Claude)
  *                          answers the question from the conversations of the sessions named; history is earlier
  *                          [{ question, answer }] of the same chat, so a follow-up makes sense
- * With "type" access:
- *   type { sessionId, text, send } → types text into the session's terminal as if pasted, and presses Enter when send
- *                          is true; refused while the session is stopped at a question needing your answer
+ * Nothing lets a plugin type into a session: what it has to say reaches an agent as a message from it ("message").
  */
 async function pluginRequest(p, m) {
   // A session hidden from the plugin is, to it, a session that doesn't exist.
@@ -6681,7 +6667,7 @@ async function pluginRequest(p, m) {
     if (!sees(m.sessionId)) throw new Error('There is no such session.');
     return state.byId.get(m.sessionId);
   };
-  const NEEDS = { sessions: 'sessions', activity: 'sessions', folders: 'sessions', showSession: 'sessions', showPrompt: 'sessions', messageTargets: 'message', sendMessage: 'message', readMessages: 'message', ask: 'ask', type: 'type' };
+  const NEEDS = { sessions: 'sessions', activity: 'sessions', folders: 'sessions', showSession: 'sessions', showPrompt: 'sessions', messageTargets: 'message', sendMessage: 'message', readMessages: 'message', ask: 'ask' };
   const kind = NEEDS[m.name];
   if (!kind) throw new Error(`There is no request "${m.name}".`);
   if (!p.access.includes(kind)) throw new Error(`Its plugin.json doesn't ask for "${kind}" access.`);
@@ -6737,18 +6723,6 @@ async function pluginRequest(p, m) {
         .map((x) => ({ question: x.question.slice(0, 4000), answer: x.answer.slice(0, 4000) }));
       const about = ids.map((id) => { const i = pluginSessionInfo(state.byId.get(id)); return { id, name: i.name, project: i.project, status: i.status }; });
       return request('plugins.ask', { question, history, sessions: about });
-    }
-    case 'type': {
-      const s = sessionArg();
-      const text = typeof m.text === 'string' ? m.text.slice(0, 20000) : '';
-      if (!text) throw new Error('There is nothing to type.');
-      if (s.startsOnOpen || !s.running) throw new Error(`"${s.name}" isn't running.`);
-      if (s.asking) throw new Error(`"${s.name}" is waiting for your answer to a question, so nothing is typed into it.`);
-      const send = m.send === true;
-      s.term.paste(text);
-      if (send) setTimeout(() => post({ type: 'input', id: s.id, data: '\r' }), 150);
-      toast(`${p.title} typed into "${s.name}"${send ? ' and sent it' : ''}.`);
-      return { sent: send };
     }
   }
 }
