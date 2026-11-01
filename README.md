@@ -301,6 +301,8 @@ The badge and caption last until its tab is closed. A plugin can only change its
 | `project` | `{ menu: 'project', project }`: the project's name (`null` for the sessions with no project) |
 | `session`, `sessionTab` | `{ menu, sessionId, session, directory, project }`: the session's id and name, its working folder, and its project's name (`null` if none) |
 
+A plugin's items are only on the sessions and projects it may see: it needs `access` (below) that you haven't refused, and a session in its projects that you haven't hidden from it. Until you've answered, its items are there, but say only `{ menu }`; choosing one is how it gets to ask. Its title bar button is always there, with the session fields only for a session it may see.
+
 Without `access`, that's all a plugin learns. The session id tells clicks on different sessions apart and stays the same while the session exists; it isn't a way into the session. The folder is the one the session runs in; the plugin still can't read it.
 
 **Seeing your sessions.** A plugin whose `plugin.json` has `"access": ["sessions"]` can ask about your sessions. The first time it asks, the app asks you whether to let it, saying what it would see, and keeps your answer either way. You also choose which sessions: **Only sessions in these projects** (the open session's project is ticked to start with), or **All sessions, including projects you add later**. A session in a project you ticked is seen as it comes and goes; a new project isn't until you add it, and a session moved out of one stops being seen (the plugin's page reloads, so it no longer holds what it was shown). A plugin allowed before this keeps seeing every project. It's read only: nothing here types into a session or changes a file.

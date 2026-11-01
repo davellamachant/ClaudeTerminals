@@ -345,7 +345,7 @@ function projectMenu(p, x, y) {
       '-',
       { label: 'Show only sessions with no project', action: () => showOnlyProject(UNKNOWN) },
       { label: state.hiddenProjects.has(UNKNOWN) ? 'Show alongside the others' : 'Hide', action: () => toggleProject(UNKNOWN) },
-      ...pluginMenuItems('project', { project: null }),
+      ...pluginMenuItems('project', { project: null }, NO_PROJECT),
     ]);
     return;
   }
@@ -361,7 +361,7 @@ function projectMenu(p, x, y) {
     i < state.projects.length - 1 && { label: 'Move right', action: () => moveProject(p, 1) },
     '-',
     { label: 'Delete project…', danger: true, action: () => confirmDeleteProject(p) },
-    ...pluginMenuItems('project', { project: p.name }),
+    ...pluginMenuItems('project', { project: p.name }, p.id),
   ]);
 }
 
@@ -5489,11 +5489,33 @@ const pluginSessionContext = (s) => ({ sessionId: s.id, session: s.name, directo
  * plugin and sends it the item's command with what was clicked: { menu, project } for a project (its name; null for
  * sessions with no project), and { menu, sessionId, session, directory, project } for a session (its id, name, working
  * folder and project's name). That's all a plugin learns: the id names the session, it doesn't open a way into it.
+ *
+ * Only a plugin that may see what was clicked has items there: one that asks for access you haven't refused (see
+ * pluginMenuSight). Until you've answered, its items are there but say only which menu they're on, so choosing one can
+ * bring up the question without the plugin learning the session first. `scopeKey` is a project's key (see scopeKeyOf).
  */
-function pluginMenuItems(where, context) {
-  const items = plugins.list.flatMap((p) => p.menu.filter((m) => m.where.includes(where))
-    .map((m) => ({ label: m.label, kbd: p.title, action: () => openPlugin(p.id, m.command, { menu: where, ...context }) })));
+function pluginMenuItems(where, context, scopeKey = null) {
+  const s = context.sessionId ? state.byId.get(context.sessionId) : null;
+  const items = plugins.list.flatMap((p) => {
+    const sight = pluginMenuSight(p, s, scopeKey);
+    if (sight === 'none') return [];
+    const sent = sight === 'sees' ? { menu: where, ...context } : { menu: where };
+    return p.menu.filter((m) => m.where.includes(where))
+      .map((m) => ({ icon: pluginIcon(p.id), label: m.label, kbd: p.title, action: () => openPlugin(p.id, m.command, sent) }));
+  });
   return items.length ? ['-', { header: 'Plugins' }, ...items] : [];
+}
+
+/**
+ * Whether plugin `p` may see session `s` (or the project `scopeKey`), for its menu items and title bar button: 'sees'
+ * when you've allowed it access and the session is in its projects and not hidden from it; 'asks' while you haven't
+ * answered; 'none' when it asks for no access, you refused all it asks for, or the session or project is kept from it.
+ */
+function pluginMenuSight(p, s, scopeKey = null) {
+  if (!p.access.length || p.access.every((k) => pluginAccessState(p.id, k) === 'deny')) return 'none';
+  if (!p.access.some((k) => pluginAccessState(p.id, k) === 'allow')) return 'asks';
+  if (s) return pluginSeesSession(p.id, s.id) ? 'sees' : 'none';
+  return scopeKey && pluginScope[p.id] && !pluginScope[p.id].projects.includes(scopeKey) ? 'none' : 'sees';
 }
 
 /**
@@ -5594,7 +5616,8 @@ function setPluginButton(id, shown) {
  * Each plugin's button, after New Session and Git Changes, set apart. Only an icon, its tooltip starting with the
  * plugin's name, so it can't pass for one of the app's own (such as Update). Clicking it opens the plugin and sends its
  * command, if it has one, with the open session as context ({ menu: 'toolbar', sessionId, session, directory, project },
- * or just { menu: 'toolbar' } with none open). It shows the plugin's badge too, while the plugin is open.
+ * or just { menu: 'toolbar' } with none open, or one it may not see: see pluginMenuSight). It shows the plugin's badge
+ * too, while the plugin is open.
  */
 function renderPluginButtons() {
   fill($('#pluginButtons'), plugins.list.filter((p) => p.toolbar && !hiddenPluginButtons.has(p.id)).map((p) => {
@@ -5603,7 +5626,7 @@ function renderPluginButtons() {
       class: 'tb-btn plugin-btn', title: tip, 'aria-label': tip,
       onclick: () => {
         const s = state.byId.get(state.expandedId);
-        openPlugin(p.id, p.toolbar.command, { menu: 'toolbar', ...(s ? pluginSessionContext(s) : {}) });
+        openPlugin(p.id, p.toolbar.command, { menu: 'toolbar', ...(s && pluginMenuSight(p, s) === 'sees' ? pluginSessionContext(s) : {}) });
       },
       oncontextmenu: (e) => { e.preventDefault(); showMenu(e.clientX, e.clientY, [{ header: p.title }, { label: 'Hide this button', action: () => setPluginButton(p.id, false) }]); },
     }, h('img', { src: p.toolbar.icon, alt: '', draggable: 'false' }), pluginBadge(p.id, 'plugin-btn-count'));
