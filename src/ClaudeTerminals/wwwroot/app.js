@@ -929,7 +929,7 @@ function createSession(info) {
       term.loadAddon(gl);
     } catch { /* DOM renderer fallback */ }
   }
-  if (themeLook()?.cursor === 'light-cycle') lightCycle(s, true);
+  lightCycle(s, themeLook()?.cursor === 'light-cycle');   // either way dresses the terminal for the theme (see-through over the Grid or the rain)
 
   term.attachCustomKeyEventHandler((e) => terminalKey(s, e));
   term.onData((data) => {
