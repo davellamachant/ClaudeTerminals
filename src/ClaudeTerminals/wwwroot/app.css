@@ -491,15 +491,17 @@ button.chip:hover { border-color: var(--border); color: var(--text); }
 
 /* ---------------------------------------------------------------- git tool window */
 #gitPanel { flex: none; display: flex; flex-direction: column; background: var(--panel); min-width: 260px; }
-.tw-title { display: flex; align-items: center; gap: 2px; height: 32px; padding: 0 4px 0 2px; border-bottom: 1px solid var(--border-soft); }
-.tw-tabs { display: flex; height: 100%; }
+/* The side panel's tab row: more tabs than fit the width go on to a second line rather than scrolling out of sight. */
+.tw-title { display: flex; align-items: flex-start; gap: 2px; min-height: 32px; padding: 0 4px 0 2px; border-bottom: 1px solid var(--border-soft); }
+.tw-tabs { display: flex; flex-wrap: wrap; min-height: 32px; }
 .tw-tab {
-  border: none; background: transparent; color: var(--text-dim); padding: 0 10px; cursor: pointer; height: 100%;
+  border: none; background: transparent; color: var(--text-dim); padding: 0 10px; cursor: pointer; height: 32px;
   border-bottom: 2px solid transparent; font-weight: 600;
 }
 .tw-tab:hover { color: var(--text); }
 .tw-tab.active { color: var(--text); border-bottom-color: var(--accent); }
-.tw-title .tw-tabs { min-width: 0; overflow-x: auto; scrollbar-width: none; flex: 0 1 auto; }
+.tw-title .tw-tabs { min-width: 0; flex: 1 1 auto; }
+.tw-title > .dock-fold { margin-top: 7px; }   /* level with the first line of tabs */
 .tw-tab { white-space: nowrap; flex: none; }
 .panel-tabs { display: contents; }
 .panel-tab { display: inline-flex; align-items: center; gap: 5px; }
@@ -864,11 +866,6 @@ span.combo-btn { pointer-events: none; }   /* a list's arrow only shows; the lis
 .tab-scroller.doc > .doc-tabs { flex: 1 1 auto; height: 100%; border-bottom: 0; }
 .tab-scroller.doc > .scroll-btn { height: 24px; margin: 0 3px; }
 /* The Git panel's tab row (Git and panel tabs): takes the title's free width, the refresh/hide buttons stay put. */
-.tab-scroller.tw { flex: 0 1 auto; height: 100%; }
-.tab-scroller.tw > .tw-tabs { flex: 0 1 auto; }
-.tab-scroller.tw > .scroll-btn { height: 22px; width: 20px; }
-.tab-scroller.tw > .scroll-btn:first-child { margin-right: 2px; }
-.tab-scroller.tw > .scroll-btn:last-child { margin: 0 2px; }
 /* Title-bar buttons keep their size; the tab rows beside them shrink and scroll instead. */
 #titlebar > .tb-btn, #projectBar > .tb-btn { flex: none; white-space: nowrap; }
 
