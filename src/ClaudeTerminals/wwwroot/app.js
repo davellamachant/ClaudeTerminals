@@ -6237,7 +6237,7 @@ function relayNotify(s) {
   if (performance.now() - s.act.lastIn < 5000) return;   // you're typing in it: the next check tries again
   relay.told[s.id] = n;
   const names = [...(relay.from[s.id] ?? [])].map((id) => `"${relayName(id)}"`);
-  const text = `[Claude Terminals] ${n === 1 ? 'A message has' : `${n} messages have`} come from ${names.length ? names.join(' and ') : 'another session'}. Read ${n === 1 ? 'it' : 'them'} with the read_messages tool.`;
+  const text = `[Claude Terminals] ${n === 1 ? 'A message has' : `${n} messages have`} come from ${names.length ? names.join(' and ') : 'another session'}. Read ${n === 1 ? 'it' : 'them'} with the read_messages tool, and answer with send_message: the sender doesn't see what you write here.`;
   s.term.paste(text);
   setTimeout(() => post({ type: 'input', id: s.id, data: '\r' }), 150);
 }

@@ -370,6 +370,7 @@ public class RelayTests
         var read = Call(mcp, "b", "read_messages");
         Assert.Contains("not from the person", read);
         Assert.Contains("hi", read);
+        Assert.Contains("sees only what you send back with send_message", read);   // an answer given in the terminal never reaches the sender
         Assert.Equal("No new messages.", Call(mcp, "b", "read_messages"));
         Assert.StartsWith("Not sent", Call(mcp, "a", "send_message", new { to = "c", text = "hi" }));
     }
