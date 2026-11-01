@@ -161,10 +161,11 @@
    lines over the terminal's own background, fixed to the window so they run on from the floor around it. */
 :root[data-grid] .tile {
   background:
+    radial-gradient(120% 40% at 50% 100%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 70%),
     linear-gradient(color-mix(in srgb, var(--accent) 8%, transparent) 1px, transparent 1px) 0 0 / 32px 32px,
     linear-gradient(90deg, color-mix(in srgb, var(--accent) 8%, transparent) 1px, transparent 1px) 0 0 / 32px 32px,
     var(--terminal-bg);
-  background-attachment: fixed, fixed, scroll;
+  background-attachment: fixed, fixed, fixed, scroll;   /* the glow at the horizon and the lines run on from the floor around the tile */
 }
 :root[data-grid] .xterm .xterm-viewport { background-color: transparent !important; }   /* xterm paints its viewport black on its own */
 
