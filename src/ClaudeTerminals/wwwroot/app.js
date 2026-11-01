@@ -5604,8 +5604,9 @@ function revealActive(row, selector) {
  * (https://<id>.plugin.local/), so it can't reach the app, its files or terminals, or another plugin, and sees sessions only if
  * you allowed it (see pluginRequest).
  *
- * Messages, each { type: 'claude-terminals:<name>', … }. To a plugin: theme { theme: 'light' | 'dark', id, name } (the
- * theme file on, if one is; also ?theme= and ?look= on its address) whenever it changes, and command { command, context } when one of its menu items (or its title bar
+ * Messages, each { type: 'claude-terminals:<name>', … }. To a plugin: theme { theme: 'light' | 'dark', id, name, colors,
+ * font, glow } (the theme file on, if one is, and the page's colours by name so the plugin can match them; also ?theme=
+ * and ?look= on its address) whenever it changes, and command { command, context } when one of its menu items (or its title bar
  * button, see renderPluginButtons) is picked, context
  * saying what was clicked (see pluginMenuItems): a name and folder to go on, not a way into the session. From a plugin, about
  * its own tab and nothing else: badge { count } or { dot: true } ({ count: 0 } clears it), and title { title } (null
@@ -5716,9 +5717,16 @@ function sendToPlugin(p, message) {
 }
 
 /** Tells a plugin the theme: light or dark, and which theme file is on (its id and name), if one is, so it can dress to match. */
+// The page's colours a plugin is told, by their names in app.css, so it can paint itself to match whatever theme is on.
+const PLUGIN_THEME_COLORS = ['chrome', 'chrome-2', 'panel', 'panel-2', 'hover', 'hover-strong', 'border', 'border-soft', 'border-strong',
+  'text', 'text-dim', 'text-faint', 'text-strong', 'accent', 'accent-strong', 'focus', 'select', 'terminal-bg', 'code-bg', 'code-fg',
+  'ok', 'working', 'attention', 'asking', 'danger', 'link'];
 const postPluginTheme = (frame) => {
   const look = themeLook();
-  frame.contentWindow?.postMessage({ type: 'claude-terminals:theme', theme: isLight() ? 'light' : 'dark', id: look?.id ?? null, name: look?.name ?? null }, '*');
+  const css = getComputedStyle(document.documentElement);
+  const colors = Object.fromEntries(PLUGIN_THEME_COLORS.map((n) => [n, css.getPropertyValue('--' + n).trim()]).filter(([, v]) => v));
+  frame.contentWindow?.postMessage({ type: 'claude-terminals:theme', theme: isLight() ? 'light' : 'dark', id: look?.id ?? null, name: look?.name ?? null,
+    colors, font: look?.font ?? null, glow: !!look?.glow }, '*');
 };
 
 /** Its page goes when its tab closes; so do the caption and badge it set, which start afresh next time. */
