@@ -473,7 +473,7 @@ function themeLook() {
   if (!themes.list.includes(t)) return t;   // the kept look
   const made = t.monochrome ? monochromeLook(accentColour(), t.base === 'light') : {};
   return {
-    id: t.id, name: t.name, base: t.base, font: t.font, glow: t.glow, monochrome: t.monochrome,
+    id: t.id, name: t.name, base: t.base, font: t.font, glow: t.glow, monochrome: t.monochrome, cursor: t.cursor ?? null,
     colors: { ...made.colors, ...t.colors }, terminal: { ...made.terminal, ...t.terminal }, diff: { ...made.diff, ...t.diff },
     accent: t.accent ?? made.accent ?? null,
   };
@@ -637,6 +637,65 @@ const TERM_THEME_LIGHT = {
 /** The terminals' colours: a theme's own over its base's. */
 const termTheme = (look = themeLook()) => ({ ...(isLight() ? TERM_THEME_LIGHT : TERM_THEME_DARK), ...look?.terminal });
 
+// The light cycle cursor (a theme's "cursor": "light-cycle"): a glow on the cell the cursor is in, and a ribbon of light
+// that fades behind it as it moves, turning at right angles when it changes line, as a light cycle does. It's drawn in a
+// layer over the terminal's screen, in the terminal's cursor colour; xterm keeps drawing the cursor itself.
+const TRAIL_MAX = 48;        // pieces of ribbon kept at once
+// A program repainting its screen (a listing streaming by, Claude's own interface) moves the cursor every frame; that's
+// not riding, so past this many moves in half a second only the glow follows, and the ribbon waits for your own moves.
+const BURST_MOVES = 12, BURST_MS = 500;
+const trailsAllowed = () => !matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/** Puts the light cycle on a session's terminal, or takes it off. */
+function lightCycle(s, on) {
+  if (!on) {
+    if (!s.cycle) return;
+    s.cycle.move.dispose(); s.cycle.resize.dispose(); s.cycle.layer.remove();
+    s.cycle = null;
+    return;
+  }
+  if (s.cycle) { s.cycle.layer.style.setProperty('--cycle', termTheme().cursor); return; }
+  const screen = s.surface.querySelector('.xterm-screen');
+  if (!screen) return;
+  const head = h('div', { class: 'cycle-head', hidden: true });
+  const layer = h('div', { class: 'cycle-layer' }, head);
+  layer.style.setProperty('--cycle', termTheme().cursor);
+  screen.append(layer);
+  const c = { layer, head, last: null, queued: false, pieces: [], moves: [] };
+  const ride = () => {
+    c.queued = false;
+    const term = s.term, b = term.buffer.active;
+    if (b.viewportY !== b.baseY || !term.cols || !term.rows) { head.hidden = true; c.last = null; return; }   // scrolled up: the cursor is off the screen
+    const cw = screen.clientWidth / term.cols, ch = screen.clientHeight / term.rows;
+    const x = b.cursorX, y = b.cursorY;
+    head.hidden = false;
+    Object.assign(head.style, { left: `${x * cw}px`, top: `${y * ch}px`, width: `${cw}px`, height: `${ch}px` });
+    const from = c.last;
+    c.last = { x, y };
+    if (!from || (from.x === x && from.y === y)) return;
+    const now = performance.now();
+    c.moves = c.moves.filter((t) => now - t < BURST_MS);
+    c.moves.push(now);
+    if (c.moves.length > BURST_MOVES || !trailsAllowed()) return;
+    // The ribbon: down (or up) the old column to the new line, then along it to the new cell.
+    const mid = (v, size) => (v + 0.5) * size;
+    const piece = (left, top, width, height) => {
+      const p = h('div', { class: 'cycle-trail', style: `left:${left}px;top:${top}px;width:${width}px;height:${height}px` });
+      p.addEventListener('animationend', () => { p.remove(); c.pieces = c.pieces.filter((q) => q !== p); });
+      layer.append(p);
+      c.pieces.push(p);
+      while (c.pieces.length > TRAIL_MAX) c.pieces.shift().remove();
+    };
+    if (from.y !== y) piece(mid(from.x, cw) - 1, Math.min(mid(from.y, ch), mid(y, ch)), 2, Math.abs(y - from.y) * ch);
+    if (from.x !== x) piece(Math.min(mid(from.x, cw), mid(x, cw)), mid(y, ch) - 1, Math.abs(x - from.x) * cw, 2);
+  };
+  const queue = () => { if (!c.queued) { c.queued = true; requestAnimationFrame(ride); } };
+  c.move = s.term.onCursorMove(queue);
+  c.resize = s.term.onResize(() => { c.last = null; queue(); });
+  s.cycle = c;
+  queue();
+}
+
 /** The diff editor's theme: a theme's, defined from its colours over its base's, or Light's or Dark's. */
 /** A theme's diff colours (ThemeCatalog.DiffNames) and the diff editor's names for them; the syntax colours are rules. */
 const DIFF_COLOR_IDS = {
@@ -766,6 +825,7 @@ function createSession(info) {
       term.loadAddon(gl);
     } catch { /* DOM renderer fallback */ }
   }
+  if (themeLook()?.cursor === 'light-cycle') lightCycle(s, true);
 
   term.attachCustomKeyEventHandler((e) => terminalKey(s, e));
   term.onData((data) => {
@@ -4902,7 +4962,7 @@ function applyTheme(before = null) {
   const look = themeLook();
   store.set('themeLook', look);   // so it paints at once on the next start
   markTheme(look);
-  for (const s of state.sessions) s.term.options.theme = termTheme(look);
+  for (const s of state.sessions) { s.term.options.theme = termTheme(look); lightCycle(s, look?.cursor === 'light-cycle'); }
   if (window.monaco) monaco.editor.setTheme(diffTheme(look));
   applyAccent();
   for (const f of pluginFrames.values()) postPluginTheme(f.frame);
@@ -5171,6 +5231,7 @@ function themeSnapshot(title) {
     base: themeName(),
     ...(look?.font ? { font: look.font } : {}),
     ...(look?.glow ? { glow: true } : {}),
+    ...(look?.cursor ? { cursor: look.cursor } : {}),
     accent: { line: value('accent'), strong: value('accent-strong') },
     colors: Object.fromEntries(themes.names.colors.map((n) => [n, value(n)]).filter(([, v]) => v)),
     terminal: Object.fromEntries(themes.names.terminal.filter((n) => terminal[n]).map((n) => [n, terminal[n]])),

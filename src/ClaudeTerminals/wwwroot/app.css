@@ -463,6 +463,12 @@ button.chip:hover { border-color: var(--border); color: var(--text); }
 .tile-body { position: relative; flex: 1; overflow: hidden; }
 .surface { position: absolute; left: 6px; top: 4px; transform-origin: 0 0; transition: transform .16s ease; }
 .surface .xterm { height: 100%; }
+/* The light cycle cursor (a theme's "cursor": "light-cycle", see lightCycle in app.js): a glow on the cursor's cell and
+   ribbons of light that fade behind it, in the terminal's cursor colour, drawn over the screen's canvases. */
+.cycle-layer { position: absolute; inset: 0; pointer-events: none; z-index: 10; overflow: hidden; }
+.cycle-head { position: absolute; border-radius: 1px; box-shadow: 0 0 5px var(--cycle), 0 0 12px var(--cycle), inset 0 0 3px var(--cycle); opacity: .9; }
+.cycle-trail { position: absolute; background: var(--cycle); box-shadow: 0 0 4px var(--cycle), 0 0 10px var(--cycle); opacity: .85; animation: cycle-fade .8s ease-out forwards; }
+@keyframes cycle-fade { to { opacity: 0; } }
 .tile-cover { position: absolute; inset: 0; cursor: zoom-in; z-index: 2; }
 .tile.expanded .tile-cover { display: none; }
 .tile-exited {
