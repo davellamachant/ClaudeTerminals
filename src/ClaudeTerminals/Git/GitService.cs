@@ -36,6 +36,12 @@ internal sealed record CommitInfo(string Sha, string ShortSha, string Author, st
 /// <param name="Prunable">Git still lists the worktree but its folder is gone.</param>
 internal sealed record WorktreeInfo(string Path, string? Branch, bool Bare, bool Prunable = false);
 
+/// <summary>A top-level folder of a repository and how many tracked files it holds.</summary>
+internal sealed record FolderCount(string Name, int Files);
+
+/// <summary>A repository's top-level folders (see <see cref="GitService.GetTopFoldersAsync"/>), with the main worktree they were counted in.</summary>
+internal sealed record TopFolders(string Root, IReadOnlyList<FolderCount> Folders);
+
 /// <summary>One worktree as the Project view shows it (see <see cref="GitService.GetWorktreeOverviewAsync"/>).</summary>
 /// <param name="Main">The repository's main worktree (git lists it first); it can't be removed.</param>
 /// <param name="Missing">Its folder is gone (git calls it prunable).</param>
@@ -847,6 +853,30 @@ internal static class GitService
             if (!add.Ok) return add;
         }
         return await RunAsync(dir, ["commit", "-F", "-"], message);
+    }
+
+    /// <summary>
+    /// The repository's top-level folders with how many tracked files each holds, biggest first; files at the root count
+    /// as "(root)". <see cref="TopFolders.Root"/> is the repository's main worktree, so the same repository gives the same
+    /// answer whichever worktree asked. Null when <paramref name="dir"/> isn't in a repository.
+    /// </summary>
+    public static async Task<TopFolders?> GetTopFoldersAsync(string dir)
+    {
+        var here = await GetTopLevelAsync(dir);
+        if (here == null) return null;
+        var worktrees = await GetWorktreesAsync(here);
+        var root = worktrees.Count > 0 && Directory.Exists(worktrees[0].Path) ? worktrees[0].Path : here;
+        var r = await RunAsync(root, ["ls-files", "-z"], maxOutputBytes: 32 * 1024 * 1024);
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var path in r.Text.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var slash = path.IndexOf('/');
+            var top = slash < 0 ? "(root)" : path[..slash];
+            counts[top] = counts.GetValueOrDefault(top) + 1;
+        }
+        var folders = counts.OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(kv => new FolderCount(kv.Key, kv.Value)).ToList();
+        return new TopFolders(root, folders);
     }
 
     /// <summary>Status paths are relative to the repository root, so all file-level commands run there.</summary>

@@ -9,9 +9,11 @@ namespace ClaudeTerminals.Plugins;
 /// </summary>
 /// <param name="Placement">Where its page shows: "tab" (a document tab, the default) or "panel" (a tab in the side panel).</param>
 /// <param name="Menu">Items it adds to menus (see <see cref="PluginMenuItem"/>); each opens the plugin and sends it the item's command.</param>
+/// <param name="Access">What it asks to see beyond its own page (see <see cref="PluginCatalog.AccessKinds"/>); the app asks
+/// you before it's given any.</param>
 /// <param name="Toolbar">Its button in the title bar, beside New Session and Git Changes, if it has one.</param>
 internal sealed record PluginInfo(string Id, string Title, string? Description, string Entry, string Folder, string Placement,
-    IReadOnlyList<PluginMenuItem> Menu, PluginButton? Toolbar = null)
+    IReadOnlyList<PluginMenuItem> Menu, IReadOnlyList<string> Access, PluginButton? Toolbar = null)
 {
     public string Host => PluginCatalog.HostFor(Id);
     public string Url => $"https://{Host}/{Entry}";
@@ -32,8 +34,9 @@ internal sealed record PluginButton(string Icon, string? Tooltip, string? Comman
 /// <summary>
 /// Finds the plugins in the profile's plugins folder: each subfolder holding a plugin.json such as
 /// <c>{ "title": "Floor plan", "description": "…", "entry": "index.html", "placement": "panel",
-/// "menu": [{ "label": "…", "command": "…", "where": ["session", "sessionTab"] }] }</c>. A plugin is only a page: it runs in a
-/// sandboxed frame, can't reach the app's bridge, and is given no session, file or terminal.
+/// "menu": [{ "label": "…", "command": "…", "where": ["session", "sessionTab"] }], "access": ["sessions"] }</c>. A plugin is
+/// only a page: it runs in a sandboxed frame and can't reach the app's bridge. It's given no session, file or terminal,
+/// except what its "access" asks to see once you've allowed it: read only, and through the app's page.
 /// </summary>
 internal static partial class PluginCatalog
 {
@@ -91,7 +94,7 @@ internal static partial class PluginCatalog
                     continue;
                 }
                 plugins.Add(new PluginInfo(id, title, Str(root, "description"), entry, Path.GetFullPath(dir), placement, MenuOf(root, name, problems),
-                    ButtonOf(root, dir, name, problems)));
+                    AccessOf(root, name, problems), ButtonOf(root, dir, name, problems)));
             }
             catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
             {
@@ -140,6 +143,26 @@ internal static partial class PluginCatalog
             items.Add(new PluginMenuItem(label, command, known));
         }
         return items;
+    }
+
+    /// <summary>
+    /// What a plugin can ask to see. "sessions": the list of sessions (name, project, folder, repository, whether it's
+    /// working or waiting for you), what Claude did in each (prompts, files read and edited, commands, questions; see
+    /// ActivityReader) and how many files each top-level folder of a session's repository holds. It's read only: nothing in it
+    /// types into a session or changes a file.
+    /// </summary>
+    public static readonly IReadOnlyList<string> AccessKinds = ["sessions"];
+
+    /// <summary>The manifest's "access": the kinds it names that there are (others are left out, with why).</summary>
+    private static List<string> AccessOf(JsonElement root, string name, List<string> problems)
+    {
+        if (!root.TryGetProperty("access", out var a)) return [];
+        List<string> asked = a.ValueKind == JsonValueKind.String ? [a.GetString()!]
+            : a.ValueKind == JsonValueKind.Array ? a.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!).ToList()
+            : [];
+        foreach (var unknown in asked.Where(x => !AccessKinds.Contains(x, StringComparer.OrdinalIgnoreCase)))
+            problems.Add($"{name}: it asks for access to \"{unknown}\", which there isn't; access is {string.Join(", ", AccessKinds)}");
+        return AccessKinds.Where(k => asked.Contains(k, StringComparer.OrdinalIgnoreCase)).ToList();
     }
 
     private static readonly Dictionary<string, string> IconTypes = new(StringComparer.OrdinalIgnoreCase)
