@@ -5252,8 +5252,8 @@ function revealActive(row, selector) {
  * (https://<id>.plugin.local/), so it can't reach the app, its files or terminals, or another plugin, and sees sessions only if
  * you allowed it (see pluginRequest).
  *
- * Messages, each { type: 'claude-terminals:<name>', … }. To a plugin: theme { theme: 'light' | 'dark' } (also ?theme= on
- * its address) whenever it changes, and command { command, context } when one of its menu items (or its title bar
+ * Messages, each { type: 'claude-terminals:<name>', … }. To a plugin: theme { theme: 'light' | 'dark', id, name } (the
+ * theme file on, if one is; also ?theme= and ?look= on its address) whenever it changes, and command { command, context } when one of its menu items (or its title bar
  * button, see renderPluginButtons) is picked, context
  * saying what was clicked (see pluginMenuItems): a name and folder to go on, not a way into the session. From a plugin, about
  * its own tab and nothing else: badge { count } or { dot: true } ({ count: 0 } clears it), and title { title } (null
@@ -5321,6 +5321,7 @@ function pluginFrame(p) {
   if (f) return f;
   const url = new URL(p.url);
   url.searchParams.set('theme', isLight() ? 'light' : 'dark');
+  if (themeLook()?.id) url.searchParams.set('look', themeLook().id);
   // No allow-same-origin: the page gets an opaque origin, so it can't reach this page, and has no storage to share.
   const frame = h('iframe', { class: 'plugin-frame', sandbox: 'allow-scripts allow-forms allow-modals', referrerpolicy: 'no-referrer', title: p.title, src: url.href });
   f = { frame, ready: false, queue: [], badge: null, title: null };
@@ -5340,7 +5341,11 @@ function sendToPlugin(p, message) {
   else f.queue.push(message);
 }
 
-const postPluginTheme = (frame) => frame.contentWindow?.postMessage({ type: 'claude-terminals:theme', theme: isLight() ? 'light' : 'dark' }, '*');
+/** Tells a plugin the theme: light or dark, and which theme file is on (its id and name), if one is, so it can dress to match. */
+const postPluginTheme = (frame) => {
+  const look = themeLook();
+  frame.contentWindow?.postMessage({ type: 'claude-terminals:theme', theme: isLight() ? 'light' : 'dark', id: look?.id ?? null, name: look?.name ?? null }, '*');
+};
 
 /** Its page goes when its tab closes; so do the caption and badge it set, which start afresh next time. */
 function closePluginFrame(id) {

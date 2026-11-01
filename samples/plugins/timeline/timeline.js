@@ -4,7 +4,8 @@
 // shows the session's state. Each row says what the session is doing now and what its replies cost in tokens.
 // "This session" follows the open tab and lists its prompts. Everything is read from the conversation files through
 // the app's "sessions" access, so it costs nothing; only the Summarise button runs Claude (the "ask" access), once
-// per press, and the header counts those calls.
+// per press, and the header counts those calls. The look follows the app's theme: dark, light, or the Grid when the
+// app's Tron theme is on (the app says which, see the theme message).
 
 const REFRESH_MS = 3000;
 const CONTEXT_MAX = 200_000;   // what a session's context is measured against, unless it has gone past it (a 1M-context model)
@@ -47,7 +48,7 @@ addEventListener('message', (e) => {
     pending.delete(m.requestId);
     if ('error' in m) p.reject(new Error(m.error)); else p.resolve(m.result);
   } else if (m.type === 'claude-terminals:theme') {
-    document.documentElement.dataset.theme = m.theme === 'light' ? 'light' : 'dark';
+    dress(m.theme, m.id);
   } else if (m.type === 'claude-terminals:command') {
     // The title bar button or the palette item shows every session; a session's menu item follows that session.
     const c = m.context ?? {};
@@ -57,6 +58,16 @@ addEventListener('message', (e) => {
     render();
   }
 });
+
+/** Dresses the page for the app's theme: its dark or light colours, or the Grid when one of the app's Tron themes is on (red for Ares). */
+function dress(theme, id) {
+  const root = document.documentElement;
+  root.dataset.theme = theme === 'light' ? 'light' : 'dark';
+  root.dataset.look = id === 'tron' || id === 'tron-ares' ? 'tron' : 'app';
+  if (id === 'tron-ares') root.dataset.grid = 'ares'; else delete root.dataset.grid;
+}
+const opened = new URLSearchParams(location.search);   // the app says the theme on the address too, so the first paint matches
+dress(opened.get('theme'), opened.get('look'));
 
 // ---- state
 
@@ -231,8 +242,10 @@ function track(s, since, width) {
   if (inWindow.length) {
     const first = inWindow[0].t, last = inWindow[inWindow.length - 1].t;
     el.append(h('div', { class: 'line', style: `left:${x(first)};width:calc(${x(last)} - ${x(first)})` }));
-    if (s.status === 'working') el.append(h('div', { class: 'line flow', style: `left:${x(last)};right:0` }));
-    else if (s.status === 'asking') el.append(h('div', { class: 'line wait', style: `left:${x(last)};right:0` }));
+    if (s.status === 'working') {
+      el.append(h('div', { class: 'line flow', style: `left:${x(last)};right:0` }));
+      el.append(h('div', { class: 'cycle', style: `left:${x(first)};right:0` }));   // the Grid's light cycle rides the whole line
+    } else if (s.status === 'asking') el.append(h('div', { class: 'line wait', style: `left:${x(last)};right:0` }));
     for (const b of beads(ev, since, width))
       el.append(h('span', { class: `bead ${b.kind}${b.n > 1 ? ' many' : ''}${b.bad ? ' bad' : ''}`, 'data-n': b.n > 1 ? b.n : null, style: `left:${x(b.t)}`,
         title: (b.n > 1 ? plural(b.n, BEAD_NAME[b.kind]) + ', last ' : '') + b.text + ' · ' + ago(b.t) }));
