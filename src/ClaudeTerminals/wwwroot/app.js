@@ -3687,7 +3687,7 @@ function closeDoc(key) {
   if (i < 0) return;
   const wasActive = docs.active === key;
   const wasSide = docs.side === key;
-  if (isPluginTab(docs.tabs[i])) closePluginFrame(docs.tabs[i].pluginId);
+  if (isPluginTab(docs.tabs[i])) { closePluginFrame(docs.tabs[i].pluginId); seatPanelPlugins(); }   // one opened wide goes back to the side panel
   docs.tabs.splice(i, 1);
   // The nearest shown tab after it, else before it, that `ok` accepts.
   const near = (ok) => docs.tabs.slice(i).find((t) => tabShown(t) && ok(t)) || docs.tabs.slice(0, i).reverse().find((t) => tabShown(t) && ok(t));
@@ -5284,8 +5284,24 @@ async function loadPlugins() {
     const r = await request('plugins.list');
     Object.assign(plugins, { list: r.plugins, problems: r.problems, folder: r.folder, loaded: true });
     renderPluginButtons();
+    seatPanelPlugins();
   }
   catch (e) { console.error('The plugins could not be read', e); }
+}
+
+// A side panel plugin takes a tab in the side panel on its own, so it's there without being opened first; one you
+// closed stays away until you open it again (kept per person).
+const closedPanelPlugins = new Set(store.get('panelPluginsClosed', []));
+const rememberClosedPanelPlugins = () => store.set('panelPluginsClosed', [...closedPanelPlugins]);
+function seatPanelPlugins() {
+  let seated = false;
+  for (const p of plugins.list) {
+    const t = 'plugin:' + p.id;
+    if (pluginPlacement(p) !== 'panel' || closedPanelPlugins.has(p.id) || groupOfTab(t) || !dock.groups.length) continue;
+    dock.groups[dock.groups.length - 1].tabs.push(t);
+    seated = true;
+  }
+  if (seated) { saveDock(); renderGit(); }
 }
 
 /** Opens a plugin where it shows; a command from one of its menu items reaches it once its page has loaded. */
@@ -5295,6 +5311,7 @@ function openPlugin(id, command = null, context = null) {
   if (command != null) sendToPlugin(p, { type: 'claude-terminals:command', command, context });
   if (pluginPlacement(p) === 'panel') {
     const t = 'plugin:' + id;
+    if (closedPanelPlugins.delete(id)) rememberClosedPanelPlugins();   // opened again: it seats itself from now on
     if (!groupOfTab(t)) dock.groups[dock.groups.length - 1].tabs.push(t);
     if (!state.gitVisible) { state.gitVisible = true; store.set('gitVisible', true); applyGitVisibility(); }
     activateTab(groupOfTab(t), t);
@@ -5386,7 +5403,7 @@ function movePlugin(id, placement, state) {
   let handover = null;
   try { const s = JSON.stringify(state ?? null); if (s.length <= 1_000_000) handover = JSON.parse(s); } catch { handover = null; }
   if (docs.tabs.some((t) => t.key === pluginKey(id))) closeDoc(pluginKey(id));
-  if (groupOfTab('plugin:' + id)) closeDockPlugin('plugin:' + id);
+  if (groupOfTab('plugin:' + id)) closeDockPlugin('plugin:' + id, false);   // moved, not closed: it comes back to the panel when the tab closes
   pluginPlaces.set(id, placement);
   pluginHandover.set(id, handover);
   openPlugin(id);
@@ -5419,12 +5436,14 @@ function showDockPlugin(g, t) {
   for (const f of g.frames.children) f.hidden = f !== frame;
 }
 
-function closeDockPlugin(t) {
+/** Closes a side panel plugin's tab; closed by you (`byYou`), it stays out of the panel until you open it again. */
+function closeDockPlugin(t, byYou = true) {
   const g = groupOfTab(t);
   if (!g) return;
   g.tabs.splice(g.tabs.indexOf(t), 1);
   if (!g.tabs.length) removeGroup(g);
   closePluginFrame(pluginOfTab(t));
+  if (byYou) { closedPanelPlugins.add(pluginOfTab(t)); rememberClosedPanelPlugins(); }
   saveDock();
   renderGit();
 }
