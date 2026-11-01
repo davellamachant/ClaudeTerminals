@@ -2264,7 +2264,7 @@ function placePanels() {
   if (!state.panelsLoaded) return;   // until the host has said which panels exist, keep the saved layout as it is
   let changed = false;
   const live = new Set(state.panels.map(panelTab));
-  const pluginGone = (t) => plugins.loaded && pluginById(pluginOfTab(t))?.placement !== 'panel';
+  const pluginGone = (t) => plugins.loaded && (!pluginById(pluginOfTab(t)) || pluginPlacement(pluginById(pluginOfTab(t))) !== 'panel');
   for (const g of dock.groups) {
     const kept = g.tabs.filter((t) => isPluginDockTab(t) ? !pluginGone(t) : !isPanelTab(t) || live.has(t));
     if (kept.length !== g.tabs.length) { g.tabs = kept; changed = true; }
@@ -5281,7 +5281,7 @@ function themeMenu(x, y) {
     '-',
     { header: 'Plugins' },
     ...plugins.list.flatMap((p) => [
-      { icon: pluginIcon(p.id), label: p.title, kbd: p.placement === 'panel' ? 'Side panel' : '', action: () => openPlugin(p.id) },
+      { icon: pluginIcon(p.id), label: p.title, kbd: pluginPlacement(p) === 'panel' ? 'Side panel' : '', action: () => openPlugin(p.id) },
       ...p.menu.filter((m) => m.where.includes('palette')).map((m) => ({ label: [h('span', { class: 'menu-indent' }), m.label], action: () => openPlugin(p.id, m.command, { menu: 'palette' }) })),
       p.toolbar && hiddenPluginButtons.has(p.id) && { label: [h('span', { class: 'menu-indent' }), 'Show its title bar button'], action: () => setPluginButton(p.id, true) },
     ]),
@@ -5609,9 +5609,10 @@ function revealActive(row, selector) {
  * and ?look= on its address) whenever it changes, and command { command, context } when one of its menu items (or its title bar
  * button, see renderPluginButtons) is picked, context
  * saying what was clicked (see pluginMenuItems): a name and folder to go on, not a way into the session. From a plugin, about
- * its own tab and nothing else: badge { count } or { dot: true } ({ count: 0 } clears it), and title { title } (null
- * puts its name back); and request, for what its "access" lets it see (see pluginRequest). Anything else it sends is
- * ignored.
+ * its own tab and nothing else: badge { count } or { dot: true } ({ count: 0 } clears it), title { title } (null puts
+ * its name back), and open { placement, state } to be moved to a document tab or the side panel for now (see
+ * movePlugin; its page starts again there and gets state { placement, state } back); and request, for what its
+ * "access" lets it see (see pluginRequest). Anything else it sends is ignored.
  */
 const plugins = { list: [], problems: [], folder: null, loaded: false };
 const pluginById = (id) => plugins.list.find((p) => p.id === id);
@@ -5623,6 +5624,11 @@ function pluginOfTab(t) { return t.slice('plugin:'.length); }
 
 /** Each plugin with a page up: id → { frame, ready, queue (messages for when it has loaded), badge, title }. */
 const pluginFrames = new Map();
+// A plugin can ask to be moved to the other placement for a while (an "open wide" button in a side panel plugin, say):
+// where each is now when not where its plugin.json says, and the state it sent along to get back once its page is up.
+const pluginPlaces = new Map();
+const pluginHandover = new Map();
+const pluginPlacement = (p) => pluginPlaces.get(p.id) ?? p.placement;
 
 /** Reads the plugins folder again (a plugin added since shows up without restarting). */
 async function loadPlugins() {
@@ -5639,7 +5645,7 @@ function openPlugin(id, command = null, context = null) {
   const p = pluginById(id);
   if (!p) return;
   if (command != null) sendToPlugin(p, { type: 'claude-terminals:command', command, context });
-  if (p.placement === 'panel') {
+  if (pluginPlacement(p) === 'panel') {
     const t = 'plugin:' + id;
     if (!groupOfTab(t)) dock.groups[dock.groups.length - 1].tabs.push(t);
     if (!state.gitVisible) { state.gitVisible = true; store.set('gitVisible', true); applyGitVisibility(); }
@@ -5697,6 +5703,7 @@ function pluginFrame(p) {
   const url = new URL(p.url);
   url.searchParams.set('theme', isLight() ? 'light' : 'dark');
   if (themeLook()?.id) url.searchParams.set('look', themeLook().id);
+  url.searchParams.set('placement', pluginPlacement(p));
   // No allow-same-origin: the page gets an opaque origin, so it can't reach this page, and has no storage to share.
   const frame = h('iframe', { class: 'plugin-frame', sandbox: 'allow-scripts allow-forms allow-modals', referrerpolicy: 'no-referrer', title: p.title, src: url.href });
   f = { frame, ready: false, queue: [], badge: null, title: null };
@@ -5704,6 +5711,11 @@ function pluginFrame(p) {
   frame.addEventListener('load', () => {
     entry.ready = true;
     postPluginTheme(frame);
+    if (pluginHandover.has(p.id)) {   // it was just moved: the state it sent along, back to it
+      const state = pluginHandover.get(p.id);
+      pluginHandover.delete(p.id);
+      frame.contentWindow?.postMessage({ type: 'claude-terminals:state', placement: pluginPlacement(p), state }, '*');
+    }
     for (const m of entry.queue.splice(0)) frame.contentWindow?.postMessage(m, '*');
   });
   pluginFrames.set(p.id, f);
@@ -5729,10 +5741,29 @@ const postPluginTheme = (frame) => {
     colors, font: look?.font ?? null, glow: !!look?.glow }, '*');
 };
 
-/** Its page goes when its tab closes; so do the caption and badge it set, which start afresh next time. */
+/** Its page goes when its tab closes; so do the caption and badge it set, which start afresh next time, and it goes back to where its plugin.json puts it. */
 function closePluginFrame(id) {
   pluginFrames.get(id)?.frame.remove();
   pluginFrames.delete(id);
+  pluginPlaces.delete(id);
+}
+
+/**
+ * Moves a plugin's page to the other placement, the document area ('tab') or the side panel ('panel'), at its own
+ * request: its page starts again there and gets back the state it sent along (the state message), and it returns to
+ * its plugin.json placement when that tab closes.
+ */
+function movePlugin(id, placement, state) {
+  const p = pluginById(id);
+  if (!p) return;
+  if ((placement !== 'tab' && placement !== 'panel') || placement === pluginPlacement(p)) { openPlugin(id); return; }
+  let handover = null;
+  try { const s = JSON.stringify(state ?? null); if (s.length <= 1_000_000) handover = JSON.parse(s); } catch { handover = null; }
+  if (docs.tabs.some((t) => t.key === pluginKey(id))) closeDoc(pluginKey(id));
+  if (groupOfTab('plugin:' + id)) closeDockPlugin('plugin:' + id);
+  pluginPlaces.set(id, placement);
+  pluginHandover.set(id, handover);
+  openPlugin(id);
 }
 
 /** The plugin's tab caption: what it set, or its title. */
@@ -6699,6 +6730,10 @@ addEventListener('message', (e) => {
     const p = pluginById(id), frame = f.frame;
     const reply = (answer) => frame.contentWindow?.postMessage({ type: 'claude-terminals:response', requestId: m.requestId, ...answer }, '*');
     pluginRequest(p, m).then((result) => reply({ result: result ?? null }), (err) => reply({ error: err.message }));
+    return;
+  }
+  if (m.type === 'claude-terminals:open') {
+    movePlugin(id, m.placement, m.state);
     return;
   }
   if (m.type === 'claude-terminals:badge') {
