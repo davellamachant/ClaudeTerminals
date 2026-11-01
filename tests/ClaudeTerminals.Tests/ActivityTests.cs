@@ -166,11 +166,14 @@ public sealed class ActivityTests
     public async Task Top_level_folders_come_with_their_file_counts()
     {
         using var repo = new TempRepo();
-        repo.Commit(("src/a.cs", "a"), ("src/b.cs", "b"), ("src/deep/c.cs", "c"), ("docs/readme.md", "d"), ("root.txt", "r"));
+        repo.Commit(("src/a.cs", "a"), ("src/b.cs", "b"), ("src/deep/c.cs", "c"), ("src/deep/down/d.cs", "d"), ("src/other/e.cs", "e"), ("docs/readme.md", "d"), ("root.txt", "r"));
         var folders = await GitService.GetTopFoldersAsync(Path.Combine(repo.Root, "src"));
         Assert.NotNull(folders);
         Assert.Equal(repo.Root, folders.Root, ignoreCase: true);
-        Assert.Equal([("src", 3), ("(root)", 1), ("docs", 1)], folders.Folders.Select(r => (r.Name, r.Files)));
+        Assert.Equal([("src", 5), ("(root)", 1), ("docs", 1)], folders.Folders.Select(r => (r.Name, r.Files)));
+        // A top-level folder's own sub-folders, each counted with everything below it; files directly in it are no folder.
+        Assert.Equal([("deep", 2), ("other", 1)], folders.Folders[0].Folders.Select(r => (r.Name, r.Files)));
+        Assert.Empty(folders.Folders[2].Folders);
         Assert.Null(await GitService.GetTopFoldersAsync(Path.GetTempPath()));
     }
 }

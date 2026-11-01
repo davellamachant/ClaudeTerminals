@@ -177,9 +177,10 @@ function place(file, s) {
     const top = rel.includes('/') ? rel.split('/')[0] : '(root)';
     const rooms = fp.geometry?.roomSet;
     const room = !rooms ? null : rooms.has(top) ? top : rooms.has('(other)') ? '(other)' : null;
-    return { key: rel.toLowerCase(), rel, name, room };
+    const parts = rel.split('/');
+    return { key: rel.toLowerCase(), rel, name, room, sub: room === top && parts.length > 2 ? parts[1] : null };   // its floor: the folder below the top one
   }
-  return { key: 'outside:' + low, rel: f, name, room: null };
+  return { key: 'outside:' + low, rel: f, name, room: null, sub: null };
 }
 
 /** All sessions' events in time order, with a window for every file as it first appears, and which files two sessions share. */
@@ -196,12 +197,13 @@ function merge() {
     e.key = p.key; e.name = p.name;
     if (!fp.cells.has(p.key)) {
       const room = p.room ? g.rooms.find((r) => r.name === p.room) : g.hall;
-      const i = fp.counts.get(room.name) ?? 0;
-      fp.counts.set(room.name, i + 1);
-      // A building has as many windows as its faces hold; files past that share the last one, which says how many more there are.
-      const slot = Math.min(i, room.slots.length - 1), overflow = i > room.slots.length - 1;
-      const w = room.slots[slot];
-      fp.cells.set(p.key, { key: p.key, x: w.cx, y: w.cy, side: w.side, room, slot, name: p.name, path: p.rel, overflow });
+      // On the floor of its sub-folder; a floor has as many windows as its rows hold, and files past that share the last
+      // one, the building saying how many more there are.
+      const floor = room.floorOf(p.sub), ck = room.name + '\u0000' + floor.index;
+      const i = fp.counts.get(ck) ?? 0;
+      fp.counts.set(ck, i + 1);
+      const w = floor.slots[Math.min(i, floor.slots.length - 1)], overflow = !w || i > floor.slots.length - 1;
+      fp.cells.set(p.key, { key: p.key, x: w?.cx ?? room.door[0], y: w?.cy ?? room.door[1], side: w?.side ?? 'L', quad: w?.quad, room, floor, name: p.name, path: p.rel, overflow });
     }
     (who.get(p.key) ?? who.set(p.key, new Set()).get(p.key)).add(e.si);
   }
@@ -223,9 +225,9 @@ function shuffled(n, seed) {
  */
 function geometry() {
   const list = fp.rooms ?? [];
-  const kept = list.slice(0, MAX_BUILDINGS).map((r) => ({ name: r.name, files: r.files }));
+  const kept = list.slice(0, MAX_BUILDINGS).map((r) => ({ name: r.name, files: r.files, subs: r.folders ?? [] }));
   const rest = list.slice(MAX_BUILDINGS).reduce((n, r) => n + r.files, 0);
-  if (rest) kept.push({ name: '(other)', files: rest });
+  if (rest) kept.push({ name: '(other)', files: rest, subs: [] });
   kept.sort((a, b) => b.files - a.files);
   const n = kept.length;
   const cols = Math.max(2, Math.ceil(Math.sqrt(Math.max(n, 1)))), rows = Math.max(1, Math.ceil(n / cols));
@@ -240,15 +242,18 @@ function geometry() {
   const buildings = kept.map((r, i) => {
     const size = Math.max(1, Math.min(LOT, Math.round(Math.sqrt(r.files / maxFiles) * LOT)));
     const lotC = GAPT + (i % cols) * (LOT + GAPT), lotR = GAPT + Math.floor(i / cols) * (LOT + GAPT);
-    return building(r.name, r.files, lotC + (LOT - size) / 2, lotR + (LOT - size) / 2, size, size, zOf(r.files), iso, TW, TH, i);
+    return building(r.name, r.files, r.subs, lotC + (LOT - size) / 2, lotR + (LOT - size) / 2, size, size, zOf(r.files), iso, TW, TH, i);
   });
   // The plaza: a low slab across the front; its roof is paved with the files outside the repository.
-  const hall = building('Outside the repository', 0, GAPT, totalR - PLAZA_ROWS - GAPT, totalC - 2 * GAPT, PLAZA_ROWS, 8, iso, TW, TH, 99, true);
+  const hall = building('Outside the repository', 0, [], GAPT, totalR - PLAZA_ROWS - GAPT, totalC - 2 * GAPT, PLAZA_ROWS, 8, iso, TW, TH, 99, true);
   fp.geometry = { rooms: buildings, hall, roomSet: new Set(buildings.map((r) => r.name)), iso, TW, TH, totalC, totalR, maxZ };
 }
 
-/** One building: its faces as screen polygons, its door on the street in front, and the windows a file can light, scattered. */
-function building(name, files, c0, r0, sc, sr, z, iso, TW, TH, seed, hall = false) {
+/**
+ * One building: its faces as screen polygons, its door on the street in front, and its floors, one per sub-folder (the
+ * folder's own files on the ground floor), each with the windows a file there can light, scattered.
+ */
+function building(name, files, subs, c0, r0, sc, sr, z, iso, TW, TH, seed, hall = false) {
   const base = [iso(c0, r0), iso(c0 + sc, r0), iso(c0 + sc, r0 + sr), iso(c0, r0 + sr)];
   const top = [iso(c0, r0, z), iso(c0 + sc, r0, z), iso(c0 + sc, r0 + sr, z), iso(c0, r0 + sr, z)];
   const faces = { left: [base[3], base[2], top[2], top[3]], right: [base[2], base[1], top[1], top[2]], top };
@@ -260,28 +265,56 @@ function building(name, files, c0, r0, sc, sr, z, iso, TW, TH, seed, hall = fals
     for (let i = 0; i < nr; i++) for (let j = 0; j < nc; j++) {
       const cc = c0 + (j + 0.5) * sc / nc, rr = r0 + (i + 0.5) * sr / nr, dx = TW / nc * sc * .18, dy = TH / nc * sc * .18;
       const p = iso(cc, rr, z);
-      slots.push({ cx: p[0], cy: p[1], side: p[0] < mid ? 'L' : 'R', quad: pts([[p[0], p[1] - 2 * dy], [p[0] + 2 * dx, p[1]], [p[0], p[1] + 2 * dy], [p[0] - 2 * dx, p[1]]]) });
+      slots.push({ cx: p[0], cy: p[1], side: p[0] < mid ? 'L' : 'R', row: 0, quad: pts([[p[0], p[1] - 2 * dy], [p[0] + 2 * dx, p[1]], [p[0], p[1] + 2 * dy], [p[0] - 2 * dx, p[1]]]) });
     }
-  } else {
+  }
+  const rows = hall ? 1 : Math.max(1, Math.floor((z - 6) / 12));
+  if (!hall) {
     // Windows in rows on the two faces that show, three to a tile.
-    const colsL = sr * 3, colsR = sc * 3, rows = Math.max(1, Math.floor((z - 6) / 12)), wh = 6;
+    const colsL = sr * 3, colsR = sc * 3, wh = 6;
     for (let row = 0; row < rows; row++) {
       const zz = 6 + row * 12;
       for (let col = 0; col < colsL; col++) {
         const t = (col + 0.5) / colsL, p = iso(c0, r0 + sr - t * sr, zz), dx = TW / (2 * colsL) * sr * .32, dy = -TH / (2 * colsL) * sr * .32;
-        slots.push({ cx: p[0], cy: p[1] - wh / 2, side: 'L', quad: pts([[p[0] - dx, p[1] - dy], [p[0] + dx, p[1] + dy], [p[0] + dx, p[1] + dy - wh], [p[0] - dx, p[1] - dy - wh]]) });
+        slots.push({ cx: p[0], cy: p[1] - wh / 2, side: 'L', row, quad: pts([[p[0] - dx, p[1] - dy], [p[0] + dx, p[1] + dy], [p[0] + dx, p[1] + dy - wh], [p[0] - dx, p[1] - dy - wh]]) });
       }
       for (let col = 0; col < colsR; col++) {
         const t = (col + 0.5) / colsR, p = iso(c0 + t * sc, r0 + sr, zz), dx = TW / (2 * colsR) * sc * .32, dy = TH / (2 * colsR) * sc * .32;
-        slots.push({ cx: p[0], cy: p[1] - wh / 2, side: 'R', quad: pts([[p[0] - dx, p[1] - dy], [p[0] + dx, p[1] + dy], [p[0] + dx, p[1] + dy - wh], [p[0] - dx, p[1] - dy - wh]]) });
+        slots.push({ cx: p[0], cy: p[1] - wh / 2, side: 'R', row, quad: pts([[p[0] - dx, p[1] - dy], [p[0] + dx, p[1] + dy], [p[0] + dx, p[1] + dy - wh], [p[0] - dx, p[1] - dy - wh]]) });
       }
     }
   }
-  const order = shuffled(slots.length, seed * 7919 + files + name.length);
+  // The floors: the folder's own files on the ground floor, then its sub-folders, biggest first, a row at least each
+  // and the rest of the rows shared by their files; when there are more sub-folders than rows, the smallest share the top.
+  const direct = Math.max(0, files - subs.reduce((n, s) => n + s.files, 0));
+  let entries = hall || !subs.length || direct > 0 ? [{ name: null, files: direct, subs: [] }] : [];
+  entries.push(...subs.map((s) => ({ name: s.name, files: s.files, subs: [s.name] })));
+  if (entries.length > rows) {
+    const rest = entries.slice(rows - 1);
+    entries = [...entries.slice(0, rows - 1), { name: `${rest.length} more folders`, files: rest.reduce((n, e) => n + e.files, 0), subs: rest.flatMap((e) => e.subs), folded: true }];
+  }
+  const total = Math.max(1, entries.reduce((n, e) => n + e.files, 0)), spare = rows - entries.length;
+  const want = entries.map((e) => e.files / total * spare), got = want.map(Math.floor);
+  want.map((w, i) => [w - got[i], i]).sort((a, b) => b[0] - a[0]).slice(0, spare - got.reduce((a, b) => a + b, 0)).forEach(([, i]) => got[i]++);
+  let start = 0;
+  const floors = entries.map((e, i) => {
+    const n = 1 + got[i], mine = slots.filter((s) => s.row >= start && s.row < start + n);
+    const order = shuffled(mine.length, seed * 7919 + files + i * 131 + name.length);
+    const z0 = start * 12 + 3, z1 = Math.min(z, (start + n) * 12 + 3);
+    const f = { name: e.name, files: e.files, folded: !!e.folded, index: i, z0, z1, slots: order.map((j) => mine[j]),
+      line: i && !hall ? pts([iso(c0, r0 + sr, z0), iso(c0 + sc, r0 + sr, z0), iso(c0 + sc, r0, z0)]) : null, at: iso(c0 + sc, r0 + sr, (z0 + z1) / 2) };
+    start += n;
+    return f;
+  });
+  const byName = new Map();
+  entries.forEach((e, i) => e.subs.forEach((s) => byName.set(s.toLowerCase(), floors[i])));
+  // A file's floor: its sub-folder's, the ground floor for one directly in the folder, the folded top floor for a
+  // sub-folder not listed (new, or past the forty the app lists).
+  const floorOf = (sub) => (sub == null ? floors[0] : byName.get(sub.toLowerCase()) ?? floors.find((f) => f.folded) ?? floors[floors.length - 1]);
   const door = iso(c0 + sc / 2, r0 + sr + 0.55);
   const label = iso(c0 + sc / 2, r0 + sr + 0.12);
   const all = [...base, ...top], xs = all.map((p) => p[0]), ys = all.map((p) => p[1]);
-  return { name, files, hall, c0, r0, sc, sr, z, faces, slots: order.map((i) => slots[i]), door, label, order: c0 + r0,
+  return { name, files, hall, c0, r0, sc, sr, z, faces, slots, floors, floorOf, door, label, order: c0 + r0,
     left: Math.min(...xs), right: Math.max(...xs), topY: Math.min(...ys), bottomY: Math.max(...ys) };
 }
 
@@ -421,6 +454,7 @@ function buildStage() {
     const windows = sv('g', { class: 'fl-windows' });
     for (const w of b.slots) windows.append(sv('polygon', { class: 'fl-dark', points: w.quad }));
     el.append(windows);
+    for (const f of b.floors) if (f.line) el.append(sv('polyline', { class: 'fl-floor', points: f.line }));
     el.cellLayer = sv('g'); el.append(el.cellLayer);
     const nameEl = sv('text', { class: 'fl-name', x: b.label[0], y: b.label[1] + 11, 'text-anchor': 'middle' }, b.name);
     const n = sv('text', { class: 'fl-n', x: b.label[0], y: b.label[1] + 21, 'text-anchor': 'middle' }, b.hall ? '' : plural(b.files, 'file'));
@@ -462,7 +496,7 @@ function cellEl(c) {
   if (c.overflow) return null;
   let el = fp.cellEls.get(c.key);
   if (el) return el;
-  el = sv('polygon', { class: 'fl-cell', points: c.room.slots[c.slot].quad, 'data-key': c.key });
+  el = sv('polygon', { class: 'fl-cell', points: c.quad, 'data-key': c.key });
   fp.roomEls.get(c.room.name)?.cellLayer.append(el);
   fp.cellEls.set(c.key, el);
   return el;
@@ -491,11 +525,17 @@ function recentCells(cells, cellWho, limit) {
  * Labels beside lit windows: each file's name on its building's near side, stacked so that they don't overlap, with a
  * lead line back to its window. Sized against the zoom, so they read the same whatever the magnification.
  */
-function labelFiles(cells, cellState, k) {
+function labelFiles(cells, cellState, k, room) {
   const layer = fp.fileLayer;
   layer.replaceChildren();
-  if (!cells.length) return;
   const fs = Math.max(4, 10.5 / k), gap = fs * 1.3;
+  // The zoomed building's floors, named across its shaded face, each name cut to what the face holds.
+  if (room && room.floors.length > 1) for (const f of room.floors) {
+    const name = f.name ?? `${room.name}/`, size = fs * .85, width = f.at[0] - room.left - 4, fit = Math.max(4, Math.floor(width / (size * .62)));
+    const short = name.length > fit ? name.slice(0, fit - 1) + '…' : name;
+    layer.append(sv('text', { class: 'fl-storey', x: (room.left + f.at[0]) / 2, y: f.at[1] + size * .35, 'font-size': size, 'text-anchor': 'middle' }, short));
+  }
+  if (!cells.length) return;
   for (const side of ['L', 'R']) {
     const list = cells.filter((c) => c.side === side).sort((a, b) => a.y - b.y);
     let y = -Infinity;
@@ -624,7 +664,7 @@ function render() {
   const room = fr != null ? fp.geometry.rooms.find((r) => r.name === fr) ?? fp.geometry.hall : null;
   const labelled = room ? recentCells([...fp.cells.values()].filter((c) => c.room === room), cellWho, MAX_LABELS * 2)
     : f != null ? recentCells([...per[f].touched.keys()].map((key) => fp.cells.get(key)).filter(Boolean), cellWho, MAX_LABELS) : [];
-  labelFiles(labelled, cellState, k);
+  labelFiles(labelled, cellState, k, room);
   if (fp.unzoom) fp.unzoom.hidden = f == null && fr == null;
 }
 
@@ -711,11 +751,15 @@ $('#stage').addEventListener('mousemove', (e) => {
     const mine = [...fp.cells.values()].filter((c) => c.room === room), lit = mine.filter((c) => world.cellState[c.key]);
     const edited = lit.filter((c) => world.cellState[c.key] === 'edit').length;
     const now = fp.idx == null ? Date.now() : fp.merged[curIdx() - 1]?.t ?? Date.now();
+    // Its floors, the busiest first.
+    const floors = room.floors.length > 1 ? room.floors.map((f) => ({ f, lit: lit.filter((c) => c.floor === f) })).filter((x) => x.lit.length)
+      .sort((a, b) => b.lit.length - a.lit.length).slice(0, 6)
+      .map(({ f, lit: l }) => `<div class="w"><span class="p">${esc(f.name ?? room.name + '/')}</span> · ${l.length} lit, ${l.filter((c) => world.cellState[c.key] === 'edit').length} edited</div>`).join('') : '';
     const recent = recentCells(mine, world.cellWho, 8).map((c) => {
       const [si, v] = [...world.cellWho[c.key]].sort((a, b) => b[1].t - a[1].t)[0];
       return `<div class="w"><span class="p">${esc(c.name)}</span> · ${esc(fp.members[si]?.name ?? '')} ${v.k === 'edit' ? 'edited' : 'read'} ${ago(v.t, now)}</div>`;
     }).join('');
-    tip.innerHTML = `<div><b>${esc(name)}</b>${room.hall ? '' : ` · ${plural(room.files, 'file')}`}</div><div class="w">${lit.length ? `${plural(lit.length, 'file')} touched, ${edited} edited` : 'Nothing touched here yet'}</div>${recent}${lit.length > 8 ? `<div class="w">and ${lit.length - 8} more</div>` : ''}<div class="w">Click to zoom in and name the files</div>`;
+    tip.innerHTML = `<div><b>${esc(name)}</b>${room.hall ? '' : ` · ${plural(room.files, 'file')}${room.floors.length > 1 ? `, ${plural(room.floors.length, 'floor')}` : ''}`}</div><div class="w">${lit.length ? `${plural(lit.length, 'file')} touched, ${edited} edited` : 'Nothing touched here yet'}</div>${floors}${floors ? '<div class="w"></div>' : ''}${recent}${lit.length > 8 ? `<div class="w">and ${lit.length - 8} more</div>` : ''}<div class="w">Click to zoom in and name the files</div>`;
   } else { tip.hidden = true; return; }
   tip.hidden = false;
   tip.style.left = Math.min(e.clientX + 14, innerWidth - tip.offsetWidth - 8) + 'px';
