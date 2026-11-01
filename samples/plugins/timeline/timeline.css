@@ -300,7 +300,7 @@ footer .k { display: inline-flex; align-items: center; gap: 5px; }
 @media (prefers-reduced-motion: reduce) { [data-look="tron"] .cycle::after, [data-look="tron"] .line.wait { animation: none !important; } }
 
 /* Ares: the same Grid in red, for the app's Tron: Ares theme. Only the light changes colour; amber still means it waits on you. */
-/* Matrix: the Grid in green, in a monospaced face, with the rain (timeline.js) behind the map instead of the ruled floor. */
+/* Matrix: the Grid in green, in a monospaced face. */
 :root[data-grid="matrix"] {
   --bg: #020804; --panel: rgba(2, 10, 5, .86); --border: #15502a; --border-soft: #0c2e18; --hover: #0a2214;
   --text: #b8ffd0; --text-dim: #5fcf85; --text-faint: #2f7a4c; --code: #010503;
@@ -309,10 +309,8 @@ footer .k { display: inline-flex; align-items: center; gap: 5px; }
   --working-glow: rgba(57, 255, 106, .75);
   --heat1: #06261a; --heat2: #0b6b26; --heat3: #1aa540; --heat4: #39ff6a;
   --grid-rgb: 57, 255, 106; --cycle: #c8ffd8; --on-text: #02140a; --heat-mid: #1f7a3e;
-  background: var(--bg);
 }
-[data-grid="matrix"] body { font-family: "Cascadia Mono", Consolas, "Courier New", monospace; background: transparent; }
-#rain { position: fixed; inset: 0; z-index: -1; pointer-events: none; }
+[data-grid="matrix"] body { font-family: "Cascadia Mono", Consolas, "Courier New", monospace; }
 [data-grid="matrix"] .bar, [data-grid="matrix"] footer { text-transform: none; letter-spacing: 0; font-size: 11px; }
 [data-grid="matrix"] .btn, [data-grid="matrix"] select, [data-grid="matrix"] .seg, [data-grid="matrix"] .seg button { text-transform: none; letter-spacing: 0; font-size: 11px; }
 [data-grid="matrix"] .axis, [data-grid="matrix"] .who .state, [data-grid="matrix"] .ctx, [data-grid="matrix"] .stop .t, [data-grid="matrix"] .stop .beads { text-transform: none; letter-spacing: 0; }
