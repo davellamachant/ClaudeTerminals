@@ -62,7 +62,10 @@ main { flex: 1; min-height: 0; overflow: auto; padding: 10px 14px 20px; outline:
 .fl-stage { position: absolute; inset: 0; transform-origin: 0 0; transition: transform .55s cubic-bezier(.2, .7, .2, 1); }
 .fl-stage svg { display: block; width: 100%; height: 100%; }
 .fl-ground line { stroke: var(--street); stroke-width: 1; }
-.fl-bld .face { stroke: var(--edge); stroke-width: 1; transition: stroke .3s; }
+.fl-bld { transition: opacity .3s; }
+.fl-bld.dim { opacity: .4; }
+.fl-bld .face { stroke: var(--edge); stroke-width: 1; transition: stroke .3s; cursor: pointer; }
+.fl-bld:hover .top { stroke: var(--text-dim); }
 .fl-bld .left { fill: var(--glass-side); } .fl-bld .right { fill: var(--glass); } .fl-bld .top { fill: var(--glass-top); }
 .fl-bld.active .top { stroke: var(--line); stroke-width: 1.4; }
 .fl-bld.hall .face { fill: color-mix(in srgb, var(--glass-side) 70%, transparent); stroke-dasharray: 3 3; }
@@ -75,6 +78,11 @@ main { flex: 1; min-height: 0; overflow: auto; padding: 10px 14px 20px; outline:
 .fl-cell.dim { opacity: .25; filter: none; }
 .fl-name { fill: var(--text-dim); font-size: 9.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; pointer-events: none; paint-order: stroke; stroke: var(--chrome); stroke-width: 3px; stroke-linejoin: round; }
 .fl-n { fill: var(--text-faint); font: 8.5px "Cascadia Mono", Consolas, monospace; pointer-events: none; paint-order: stroke; stroke: var(--chrome); stroke-width: 3px; stroke-linejoin: round; }
+.fl-name.dim, .fl-n.dim { opacity: .3; }
+.fl-files { pointer-events: none; }
+.fl-lead { stroke: var(--text-faint); stroke-width: .5; }
+.fl-file { fill: var(--text); font-family: "Cascadia Mono", Consolas, monospace; paint-order: stroke; stroke: var(--chrome); stroke-width: 2.5px; stroke-linejoin: round; }
+.fl-file.edit { fill: var(--edit); } .fl-file.read { fill: var(--read); }
 .fl-trail { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 2 6; opacity: .55; }
 .fl-trail.busy { stroke-dasharray: 12 8; opacity: .85; animation: ride 1.2s linear infinite; }
 .fl-trail.off, .fl-trail.idle { opacity: .3; }
