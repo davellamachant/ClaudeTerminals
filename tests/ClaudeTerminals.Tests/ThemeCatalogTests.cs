@@ -44,6 +44,10 @@ public sealed class ThemeCatalogTests : IDisposable
         Assert.Equal(("#00e5ff", "#087a8c"), (tron.Accent!.Line, tron.Accent.Strong));
         Assert.Null(nerds.Cursor);
         Assert.False(nerds.Grid);
+        Assert.False(nerds.Rain);
+        var matrix = Assert.Single(themes, t => t.Id == "matrix");
+        Assert.Equal(("Matrix", "dark", "Cascadia Mono", true, false, true, null, true), (matrix.Name, matrix.Base, matrix.Font, matrix.Glow, matrix.Grid, matrix.Rain, matrix.Cursor, matrix.BuiltIn));
+        Assert.Equal(("#39ff6a", "#0b6b26"), (matrix.Accent!.Line, matrix.Accent.Strong));
         var ares = Assert.Single(themes, t => t.Id == "tron-ares");
         Assert.Equal(("Tron: Ares", "dark", "Bahnschrift", true, true), (ares.Name, ares.Base, ares.Font, ares.Glow, ares.BuiltIn));
         Assert.Equal(("#ff3b3b", "#c01818"), (ares.Accent!.Line, ares.Accent.Strong));
@@ -51,6 +55,10 @@ public sealed class ThemeCatalogTests : IDisposable
         {
             Assert.Equal("light-cycle", t.Cursor);
             Assert.True(t.Grid);
+            Assert.False(t.Rain);
+        }
+        foreach (var t in new[] { tron, ares, matrix })
+        {
             Assert.Equal(ThemeCatalog.ColorNames.OrderBy(n => n), t.Colors.Keys.OrderBy(n => n));
             Assert.Equal(ThemeCatalog.DiffNames.OrderBy(n => n), t.Diff.Keys.OrderBy(n => n));
             Assert.Equal(ThemeCatalog.TerminalNames.Except(["selectionForeground"]).OrderBy(n => n), t.Terminal.Keys.OrderBy(n => n));
