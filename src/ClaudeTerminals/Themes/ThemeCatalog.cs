@@ -9,6 +9,7 @@ namespace ClaudeTerminals.Themes;
 /// <param name="Base">"dark" or "light": what fills in every colour it leaves out, and what Claude and plugins are told.</param>
 /// <param name="Font">A font family for the app's own text (not the terminals'), or null for the usual one.</param>
 /// <param name="Glow">Text glows faintly in the accent colour, as on a phosphor screen.</param>
+/// <param name="Grid">The window's floor is ruled in faint lines of the accent colour, with a glow at the horizon, behind the title bar, tabs and panels.</param>
 /// <param name="Cursor">"light-cycle": the terminals' cursor glows and leaves a ribbon of light fading behind it as it moves. Null for the plain cursor.</param>
 /// <param name="Monochrome">
 /// Everything in shades of the accent colour picked in Accent colour: the page builds the colours from it, under any the
@@ -19,7 +20,7 @@ namespace ClaudeTerminals.Themes;
 /// <param name="Terminal">The terminals' colours, by xterm.js's names (see <see cref="ThemeCatalog.TerminalNames"/>).</param>
 /// <param name="Diff">The diff editor's colours (see <see cref="ThemeCatalog.DiffNames"/>).</param>
 /// <param name="BuiltIn">Shipped with the app, rather than added to the themes folder.</param>
-internal sealed record ThemeInfo(string Id, string Name, string Base, string? Font, bool Glow, bool Monochrome, string? Cursor, ThemeAccent? Accent,
+internal sealed record ThemeInfo(string Id, string Name, string Base, string? Font, bool Glow, bool Grid, bool Monochrome, string? Cursor, ThemeAccent? Accent,
     IReadOnlyDictionary<string, string> Colors, IReadOnlyDictionary<string, string> Terminal, IReadOnlyDictionary<string, string> Diff,
     bool BuiltIn);
 
@@ -181,6 +182,7 @@ internal static partial class ThemeCatalog
             else problems.Add($"{fileName}: font \"{f}\" isn't a font family name (letters, digits, spaces and hyphens).");
         }
         var glow = e.TryGetProperty("glow", out var g) && g.ValueKind == JsonValueKind.True;
+        var grid = e.TryGetProperty("grid", out var gr) && gr.ValueKind == JsonValueKind.True;
         var monochrome = e.TryGetProperty("monochrome", out var m) && m.ValueKind == JsonValueKind.True;
         string? cursor = null;
         if (e.TryGetProperty("cursor", out var c))
@@ -197,7 +199,7 @@ internal static partial class ThemeCatalog
             else problems.Add($"{fileName}: accent needs a \"line\" and a \"strong\" colour.");
         }
 
-        return new ThemeInfo(id, name, @base, font, glow, monochrome, cursor, accent,
+        return new ThemeInfo(id, name, @base, font, glow, grid, monochrome, cursor, accent,
             Colors(e, "colors", ColorNames, CssColor(), fileName, problems),
             Colors(e, "terminal", TerminalNames, CssColor(), fileName, problems),
             Colors(e, "diff", DiffNames, HexColor(), fileName, problems),

@@ -143,6 +143,20 @@
 :root[data-glow] #app { text-shadow: 0 0 6px color-mix(in srgb, var(--accent) 30%, transparent); }
 :root[data-glow] :is(.xterm, .monaco-editor, textarea, input) { text-shadow: none; }
 :root[data-glow] :is(.modal, .menu, .toast, #railCard) { box-shadow: 0 0 0 1px var(--border), 0 8px 28px color-mix(in srgb, var(--accent) 10%, transparent); }
+/* The Grid (a theme's "grid": true): the window's floor is ruled in faint lines of the accent colour, with a glow at the
+   horizon, and the title bar, tab strips and panels go translucent so it shows through them; terminals, editors, menus
+   and cards keep their own backgrounds. */
+:root[data-grid] body {
+  background:
+    radial-gradient(120% 40% at 50% 100%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 70%),
+    linear-gradient(color-mix(in srgb, var(--accent) 8%, transparent) 1px, transparent 1px) 0 0 / 32px 32px,
+    linear-gradient(90deg, color-mix(in srgb, var(--accent) 8%, transparent) 1px, transparent 1px) 0 0 / 32px 32px,
+    var(--chrome);
+}
+:root[data-grid] :is(#stage, #splitter, #docSplitter) { background: transparent; }
+:root[data-grid] :is(#titlebar, .doc-tabs, .tab-scroller.doc, .dock-group > .tw-title) { background: color-mix(in srgb, var(--chrome-2) 70%, transparent); }
+:root[data-grid] #gitPanel { background: color-mix(in srgb, var(--panel) 55%, transparent); }
+:root[data-grid] .tile-header { background: color-mix(in srgb, var(--panel) 70%, transparent); }
 
 /* Project colours are picked for a dark background; their text is deepened to stay readable on a light one. */
 :root[data-theme="light"] .proj-tag,
