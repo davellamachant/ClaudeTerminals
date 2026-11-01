@@ -5647,7 +5647,7 @@ const PLUGIN_ACCESS = {
       h('p', {}, `${p.title} is a plugin, from ${plugins.folder}\\${p.id}. It asks to see:`),
       h('ul', {},
         h('li', {}, 'your sessions: their names, projects and folders, and whether each is working or waiting for you;'),
-        h('li', {}, 'what Claude did in each: your prompts, the files it read and edited, the commands it ran and the questions it asked;'),
+        h('li', {}, 'what Claude did in each: your prompts, the files it read and edited, the commands it ran, the questions it asked and the tokens each reply used;'),
         h('li', {}, 'how many files each top-level folder of their repositories holds.')),
       h('p', {}, 'It can’t type into a session or change a file. But like any web page it could send what it sees to a website, so allow only a plugin you trust. You can change your answer any time in Permissions, on the palette menu.'),
     ],
@@ -6413,7 +6413,7 @@ const pluginSessionInfo = (s) => ({
  * With "sessions" access:
  *   sessions            → every session (see pluginSessionInfo)
  *   activity { ids, have } → what Claude did in each: [{ id, found, conversation, version, from, events }], events
- *                          from `from` on ({ t, k, file, text, ok, q }; see ActivityReader). have: id → { conversation,
+ *                          from `from` on ({ t, k, file, text, ok, q, ctx, out }; see ActivityReader). have: id → { conversation,
  *                          version } that the plugin already has, so only what's new comes back
  *   folders { sessionId } → { root, folders: [{ name, files }] }, the session's repository's top-level folders, or null
  *   showSession { sessionId } → opens the session, as clicking its tab would
