@@ -2342,7 +2342,6 @@ function makeGroupEl(g) {
   g.el = h('div', { class: 'dock-group' }, title, g.body, g.frames);
   g.el.dock = g;
   g.foldBtn = fold;
-  makeScrollable(g.tabsEl, 'tw');
 }
 
 /** A folded group shows only its tab row, so it stays one click away without taking room. */
@@ -2394,8 +2393,7 @@ function renderDockTabs(g, tabs, open) {
     }, h('span', { class: 'panel-tab-title' }, p.title), p.badge && h('span', { class: `tw-badge tone-${tone(p.badge.tone)}` }, p.badge.text),
     (t !== open || g.folded) && isUnseen(p) && h('span', { class: 'tw-dot', title: 'Updated since you last looked', 'aria-label': 'updated' }));
   }));
-  // With many tabs the row scrolls sideways (◀ ▶): keep the open one in view.
-  requestAnimationFrame(() => revealActive(g.tabsEl, '.tw-tab.active'));
+  // More tabs than fit the width go on to a second line (see .tw-tabs in app.css).
 }
 
 function activateTab(g, t) {
