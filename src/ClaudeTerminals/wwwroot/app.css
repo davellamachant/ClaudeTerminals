@@ -1011,7 +1011,9 @@ body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; user-selec
 .perms-empty { color: var(--text-dim); }
 .perms-empty .btn { margin-top: 4px; }
 #permsPause.active { color: var(--attention); border-color: var(--attention); }
-.perms-card > header .chip { margin-left: auto; flex: none; overflow: visible; }   /* the folder path before it shortens instead */
+.perms-card > header .chip { margin-left: auto; flex: none; overflow: visible; }
+.perms-card > header .perms-reset { margin-left: auto; flex: none; font-size: 12px; }
+.perms-card > header .chip ~ .perms-reset { margin-left: 4px; }   /* the folder path before it shortens instead */
 .perms-card > header span:not(.chip) { min-width: 0; }
 .perms-sub { border-top: 1px solid var(--border-soft); }
 .perms-sub > summary { display: flex; align-items: center; gap: 10px; padding: 8px 12px; cursor: pointer; list-style-position: inside; }

@@ -326,6 +326,8 @@ Without `access`, that's all a plugin learns. The session id tells clicks on dif
 
 When a message comes for it, the app sends `message` `{ unread, from, fromName }` to its page (once it has loaded, if it isn't open yet); read them with `readMessages`. [`samples/plugins/messenger`](samples/plugins/messenger) is a plugin that uses them: pick a session, send it a message, and see its answer. To try it, copy the folder into your plugins folder.
 
+**Reset.** A plugin's card in Permissions › By plugin has **Reset** once you've answered anything about it: it forgets what it may do, its projects and the sessions hidden from it, so it asks again. A session's card in By session has **Reset** once it has rules of its own: they're cleared, and All sessions' rules decide.
+
 **Where your answers are kept.** Your answers about plugins (what each may do, its projects, the sessions you hid) are kept in `plugin-grants.json` next to `sessions.json`, where both the page and the message relay read them. Each answer that allows something remembers the plugin's `plugin.json`: if that file changes, what you allowed is asked again, and Permissions marks the plugin **Changed since you allowed it**.
 
 **What a plugin can't do.** A plugin is only a page. It's given no terminals, files or Git, no sessions unless you allowed it to see them, and it can't reach the app:

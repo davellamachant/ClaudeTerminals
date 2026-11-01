@@ -5748,12 +5748,36 @@ function setPluginAccess(id, kind, to) {
   permissionsChanged();
 }
 
-/** Forgets every answer about a plugin (one no longer installed). */
+/** Forgets every answer about a plugin: one no longer installed, or one you reset (it asks again when it next needs to). */
 function forgetPlugin(id) {
+  const had = !!pluginAccess[id]?.length;
   for (const map of [pluginAccess, pluginDenied, pluginScope, pluginHidden]) delete map[id];
   pluginChanged.delete(id);
   sendGrant('plugins.forget', { id });
+  // Taken away: the page starts over, so it no longer holds what it was shown.
+  const f = pluginFrames.get(id);
+  if (had && f) { f.ready = false; f.frame.src = f.frame.src; }
+  checkPluginSight();
   permissionsChanged();
+}
+
+/** True if you've answered anything about a plugin: what it may do, its projects or the sessions hidden from it. */
+const pluginAnswered = (id) => [pluginAccess, pluginDenied, pluginScope, pluginHidden].some((map) => map[id]);
+
+function confirmResetPlugin(p) {
+  confirmDialog(`Reset ${p.title}`,
+    `Forget everything you answered for ${p.title}: what it may do, its projects, and the sessions hidden from it? It asks you again the next time it needs something.`,
+    'Reset', false, () => forgetPlugin(p.id));
+}
+
+/** A session's own messaging rules (not All sessions' ones). */
+const ownRelayRules = (s) => relay.rules.filter((r) => r.from === s.id);
+
+function confirmResetSession(s) {
+  const rules = ownRelayRules(s);
+  confirmDialog(`Reset ${s.name}`,
+    `Clear ${s.name}’s ${rules.length} messaging rule${rules.length === 1 ? '' : 's'}? It then follows All sessions’ rules, and you’re asked when those don’t say. Plugins it’s hidden from stay as they are.`,
+    'Reset', false, () => { for (const r of rules) setRelayRule(r.from, r.to, 'ask'); });
 }
 
 /** The project key a session counts under for a plugin's projects: its project's id, or NO_PROJECT. */
@@ -6043,7 +6067,8 @@ function permsByPlugin() {
   return [
     ...asking.map((p) => h('section', { class: 'perms-card' },
       h('header', {}, pluginIcon(p.id), h('b', {}, p.title), h('span', { class: 'dim', title: 'Its folder' }, `${plugins.folder}\\${p.id}`),
-        pluginChanged.has(p.id) && h('span', { class: 'chip perms-waiting', title: 'What you allowed is asked again: its plugin.json changed since' }, 'Changed since you allowed it')),
+        pluginChanged.has(p.id) && h('span', { class: 'chip perms-waiting', title: 'What you allowed is asked again: its plugin.json changed since' }, 'Changed since you allowed it'),
+        pluginAnswered(p.id) && h('button', { class: 'link-btn perms-reset', title: 'Forget everything you answered for it, so it asks again', onclick: () => confirmResetPlugin(p) }, 'Reset')),
       p.access.map((kind) => {
         const hidden = kind === 'sessions' ? (pluginHidden[p.id] ?? []).map((id) => state.byId.get(id)).filter(Boolean) : [];
         return h('div', { class: 'perms-row' },
@@ -6188,7 +6213,8 @@ function permsBySession() {
       const unread = relay.unread[s.id] ?? 0;
       return h('section', { class: 'perms-card', 'data-session': s.id },
         h('header', {}, h('i', { class: 'dot ' + statusClass(s) }), h('b', {}, s.name), projectTag(s), agent && h('span', { class: 'dim' }, agent.name),
-          unread > 0 && h('span', { class: 'chip', title: 'Messages it hasn’t read yet' }, `${unread} unread`)),
+          unread > 0 && h('span', { class: 'chip', title: 'Messages it hasn’t read yet' }, `${unread} unread`),
+          ownRelayRules(s).length > 0 && h('button', { class: 'link-btn perms-reset', title: 'Clear its own messaging rules, so All sessions’ rules decide', onclick: () => confirmResetSession(s) }, 'Reset')),
         agent ? permsMessaging(s) : h('div', { class: 'perms-row dim' }, 'Not a coding agent, so it can’t send or read messages.'),
         h('div', { class: 'perms-row' }, h('div', { class: 'perms-what' }, h('b', {}, 'Plugins'), h('span', { class: 'dim' }, 'Click one to hide this session from it, or show it again.')),
           h('div', { class: 'perms-who' }, pluginChips(s))));
