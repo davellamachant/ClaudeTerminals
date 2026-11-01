@@ -63,9 +63,64 @@ addEventListener('message', (e) => {
 function dress(theme, id) {
   const root = document.documentElement;
   root.dataset.theme = theme === 'light' ? 'light' : 'dark';
-  root.dataset.look = id === 'tron' || id === 'tron-ares' ? 'tron' : 'app';
-  if (id === 'tron-ares') root.dataset.grid = 'ares'; else delete root.dataset.grid;
+  const grid = id === 'tron-ares' ? 'ares' : id === 'matrix' ? 'matrix' : null;   // the Grid's colour: cyan, red, or Matrix green with rain
+  root.dataset.look = id === 'tron' || grid ? 'tron' : 'app';
+  if (grid) root.dataset.grid = grid; else delete root.dataset.grid;
+  digitalRain(grid === 'matrix');
 }
+
+// The rain, for the app's Matrix theme: this page is its own frame and can't see the app's, so it rains on a canvas of its
+// own behind the map, dimmer than the app's so the rows read.
+const rain = { canvas: null, ctx: null, cols: [], timer: null };
+const RAIN_GLYPHS = 'ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ0123456789Z:・"=*+-<>¦|ç';
+const RAIN_CELL = 14;
+function digitalRain(on) {
+  if (!on) {
+    clearInterval(rain.timer); rain.timer = null;
+    rain.canvas?.remove(); rain.canvas = rain.ctx = null; rain.cols = [];
+    return;
+  }
+  if (rain.canvas) return;
+  const canvas = h('canvas', { id: 'rain', 'aria-hidden': 'true' });
+  document.body.prepend(canvas);
+  rain.canvas = canvas; rain.ctx = canvas.getContext('2d');
+  rainSize();
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) { for (let i = 0; i < 60; i++) rainFrame(); return; }
+  rain.timer = setInterval(() => { if (!document.hidden) rainFrame(); }, 70);
+}
+function rainSize() {
+  const { canvas, ctx } = rain;
+  if (!canvas) return;
+  const dpr = devicePixelRatio || 1, w = innerWidth, hgt = innerHeight;
+  canvas.width = Math.round(w * dpr); canvas.height = Math.round(hgt * dpr);
+  canvas.style.width = w + 'px'; canvas.style.height = hgt + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim(); ctx.fillRect(0, 0, w, hgt);
+  rain.rows = Math.ceil(hgt / RAIN_CELL);
+  rain.cols = Array.from({ length: Math.ceil(w / RAIN_CELL) }, () => ({ y: -Math.random() * rain.rows * 1.6, speed: 0.4 + Math.random() * 0.8 }));
+}
+function rainFrame() {
+  const { ctx, canvas } = rain;
+  if (!ctx) return;
+  const css = getComputedStyle(document.documentElement), colour = css.getPropertyValue('--accent').trim(), floor = css.getPropertyValue('--bg').trim();
+  const w = canvas.clientWidth, hgt = canvas.clientHeight;
+  ctx.fillStyle = floor; ctx.globalAlpha = 0.16; ctx.fillRect(0, 0, w, hgt); ctx.globalAlpha = 1;
+  ctx.font = `${RAIN_CELL - 2}px "MS Gothic", "Cascadia Mono", Consolas, monospace`;
+  ctx.textBaseline = 'top';
+  for (let i = 0; i < rain.cols.length; i++) {
+    const c = rain.cols[i], y = Math.floor(c.y);
+    if (y >= 0 && y < rain.rows + 1) {
+      ctx.fillStyle = colour; ctx.globalAlpha = 0.45;
+      ctx.fillText(RAIN_GLYPHS[Math.floor(Math.random() * RAIN_GLYPHS.length)], i * RAIN_CELL + 1, (y - 1) * RAIN_CELL);
+      ctx.fillStyle = '#ffffff'; ctx.globalAlpha = 0.6;
+      ctx.fillText(RAIN_GLYPHS[Math.floor(Math.random() * RAIN_GLYPHS.length)], i * RAIN_CELL + 1, y * RAIN_CELL);
+      ctx.globalAlpha = 1;
+    }
+    c.y += c.speed;
+    if (c.y > rain.rows + 2 && Math.random() < 0.035) { c.y = -Math.random() * 20; c.speed = 0.4 + Math.random() * 0.8; }
+  }
+}
+addEventListener('resize', () => rainSize());
 const opened = new URLSearchParams(location.search);   // the app says the theme on the address too, so the first paint matches
 dress(opened.get('theme'), opened.get('look'));
 
