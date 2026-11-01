@@ -267,7 +267,8 @@ function track(s, since, width) {
       const head = i === prompts.length - 1 && ev[ev.length - 1].t >= since;
       const turn = ev.slice(ev.indexOf(p) + 1, i + 1 < prompts.length ? ev.indexOf(prompts[i + 1]) : ev.length);
       el.append(h('span', { class: 'st' + (head ? ' head ' + s.status : ''), style: `left:${x(p.t)}`,
-        'data-prompt': p.text, 'data-did': didOf(turn), 'data-when': ago(p.t) }));
+        'data-prompt': p.text, 'data-did': didOf(turn), 'data-when': ago(p.t),
+        'data-session': s.id, 'data-at': new Date(p.t).toISOString(), 'data-index': ev.filter((e) => e.k === 'prompt').indexOf(p) }));
     });
   }
   el.append(h('div', { class: 'intent' }, s.status === 'working' ? [h('span', { class: 'now' }, intent)] : intent));
@@ -319,7 +320,7 @@ function stops(s, since) {
       h('div', { class: 't' }, ago(p.t)),
       h('div', { class: 'rail' }, h('i')),
       h('div', { class: 'body' },
-        h('div', { class: 'prompt' }, p.text),
+        h('div', { class: 'prompt', title: 'Show this prompt in the session', 'data-session': s.id, 'data-at': new Date(p.t).toISOString(), 'data-index': ev.slice(0, i + 1).filter((e) => e.k === 'prompt').length - 1 }, p.text),
         h('div', { class: 'did' }, n === 0 && s.status === 'working' ? describe(s).intent : didOf(turn)),
         (Object.keys(counts).length || out) ? h('div', { class: 'beads' },
           ...Object.entries(counts).map(([kind, c]) => h('span', {}, h('span', { class: 'bead ' + kind }), plural(c, BEAD_NAME[kind]))),
@@ -396,6 +397,15 @@ function note(text, error) {
   msg.hidden = false; msg.className = 'message' + (error ? ' error' : ''); msg.textContent = text;
   setTimeout(() => { if (msg.textContent === text) msg.hidden = true; }, 4000);
 }
+
+// ---- clicking a prompt: the app opens the session's conversation at it (Claude's full-screen mode keeps no scrollback to jump through)
+
+document.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-at][data-session]');
+  if (!el) return;
+  ask('showPrompt', { sessionId: el.dataset.session, at: el.dataset.at, index: Number(el.dataset.index), text: el.dataset.prompt ?? el.textContent })
+    .catch((err) => note(err.message, true));
+});
 
 // ---- the station tooltip
 
