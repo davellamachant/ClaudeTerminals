@@ -657,10 +657,16 @@ const CYCLE_SVG = '<svg viewBox="0 0 24 16" preserveAspectRatio="xMinYMid meet" 
 const BURST_MOVES = 12, BURST_MS = 500;
 const trailsAllowed = () => !matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-/** The terminal's colours, with xterm's own cursor made invisible while the light cycle stands in for it. */
+/**
+ * The terminal's colours as the theme wants them on screen: see-through over the Grid floor (the tile under it paints
+ * the floor's lines, see .tile in app.css), and xterm's own cursor made invisible while the light cycle stands in for it.
+ */
 function dressCursor(s) {
   const t = termTheme();
-  s.term.options.theme = s.cycle ? { ...t, cursor: t.background, cursorAccent: t.background } : t;
+  const theme = { ...t };
+  if (themeLook()?.grid) theme.background = 'rgba(0, 0, 0, 0)';
+  if (s.cycle) { theme.cursor = t.background; theme.cursorAccent = t.background; }
+  s.term.options.theme = theme;
   s.term.options.cursorStyle = s.cycle ? 'underline' : 'block';
 }
 
@@ -828,6 +834,7 @@ function createSession(info) {
     fontSize: state.fontSize,
     lineHeight: 1.0,
     cursorBlink: true,
+    allowTransparency: true,   // so a theme with a Grid floor can show it under the text (dressCursor); must be set before open()
     scrollback: 10000,
     allowProposedApi: true,
     theme: termTheme(),
