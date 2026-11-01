@@ -618,27 +618,46 @@ const TERM_THEME_LIGHT = {
 /** The terminals' colours: a theme's own over its base's. */
 const termTheme = (look = themeLook()) => ({ ...(isLight() ? TERM_THEME_LIGHT : TERM_THEME_DARK), ...look?.terminal });
 
-// The light cycle cursor (a theme's "cursor": "light-cycle"): a glow on the cell the cursor is in, and a ribbon of light
-// that fades behind it as it moves, turning at right angles when it changes line, as a light cycle does. It's drawn in a
-// layer over the terminal's screen, in the terminal's cursor colour; xterm keeps drawing the cursor itself.
+// The light cycle cursor (a theme's "cursor": "light-cycle"): the cursor is a light cycle, drawn in the terminal's cursor
+// colour over the cell the cursor is in (its rear wheel on the cell, the rest riding out over the next two), leaving a
+// ribbon of light that fades behind it as it moves, turning at right angles when it changes line. It's a layer over the
+// terminal's screen; xterm's own cursor is made invisible (an underline in the background colour) while it's on.
 const TRAIL_MAX = 48;        // pieces of ribbon kept at once
+const CYCLE_CELLS = 3;       // how many cells wide the light cycle is drawn
+// Side view, facing right, in a 24 by 16 box: two tall wheels with hubs, the canopy sweeping over them, the rider's
+// back, and the white light stripe along the canopy.
+const CYCLE_SVG = '<svg viewBox="0 0 24 16" preserveAspectRatio="xMinYMid meet" aria-hidden="true">' +
+  '<circle cx="5.5" cy="10.5" r="4.6"/><circle cx="18.5" cy="10.5" r="4.6"/>' +
+  '<circle cx="5.5" cy="10.5" r="1.3" fill="currentColor"/><circle cx="18.5" cy="10.5" r="1.3" fill="currentColor"/>' +
+  '<path d="M1.5 8 C3.5 3.6 8 2.2 12 2.6 C16.5 3 20.5 5 22.5 8.5"/><path d="M8.5 6.2 L10.5 3.6"/><path d="M9 10.5 H15"/>' +
+  '<path d="M4 6.4 C8 3.2 15 3 20 5.8" stroke="#fff" stroke-width="1" opacity=".9"/></svg>';
 // A program repainting its screen (a listing streaming by, Claude's own interface) moves the cursor every frame; that's
 // not riding, so past this many moves in half a second only the glow follows, and the ribbon waits for your own moves.
 const BURST_MOVES = 12, BURST_MS = 500;
 const trailsAllowed = () => !matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-/** Puts the light cycle on a session's terminal, or takes it off. */
+/** The terminal's colours, with xterm's own cursor made invisible while the light cycle stands in for it. */
+function dressCursor(s) {
+  const t = termTheme();
+  s.term.options.theme = s.cycle ? { ...t, cursor: t.background, cursorAccent: t.background } : t;
+  s.term.options.cursorStyle = s.cycle ? 'underline' : 'block';
+}
+
+/** Puts the light cycle on a session's terminal, or takes it off, and sets the terminal's colours either way. */
 function lightCycle(s, on) {
   if (!on) {
-    if (!s.cycle) return;
-    s.cycle.move.dispose(); s.cycle.resize.dispose(); s.cycle.layer.remove();
-    s.cycle = null;
+    if (s.cycle) {
+      s.cycle.move.dispose(); s.cycle.resize.dispose(); s.cycle.layer.remove();
+      s.cycle = null;
+    }
+    dressCursor(s);
     return;
   }
-  if (s.cycle) { s.cycle.layer.style.setProperty('--cycle', termTheme().cursor); return; }
+  if (s.cycle) { s.cycle.layer.style.setProperty('--cycle', termTheme().cursor); dressCursor(s); return; }
   const screen = s.surface.querySelector('.xterm-screen');
   if (!screen) return;
   const head = h('div', { class: 'cycle-head', hidden: true });
+  head.innerHTML = CYCLE_SVG;
   const layer = h('div', { class: 'cycle-layer' }, head);
   layer.style.setProperty('--cycle', termTheme().cursor);
   screen.append(layer);
@@ -650,7 +669,7 @@ function lightCycle(s, on) {
     const cw = screen.clientWidth / term.cols, ch = screen.clientHeight / term.rows;
     const x = b.cursorX, y = b.cursorY;
     head.hidden = false;
-    Object.assign(head.style, { left: `${x * cw}px`, top: `${y * ch}px`, width: `${cw}px`, height: `${ch}px` });
+    Object.assign(head.style, { left: `${x * cw}px`, top: `${y * ch}px`, width: `${cw * CYCLE_CELLS}px`, height: `${ch}px` });
     const from = c.last;
     c.last = { x, y };
     if (!from || (from.x === x && from.y === y)) return;
@@ -658,8 +677,9 @@ function lightCycle(s, on) {
     c.moves = c.moves.filter((t) => now - t < BURST_MS);
     c.moves.push(now);
     if (c.moves.length > BURST_MOVES || !trailsAllowed()) return;
-    // The ribbon: down (or up) the old column to the new line, then along it to the new cell.
+    // The ribbon, from the rear wheel: down (or up) the old column to the new line, then along it to the new cell.
     const mid = (v, size) => (v + 0.5) * size;
+    const wheel = (row) => (row + 0.69) * ch;   // the wheels' height in the cell (11 of 16 in CYCLE_SVG)
     const piece = (left, top, width, height) => {
       const p = h('div', { class: 'cycle-trail', style: `left:${left}px;top:${top}px;width:${width}px;height:${height}px` });
       p.addEventListener('animationend', () => { p.remove(); c.pieces = c.pieces.filter((q) => q !== p); });
@@ -667,13 +687,14 @@ function lightCycle(s, on) {
       c.pieces.push(p);
       while (c.pieces.length > TRAIL_MAX) c.pieces.shift().remove();
     };
-    if (from.y !== y) piece(mid(from.x, cw) - 1, Math.min(mid(from.y, ch), mid(y, ch)), 2, Math.abs(y - from.y) * ch);
-    if (from.x !== x) piece(Math.min(mid(from.x, cw), mid(x, cw)), mid(y, ch) - 1, Math.abs(x - from.x) * cw, 2);
+    if (from.y !== y) piece(mid(from.x, cw) - 1, Math.min(wheel(from.y), wheel(y)), 2, Math.abs(y - from.y) * ch);
+    if (from.x !== x) piece(Math.min(mid(from.x, cw), mid(x, cw)), wheel(y) - 1, Math.abs(x - from.x) * cw, 2);
   };
   const queue = () => { if (!c.queued) { c.queued = true; requestAnimationFrame(ride); } };
   c.move = s.term.onCursorMove(queue);
   c.resize = s.term.onResize(() => { c.last = null; queue(); });
   s.cycle = c;
+  dressCursor(s);
   queue();
 }
 
@@ -4925,7 +4946,7 @@ function applyTheme(before = null) {
   const look = themeLook();
   store.set('themeLook', look);   // so it paints at once on the next start
   markTheme(look);
-  for (const s of state.sessions) { s.term.options.theme = termTheme(look); lightCycle(s, look?.cursor === 'light-cycle'); }
+  for (const s of state.sessions) lightCycle(s, look?.cursor === 'light-cycle');   // sets the terminal's colours either way
   if (window.monaco) monaco.editor.setTheme(diffTheme(look));
   applyAccent();
   for (const f of pluginFrames.values()) postPluginTheme(f.frame);
