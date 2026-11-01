@@ -1380,10 +1380,10 @@ function showMenu(x, y, items) {
   closeMenu();
   // Pressing on the menu mustn't take focus: after Paste in the terminal's menu, typing has to go on in the terminal.
   // Items: '-' for a separator ('~' for a lighter, shorter one within a section), { header } for a section title, or { label, action } with optional kbd, danger,
-  // checked (ticked when true) and icon (a name from PATHS, or an element such as a plugin's image), which share a column
-  // at the start. If any item has either, all get the column so their labels line up.
-  const ticks = items.some((it) => it && (it.checked !== undefined || it.icon));
-  const lead = (it) => it.checked ? '✓' : typeof it.icon === 'string' ? iconEl(it.icon) : it.icon ?? '';
+  // checked (ticked when true) and icon (a name from PATHS, or an element such as a plugin's image), each in a column of
+  // its own at the start. If any item can be ticked, or has an icon, all get that column so their labels line up.
+  const ticks = items.some((it) => it && it.checked !== undefined);
+  const icons = items.some((it) => it?.icon);
   const menu = h('div', {
     class: 'menu', onmousedown: (e) => e.preventDefault(),
     onmousemove: (e) => e.currentTarget.querySelector('.menu-item.active')?.classList.remove('active'),   // the pointer takes over
@@ -1392,7 +1392,8 @@ function showMenu(x, y, items) {
     : it.header
       ? h('div', { class: 'menu-header' }, it.header)
       : h('div', { class: 'menu-item' + (it.danger ? ' danger' : ''), onclick: () => { closeMenu(); it.action(); } },
-        ticks && h('span', { class: 'menu-check' }, lead(it)),
+        ticks && h('span', { class: 'menu-check' }, it.checked ? '✓' : ''),
+        icons && h('span', { class: 'menu-icon' }, typeof it.icon === 'string' ? iconEl(it.icon) : it.icon ?? ''),
         it.label, it.kbd && h('span', { class: 'kbd' }, it.kbd))));
   $('#menuHost').append(menu);
   const r = menu.getBoundingClientRect();
@@ -4999,9 +5000,9 @@ function renderNotice() {
   bar.oncontextmenu = (e) => {
     e.preventDefault();
     showMenu(e.clientX, e.clientY, [
-      { label: "Don't show this again", action: () => dismissNotice(n) },
-      { label: 'All tips and offers…', action: showNoticesDialog },
-      n.kind !== 'news' && { label: 'Show tips and offers', checked: true, action: () => setShowTips(false) },
+      { icon: 'close', label: "Don't show this again", action: () => dismissNotice(n) },
+      { icon: 'gift', label: 'All tips and offers…', action: showNoticesDialog },
+      n.kind !== 'news' && { icon: 'bulb', label: 'Show tips and offers', checked: true, action: () => setShowTips(false) },
     ]);
   };
 }
@@ -5055,18 +5056,37 @@ function showNoticesDialog() {
 /** The version number's menu: updates, release notes and the tips along the top. */
 function versionMenu(x, y) {
   showMenu(x, y, [
-    { label: 'Check for updates', action: () => checkForUpdates(true) },
-    { label: 'Check for updates automatically', checked: updates.auto, action: () => {
+    { icon: 'refresh', label: 'Check for updates', action: () => checkForUpdates(true) },
+    { icon: 'down', label: 'Check for updates automatically', checked: updates.auto, action: () => {
       updates.auto = !updates.auto;
       store.set('autoUpdateCheck', updates.auto);
       if (updates.auto) checkForUpdates();
     } },
-    { label: 'Show tips and offers', checked: notices.tips, action: () => setShowTips(!notices.tips) },
-    { label: 'Tips and offers…', action: showNoticesDialog },
+    { icon: 'bulb', label: 'Show tips and offers', checked: notices.tips, action: () => setShowTips(!notices.tips) },
+    { icon: 'gift', label: 'Tips and offers…', action: showNoticesDialog },
     '-',
-    { label: `Claude Terminals ${updates.current ?? ''}`.trim() + ' · release notes',
+    { icon: 'info', label: `Claude Terminals ${updates.current ?? ''}`.trim() + ' · release notes',
       action: () => request('openUrl', { uri: 'https://github.com/davellamachant/ClaudeTerminals/releases' }) },
   ]);
+}
+
+/**
+ * A theme's swatch for the menu: its terminal's background with a dot of its accent (or its text colour). System is
+ * half Light and half Dark.
+ */
+function themeSwatch(t) {
+  if (t === 'system') return h('span', { class: 'theme-swatch', style: 'background:linear-gradient(135deg,#ffffff 50%,#181818 50%)' });
+  const [bg, dot] = t === 'light' ? ['#ffffff', '#1e1e1e'] : t === 'dark' ? ['#181818', '#cccccc']
+    : themeSwatchColours(t);
+  return h('span', { class: 'theme-swatch', style: `background:${bg}` }, h('i', { style: `background:${dot}` }));
+}
+
+/** A theme's background and accent, a monochrome one's as built from your accent colour (see monochromeLook). */
+function themeSwatchColours(t) {
+  const made = t.monochrome ? monochromeLook(accentColour(), t.base === 'light') : {};
+  const terminal = { ...made.terminal, ...t.terminal }, colors = { ...made.colors, ...t.colors };
+  const fallback = t.base === 'light' ? ['#ffffff', '#1e1e1e'] : ['#181818', '#cccccc'];
+  return [terminal.background ?? colors.chrome ?? fallback[0], (t.accent ?? made.accent)?.line ?? terminal.foreground ?? fallback[1]];
 }
 
 /** The theme menu (next to the version number): System, Light, Dark and the themes, and the accent colour. */
@@ -5076,10 +5096,10 @@ function themeMenu(x, y) {
   const own = currentTheme();   // a theme with an accent of its own (not a monochrome one: that's built from yours)
   showMenu(x, y, [
     { header: 'Theme' },
-    { label: 'System (follows Windows)', checked: theme.pref === 'system', action: () => setThemePref('system') },
-    { label: 'Light', checked: theme.pref === 'light', action: () => setThemePref('light') },
-    { label: 'Dark', checked: theme.pref === 'dark', action: () => setThemePref('dark') },
-    ...themes.list.map((t) => ({ label: t.name, checked: theme.pref === t.id, kbd: t.builtIn ? '' : 'Yours', action: () => setThemePref(t.id) })),
+    { icon: themeSwatch('system'), label: 'System (follows Windows)', checked: theme.pref === 'system', action: () => setThemePref('system') },
+    { icon: themeSwatch('light'), label: 'Light', checked: theme.pref === 'light', action: () => setThemePref('light') },
+    { icon: themeSwatch('dark'), label: 'Dark', checked: theme.pref === 'dark', action: () => setThemePref('dark') },
+    ...themes.list.map((t) => ({ icon: themeSwatch(t), label: t.name, checked: theme.pref === t.id, kbd: t.builtIn ? '' : 'Yours', action: () => setThemePref(t.id) })),
     themes.problems.length > 0 && { icon: 'warn', label: `${themes.problems.length} theme${themes.problems.length === 1 ? '' : 's'} not loaded`, kbd: 'Why?', action: () => toast(themes.problems.join('\n'), true) },
     '~',
     { icon: 'save', label: 'Save as a new theme…', action: showSaveThemeDialog },
