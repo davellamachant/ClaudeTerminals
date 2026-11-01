@@ -162,7 +162,7 @@
 #rain { position: fixed; inset: 0; z-index: -1; pointer-events: none; }   /* behind the page's content, over its background */
 :root[data-rain] { background: var(--chrome); }
 :root[data-rain] body { background: transparent; }   /* the body's own background would paint over the canvas; the root's paints under it */
-:root[data-rain] .tile { background: color-mix(in srgb, var(--terminal-bg) 68%, transparent); }
+:root[data-rain] .tile { background: color-mix(in srgb, var(--terminal-bg) 42%, transparent); }
 :root[data-rain] .xterm .xterm-viewport { background-color: transparent !important; }
 /* The terminal itself: its canvas is see-through under a Grid theme (dressCursor in app.js), and the tile paints the same
    lines over the terminal's own background, fixed to the window so they run on from the floor around it. */
