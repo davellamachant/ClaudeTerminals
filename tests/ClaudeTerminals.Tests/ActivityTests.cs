@@ -91,6 +91,40 @@ public sealed class ActivityTests
         Assert.Equal("Result The login did not reach this host, so nothing was changed.", ev[3].Text);
     }
 
+    private static string Reply(string id, int ctxIn, int cached, int output, params object[] content) => Line(new
+    {
+        type = "assistant", timestamp = Time,
+        message = new { id, role = "assistant", content, usage = new { input_tokens = ctxIn, cache_creation_input_tokens = 100, cache_read_input_tokens = cached, output_tokens = output } },
+    });
+
+    [Fact]
+    public void A_reply_costs_once_however_many_lines_it_is_written_as()
+    {
+        var ev = Parse(
+            User("go"),
+            Reply("msg_1", 2, 1000, 50, Tool("r1", "Read", new { file_path = @"C:\repo\A.cs" })),
+            Reply("msg_1", 2, 1000, 480, Tool("e1", "Edit", new { file_path = @"C:\repo\A.cs" })),   // the same reply, its usage so far
+            Reply("msg_2", 2, 1600, 30, Text("Done.")),
+            Assistant(Text("No usage on this one.")));
+        Assert.Equal(["prompt", "read", "edit", "say", "say"], ev.Select(e => e.K));
+        Assert.Equal((1102, 480), (ev[1].Ctx, ev[1].Out));   // input + cache creation + cache read; the largest output seen
+        Assert.Null(ev[2].Ctx);
+        Assert.Null(ev[2].Out);
+        Assert.Equal((1702, 30), (ev[3].Ctx, ev[3].Out));
+        Assert.Null(ev[4].Ctx);
+    }
+
+    [Fact]
+    public void A_reply_whose_first_line_made_no_event_costs_its_first_event_later()
+    {
+        var ev = Parse(
+            User("go"),
+            Reply("msg_1", 2, 500, 10, new { type = "thinking", thinking = "hmm" }),
+            Reply("msg_1", 2, 500, 90, Text("Thought about it.")));
+        Assert.Equal(["prompt", "say"], ev.Select(e => e.K));
+        Assert.Equal((602, 90), (ev[1].Ctx, ev[1].Out));
+    }
+
     [Fact]
     public void Compactions_count_and_side_chains_meta_and_notifications_do_not()
     {

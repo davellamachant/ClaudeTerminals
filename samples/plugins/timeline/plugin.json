@@ -1,0 +1,12 @@
+{
+  "title": "Timeline",
+  "description": "A live map of your sessions in the side panel: what each is doing now, your prompts and what Claude did between them, the tokens each is using, and a summary on demand",
+  "entry": "index.html",
+  "placement": "panel",
+  "access": ["sessions", "ask"],
+  "toolbar": { "icon": "timeline.svg", "tooltip": "timeline of your sessions", "command": "open" },
+  "menu": [
+    { "label": "Timeline of your sessions", "command": "all", "where": ["palette"] },
+    { "label": "Timeline of this session", "command": "one", "where": ["session", "sessionTab"] }
+  ]
+}

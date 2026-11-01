@@ -10,11 +10,14 @@ namespace ClaudeTerminals.Sessions;
 /// build, test, ask, say, agent, compact, other); <see cref="File"/> the full path of the file for read and edit;
 /// <see cref="Text"/> the prompt, the question, the first sentence of the answer or the command's description;
 /// <see cref="Ok"/> whether a test, build or edit succeeded, once its result is known; <see cref="Q"/> whether an
-/// answer ends in a question.
+/// answer ends in a question. The first event of each reply carries what the reply cost: <see cref="Ctx"/>, the tokens
+/// the agent was sent (its context: the prompt, cached or not), and <see cref="Out"/>, the tokens it wrote.
 /// </summary>
 internal sealed record ActivityEvent(DateTime T, string K, string? File, string? Text, bool? Ok, bool Q = false)
 {
     public bool? Ok { get; set; } = Ok;
+    public int? Ctx { get; set; }
+    public int? Out { get; set; }
 }
 
 /// <summary>The events of one conversation. <see cref="Version"/> is the count, so a plugin can ask for what's new.</summary>
@@ -36,6 +39,9 @@ internal static partial class ActivityReader
         public readonly List<ActivityEvent> Events = [];
         /// <summary>Tool call id → the index of its event, until the result shows up.</summary>
         public readonly Dictionary<string, int> Pending = [];
+        /// <summary>The reply the last assistant line belonged to, and the index of the event carrying its cost (-1 while it has none).</summary>
+        public string? LastReply;
+        public int CostAt = -1;
     }
 
     private static readonly ConcurrentDictionary<string, Cached> Cache = new(StringComparer.OrdinalIgnoreCase);
@@ -121,6 +127,7 @@ internal static partial class ActivityReader
                     break;
                 case "assistant":
                     if (!e.TryGetProperty("message", out var m) || !m.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array) break;
+                    var first = c.Events.Count;
                     var tools = false;
                     foreach (var part in content.EnumerateArray())
                         if (Str(part, "type") == "tool_use")
@@ -131,14 +138,46 @@ internal static partial class ActivityReader
                             c.Events.Add(ev);
                             if (ev.K is "edit" or "run" or "build" or "test" && Str(part, "id") is { } id) c.Pending[id] = c.Events.Count - 1;
                         }
-                    if (tools) break;
-                    // An answer with no tool call: what Claude said, which may be a question.
-                    var text = string.Join("\n", content.EnumerateArray().Where(p => Str(p, "type") == "text").Select(p => Str(p, "text") ?? "")).Trim();
-                    if (text.Length > 0) c.Events.Add(new ActivityEvent(t, "say", null, FirstSentence(text), null, text.EndsWith('?')));
+                    if (!tools)
+                    {
+                        // An answer with no tool call: what Claude said, which may be a question.
+                        var text = string.Join("\n", content.EnumerateArray().Where(p => Str(p, "type") == "text").Select(p => Str(p, "text") ?? "")).Trim();
+                        if (text.Length > 0) c.Events.Add(new ActivityEvent(t, "say", null, FirstSentence(text), null, text.EndsWith('?')));
+                    }
+                    Cost(m, c, first);
                     break;
             }
         }
     }
+
+    /// <summary>
+    /// Puts a reply's token counts on its first event. Claude Code writes one line per block of a reply, each with the
+    /// reply's usage so far, so lines of the same reply (message id) update the one event rather than add up.
+    /// </summary>
+    private static void Cost(JsonElement m, Cached c, int first)
+    {
+        if (!m.TryGetProperty("usage", out var u) || u.ValueKind != JsonValueKind.Object) return;
+        var ctx = Int(u, "input_tokens") + Int(u, "cache_creation_input_tokens") + Int(u, "cache_read_input_tokens");
+        var output = Int(u, "output_tokens");
+        var reply = Str(m, "id");
+        if (reply != null && reply == c.LastReply && c.CostAt >= 0)
+        {
+            var ev = c.Events[c.CostAt];
+            ev.Ctx = Math.Max(ev.Ctx ?? 0, ctx);
+            ev.Out = Math.Max(ev.Out ?? 0, output);
+            return;
+        }
+        c.LastReply = reply;
+        c.CostAt = c.Events.Count > first ? first : -1;
+        if (c.CostAt >= 0)
+        {
+            c.Events[c.CostAt].Ctx = ctx;
+            c.Events[c.CostAt].Out = output;
+        }
+    }
+
+    private static int Int(JsonElement e, string name) =>
+        e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var n) ? n : 0;
 
     /// <summary>Fills in the outcome of pending calls from the tool results in a user line. True when the line held results.</summary>
     private static bool Results(JsonElement e, Cached c)
