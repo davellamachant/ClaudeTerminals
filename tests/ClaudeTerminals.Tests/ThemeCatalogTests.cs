@@ -28,6 +28,35 @@ public sealed class ThemeCatalogTests : IDisposable
     private void Write(string folder, string file, object theme) => File.WriteAllText(Path.Combine(folder, file), JsonSerializer.Serialize(theme));
 
     [Fact]
+    public void Suggested_accents_need_a_name_and_a_six_digit_colour()
+    {
+        Write(user, "mine.json", new
+        {
+            name = "Mine",
+            accents = new object[]
+            {
+                new { name = "Sea", color = "#0A7BFF" },
+                new { name = "", color = "#ff0000" },               // no name
+                new { name = "Short", color = "#f00" },              // not #rrggbb
+                new { name = "Rgb", color = "rgb(1,2,3)" },
+                new { name = "sea", color = "#00ff00" },             // the same name again
+                "#123456",                                           // not an object
+            },
+        });
+        Write(user, "many.json", new { name = "Many", accents = Enumerable.Range(0, 10).Select(i => new { name = "A" + i, color = "#00000" + i }) });
+        Write(user, "wrong.json", new { name = "Wrong", accents = "#ff0000" });
+
+        var (themes, problems) = ThemeCatalog.Load(builtIn, user);
+
+        Assert.Equal([new ThemeAccentChoice("Sea", "#0a7bff")], Assert.Single(themes, t => t.Id == "mine").Accents);
+        Assert.Equal(5, problems.Count(p => p.StartsWith("mine.json: ")));
+        Assert.Equal(ThemeCatalog.MaxAccents, Assert.Single(themes, t => t.Id == "many").Accents.Count);
+        Assert.Contains(problems, p => p.StartsWith("many.json: a theme can suggest up to"));
+        Assert.Empty(Assert.Single(themes, t => t.Id == "wrong").Accents);
+        Assert.Contains(problems, p => p.StartsWith("wrong.json: accents is a list"));
+    }
+
+    [Fact]
     public void The_apps_own_themes_load()
     {
         var (themes, problems) = ThemeCatalog.Load(Shipped("themes"), user);
@@ -38,31 +67,29 @@ public sealed class ThemeCatalogTests : IDisposable
         Assert.Equal(("Nerds", "dark", "Cascadia Mono", true, true, true), (nerds.Name, nerds.Base, nerds.Font, nerds.Glow, nerds.Monochrome, nerds.BuiltIn));
         Assert.Null(nerds.Accent);
         Assert.Empty(nerds.Colors);
-        // Written out in full: every colour the page, the terminals and the diff editor can take, so nothing of Dark shows through.
+        // Built from the accent colour too, but keeping its signal colours: amber for what needs you, mint for what went well.
         var tron = Assert.Single(themes, t => t.Id == "tron");
-        Assert.Equal(("Tron", "dark", "Bahnschrift", true, false, true), (tron.Name, tron.Base, tron.Font, tron.Glow, tron.Monochrome, tron.BuiltIn));
-        Assert.Equal(("#00e5ff", "#087a8c"), (tron.Accent!.Line, tron.Accent.Strong));
+        Assert.Equal(("Tron", "dark", "Bahnschrift", true, true, true), (tron.Name, tron.Base, tron.Font, tron.Glow, tron.Monochrome, tron.BuiltIn));
+        Assert.Null(tron.Accent);
+        Assert.Equal(("#ffe066", "#3fe0a8"), (tron.Colors["attention"], tron.Colors["ok"]));
+        Assert.DoesNotContain("chrome", tron.Colors.Keys);
+        Assert.DoesNotContain("background", tron.Terminal.Keys);
+        Assert.Equal([new ThemeAccentChoice("Tron", "#00e5ff"), new ThemeAccentChoice("Ares", "#ff3b3b")], tron.Accents);
+        Assert.Equal(["Green phosphor", "Amber", "Paper white"], nerds.Accents.Select(a => a.Name));
+        Assert.Equal("light-cycle", tron.Cursor);
+        Assert.True(tron.Grid);
+        Assert.False(tron.Rain);
         Assert.Null(nerds.Cursor);
         Assert.False(nerds.Grid);
         Assert.False(nerds.Rain);
         var matrix = Assert.Single(themes, t => t.Id == "matrix");
         Assert.Equal(("Matrix", "dark", "Cascadia Mono", true, false, true, null, true), (matrix.Name, matrix.Base, matrix.Font, matrix.Glow, matrix.Grid, matrix.Rain, matrix.Cursor, matrix.BuiltIn));
         Assert.Equal(("#39ff6a", "#0b6b26"), (matrix.Accent!.Line, matrix.Accent.Strong));
-        var ares = Assert.Single(themes, t => t.Id == "tron-ares");
-        Assert.Equal(("Tron: Ares", "dark", "Bahnschrift", true, true), (ares.Name, ares.Base, ares.Font, ares.Glow, ares.BuiltIn));
-        Assert.Equal(("#ff3b3b", "#c01818"), (ares.Accent!.Line, ares.Accent.Strong));
-        foreach (var t in new[] { tron, ares })
-        {
-            Assert.Equal("light-cycle", t.Cursor);
-            Assert.True(t.Grid);
-            Assert.False(t.Rain);
-        }
-        foreach (var t in new[] { tron, ares, matrix })
-        {
-            Assert.Equal(ThemeCatalog.ColorNames.OrderBy(n => n), t.Colors.Keys.OrderBy(n => n));
-            Assert.Equal(ThemeCatalog.DiffNames.OrderBy(n => n), t.Diff.Keys.OrderBy(n => n));
-            Assert.Equal(ThemeCatalog.TerminalNames.Except(["selectionForeground"]).OrderBy(n => n), t.Terminal.Keys.OrderBy(n => n));
-        }
+        Assert.DoesNotContain(themes, t => t.Id == "tron-ares");   // Tron in red is Tron with a red accent now
+        // Matrix is written out in full: every colour the page, the terminals and the diff editor can take, so nothing of Dark shows through.
+        Assert.Equal(ThemeCatalog.ColorNames.OrderBy(n => n), matrix.Colors.Keys.OrderBy(n => n));
+        Assert.Equal(ThemeCatalog.DiffNames.OrderBy(n => n), matrix.Diff.Keys.OrderBy(n => n));
+        Assert.Equal(ThemeCatalog.TerminalNames.Except(["selectionForeground"]).OrderBy(n => n), matrix.Terminal.Keys.OrderBy(n => n));
     }
 
     [Fact]

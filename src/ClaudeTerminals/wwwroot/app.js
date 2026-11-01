@@ -574,8 +574,8 @@ async function loadThemes() {
     const r = await request('themes.list');
     const before = themeName();
     Object.assign(themes, { list: r.themes, problems: r.problems, folder: r.folder, names: r.names });
-    // A theme that's gone (its file deleted, or no longer valid) gives way to System.
-    if (!currentTheme() && !BUILT_IN_THEMES.includes(theme.pref)) theme.pref = 'system';
+    // A theme that's gone (its file deleted, or no longer valid) gives way to System, rather than living on as last time's look.
+    if (!BUILT_IN_THEMES.includes(theme.pref) && !themes.list.some((t) => t.id === theme.pref)) theme.pref = 'system';
     applyTheme(before);
   }
   catch (e) { console.error('The themes could not be read', e); }
@@ -5261,6 +5261,8 @@ function themeMenu(x, y) {
   const c = accent.choice;
   const colour = c === 'windows' ? accent.palette?.[3] ?? '#7160e8' : c === 'purple' ? '#7160e8' : c;
   const own = currentTheme();   // a theme with an accent of its own (not a monochrome one: that's built from yours)
+  const suggested = suggestedAccents();
+  const named = suggested.find((a) => a.color === String(c).toLowerCase());
   showMenu(x, y, [
     { header: 'Theme' },
     { icon: themeSwatch('system'), label: 'System (follows Windows)', checked: theme.pref === 'system', action: () => setThemePref('system') },
@@ -5276,7 +5278,8 @@ function themeMenu(x, y) {
     own?.accent
       ? { icon: h('span', { class: 'accent-dot', style: `background:${own.accent.line}` }), label: `${own.name}'s own`,
         action: () => toast(`${own.name} has an accent colour of its own. Choose another theme to change it.`) }
-      : { icon: h('span', { class: 'accent-dot', style: `background:${colour}` }), label: c === 'windows' ? 'Windows accent' : c === 'purple' ? 'Original purple' : 'Custom',
+      : { icon: h('span', { class: 'accent-dot', style: `background:${colour}` }),   // one the theme suggests goes by its name
+        label: named ? named.name : c === 'windows' ? 'Windows accent' : c === 'purple' ? 'Original purple' : 'Custom',
         kbd: 'Change…', action: showAccentDialog },
     '-',
     { header: 'Status dots' },
@@ -5295,6 +5298,9 @@ function themeMenu(x, y) {
     { icon: 'folder', label: plugins.list.length ? 'Open the plugins folder' : 'Add a plugin: open the plugins folder', action: () => request('plugins.openFolder') },
   ]);
 }
+
+/** The accent colours the theme on suggests ({ name, color }), offered first in Accent colour, unless it has an accent of its own. */
+const suggestedAccents = () => { const t = currentTheme(); return t?.accent ? [] : t?.accents ?? []; };
 
 /**
  * Save as a new theme: the theme on screen, whichever it is, written to the themes folder as a file with every colour, to
@@ -5398,6 +5404,9 @@ function showAccentDialog() {
   const purpleBtn = h('button', { class: 'swatch-auto', title: "The app's own colour", onclick: () => pick('purple') },
     h('span', { class: 'accent-dot', style: 'background:#7160e8' }), 'Original purple');
   const swatches = PROJECT_COLORS.map((c) => h('button', { class: 'swatch', style: `--swatch:${c}`, title: c, onclick: () => pick(c) }));
+  // The theme's own suggestions, by name, first.
+  const theirs = suggestedAccents().map((a) => h('button', { class: 'swatch-auto', title: a.color, 'data-colour': a.color, onclick: () => pick(a.color) },
+    h('span', { class: 'accent-dot', style: `background:${a.color}` }), a.name));
   const note = h('div', { class: 'field help' });
   custom.addEventListener('input', () => pick(custom.value));
 
@@ -5407,7 +5416,8 @@ function showAccentDialog() {
     windowsBtn.classList.toggle('selected', c === 'windows');
     purpleBtn.classList.toggle('selected', c === 'purple');
     for (const sw of swatches) sw.classList.toggle('selected', sw.title === c);
-    const isCustom = /^#/.test(c) && !PROJECT_COLORS.includes(c);
+    for (const b of theirs) b.classList.toggle('selected', b.dataset.colour === String(c).toLowerCase());
+    const isCustom = /^#/.test(c) && !PROJECT_COLORS.includes(c) && !theirs.some((b) => b.dataset.colour === c.toLowerCase());
     customBtn.classList.toggle('selected', isCustom);
     customBtn.style.setProperty('--swatch', isCustom ? c : 'transparent');
     if (/^#/.test(c)) custom.value = c;
@@ -5417,6 +5427,7 @@ function showAccentDialog() {
   }
   let saved = false;
   openModal('Accent colour', [
+    ...(theirs.length ? [h('div', { class: 'field help' }, `Suggested by ${currentTheme().name}`), h('div', { class: 'swatch-row' }, theirs)] : []),
     h('div', { class: 'swatch-row' }, windowsBtn, purpleBtn),
     h('div', { class: 'swatch-row' }, swatches, customBtn, custom),
     note,
