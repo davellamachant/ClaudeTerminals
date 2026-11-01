@@ -3,6 +3,7 @@
   "base": "dark",
   "font": "Bahnschrift",
   "glow": true,
+  "grid": true,
   "cursor": "light-cycle",
   "accent": { "line": "#00e5ff", "strong": "#087a8c" },
   "colors": {

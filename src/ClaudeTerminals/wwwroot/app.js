@@ -473,7 +473,7 @@ function themeLook() {
   if (!themes.list.includes(t)) return t;   // the kept look
   const made = t.monochrome ? monochromeLook(accentColour(), t.base === 'light') : {};
   return {
-    id: t.id, name: t.name, base: t.base, font: t.font, glow: t.glow, monochrome: t.monochrome, cursor: t.cursor ?? null,
+    id: t.id, name: t.name, base: t.base, font: t.font, glow: t.glow, grid: !!t.grid, monochrome: t.monochrome, cursor: t.cursor ?? null,
     colors: { ...made.colors, ...t.colors }, terminal: { ...made.terminal, ...t.terminal }, diff: { ...made.diff, ...t.diff },
     accent: t.accent ?? made.accent ?? null,
   };
@@ -490,6 +490,8 @@ function markTheme(look = themeLook()) {
   else root.style.removeProperty('font-family');
   if (look?.glow) root.dataset.glow = '';
   else delete root.dataset.glow;
+  if (look?.grid) root.dataset.grid = '';
+  else delete root.dataset.grid;
 }
 markTheme(themes.last?.id === theme.pref ? themes.last : null);   // the accent isn't known yet: last time's look
 
@@ -5252,6 +5254,7 @@ function themeSnapshot(title) {
     base: themeName(),
     ...(look?.font ? { font: look.font } : {}),
     ...(look?.glow ? { glow: true } : {}),
+    ...(look?.grid ? { grid: true } : {}),
     ...(look?.cursor ? { cursor: look.cursor } : {}),
     accent: { line: value('accent'), strong: value('accent-strong') },
     colors: Object.fromEntries(themes.names.colors.map((n) => [n, value(n)]).filter(([, v]) => v)),
