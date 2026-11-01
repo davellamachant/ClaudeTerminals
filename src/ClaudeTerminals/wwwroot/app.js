@@ -1380,10 +1380,9 @@ function showMenu(x, y, items) {
   closeMenu();
   // Pressing on the menu mustn't take focus: after Paste in the terminal's menu, typing has to go on in the terminal.
   // Items: '-' for a separator ('~' for a lighter, shorter one within a section), { header } for a section title, or { label, action } with optional kbd, danger,
-  // checked (ticked when true) and icon (a name from PATHS, or an element such as a plugin's image), each in a column of
-  // its own at the start. If any item can be ticked, or has an icon, all get that column so their labels line up.
-  const ticks = items.some((it) => it && it.checked !== undefined);
-  const icons = items.some((it) => it?.icon);
+  // checked (ticked when true) and icon (a name from PATHS, or an element such as a plugin's image), which share a column
+  // at the start: a ticked item shows the tick in place of its icon. If any item has either, all get the column.
+  const lead = items.some((it) => it && (it.checked !== undefined || it.icon));
   const menu = h('div', {
     class: 'menu', onmousedown: (e) => e.preventDefault(),
     onmousemove: (e) => e.currentTarget.querySelector('.menu-item.active')?.classList.remove('active'),   // the pointer takes over
@@ -1392,8 +1391,7 @@ function showMenu(x, y, items) {
     : it.header
       ? h('div', { class: 'menu-header' }, it.header)
       : h('div', { class: 'menu-item' + (it.danger ? ' danger' : ''), onclick: () => { closeMenu(); it.action(); } },
-        ticks && h('span', { class: 'menu-check' }, it.checked ? '✓' : ''),
-        icons && h('span', { class: 'menu-icon' }, typeof it.icon === 'string' ? iconEl(it.icon) : it.icon ?? ''),
+        lead && h('span', { class: 'menu-icon' }, it.checked ? '✓' : typeof it.icon === 'string' ? iconEl(it.icon) : it.icon ?? ''),
         it.label, it.kbd && h('span', { class: 'kbd' }, it.kbd))));
   $('#menuHost').append(menu);
   const r = menu.getBoundingClientRect();
@@ -5113,7 +5111,8 @@ function themeMenu(x, y) {
         kbd: 'Change…', action: showAccentDialog },
     '-',
     { header: 'Status dots' },
-    { label: DOT_STYLES.find((d) => d.id === dotStyle.id).name, kbd: 'Change…', action: showDotStyleDialog },
+    { icon: h('span', { class: 'menu-dot', 'data-dots': dotStyle.id }, h('span', { class: 'dot attention' })),   // the style in use, waiting for you
+      label: DOT_STYLES.find((d) => d.id === dotStyle.id).name, kbd: 'Change…', action: showDotStyleDialog },
     '-',
     { header: 'Plugins' },
     ...plugins.list.flatMap((p) => [
