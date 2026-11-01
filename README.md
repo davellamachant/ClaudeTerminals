@@ -255,7 +255,7 @@ plugins\
 
 - **The folder's name** is the plugin's id and its address: `https://counter.plugin.local/index.html`. Use letters, digits and hyphens.
 - **`title`** is its name on the menu and its tab (the folder's name if left out). **`entry`** is its page, a file inside the folder (`index.html` if left out). Its scripts, styles and images load from the same folder with relative paths.
-- **`placement`:** `"tab"` (the default) opens it as a document tab; `"panel"` as a tab in the side panel, which you can drag to another group like the others. Close it with a middle-click or its right-click menu.
+- **`placement`:** `"tab"` (the default) opens it as a document tab; `"panel"` gives it a tab in the side panel, which is there as soon as the app has read the plugin, without opening it first, and which you can drag to another group like the others. Close it with a middle-click or its right-click menu; it then stays out of the panel until you open it again from the palette, a menu or its button.
 - **`menu`:** up to 8 items. Picking one opens the plugin and sends it the item's `command`, with what was clicked. **`where`** names the menus it's on, one or a list (the palette menu if left out):
   - `"palette"`: under the plugin's name in the palette menu;
   - `"project"`: a project's right-click menu in the Projects row;
@@ -263,16 +263,21 @@ plugins\
   - `"sessionTab"`: a session tab's right-click menu.
 
   In the project and session menus, plugins' items are under a **Plugins** heading at the end, each with its plugin's name beside it.
+- **`access`:** what it asks for beyond its own page, one or a list: `"sessions"` (to see them), `"ask"` (to put questions about them to Claude) and `"type"` (to type into them); see **Seeing your sessions** below. Leave it out and it gets nothing.
 - **`toolbar`:** a button in the title bar, after New Session and Git Changes, set apart from them. **`icon`** is an image file in the plugin's folder (SVG, PNG, ICO, GIF, JPEG or WebP, up to 64 KB); the button shows only the icon, never text, so it can't pass for one of the app's own buttons. Its tooltip is the plugin's name, then **`tooltip`** if given. Clicking it opens the plugin and sends **`command`**, if given, with the open session as context. The plugin's badge shows on its button too. Right-click the button › **Hide this button** to hide it; the plugin's **Show its title bar button** in the palette menu brings it back.
 
 **Talking to the app.** A plugin and the app exchange a few messages, each `{ type: 'claude-terminals:<name>', … }`. Listen with `addEventListener('message', …)`; send with `parent.postMessage(…, '*')`.
 
 | Message | Direction | What it does |
 |---|---|---|
-| `theme` `{ theme: 'light' \| 'dark' }` | To the plugin | Sent when its page loads and whenever the theme changes. The page is also opened with `?theme=light` or `?theme=dark`. |
+| `theme` `{ theme: 'light' \| 'dark', id, name, colors, font, glow }` | To the plugin | Sent when its page loads and whenever the theme changes. `id` and `name` are the theme file on (`nerds`, one of yours), or null for System, Light and Dark. `colors` are the app's own colours by the names in the themes section (`chrome`, `panel`, `text`, `accent`, `accent-strong`, `ok`, `working`, `asking`, …), `font` the theme's font family or null, `glow` whether its text glows, so a plugin can paint itself to match whatever theme is on, as the Ask and Timeline samples do. The page is also opened with `?theme=light` or `?theme=dark`, and `?look=<id>` when a theme file is on. |
 | `command` `{ command, context }` | To the plugin | One of its menu items, or its title bar button, was picked; sent once its page has loaded. `context` says what was clicked (below). |
+| `open` `{ placement, state }` | From the plugin | Moves the plugin to the other placement for now: `tab` (a document tab, wide) or `panel` (the side panel). Its page starts again there, so it sends along whatever `state` it wants back (JSON, up to 1 MB), and gets it in a `state` message once it has loaded. It returns to its `plugin.json` placement when that tab closes. The page is opened with `?placement=tab` or `?placement=panel`, so it knows where it is. |
+| `state` `{ placement, state }` | To the plugin | After an `open`: where the page is now, and the state it sent along. |
 | `badge` `{ count }` or `{ dot: true }` | From the plugin | Puts a count (99+ above 99) or a dot on its own tab; `{ count: 0 }` clears it. |
 | `title` `{ title }` | From the plugin | Changes its own tab's caption (up to 60 characters); `{ title: null }` puts its name back. |
+| `request` `{ requestId, name, … }` | From the plugin | Asks for something its `access` lets it see (below). |
+| `response` `{ requestId, result }` or `{ requestId, error }` | To the plugin | The answer to a request. |
 
 The badge and caption last until its tab is closed. A plugin can only change its own tab; anything else it sends is ignored.
 
@@ -285,15 +290,43 @@ The badge and caption last until its tab is closed. A plugin can only change its
 | `project` | `{ menu: 'project', project }`: the project's name (`null` for the sessions with no project) |
 | `session`, `sessionTab` | `{ menu, sessionId, session, directory, project }`: the session's id and name, its working folder, and its project's name (`null` if none) |
 
-That's all a plugin learns. The session id tells clicks on different sessions apart and stays the same while the session exists; it isn't a way into the session, and the app has nothing a plugin can ask with it. The folder is the one the session runs in; the plugin still can't read it.
+Without `access`, that's all a plugin learns. The session id tells clicks on different sessions apart and stays the same while the session exists; it isn't a way into the session. The folder is the one the session runs in; the plugin still can't read it.
 
-**What a plugin can't do.** A plugin is only a page. It's given no sessions, terminals, files or Git, and it can't reach the app:
+**Seeing your sessions.** A plugin whose `plugin.json` has `"access": ["sessions"]` can ask about your sessions. The first time it asks, the app asks you whether to let it, saying what it would see; your answer is kept (a refusal only until the app restarts). The plugin's entry in the palette menu has **Let it see your sessions** or **Stop it seeing your sessions**; stopping reloads its page, so it no longer holds what it was shown. It's read only: nothing here types into a session or changes a file.
+
+| Request | Answer |
+|---|---|
+| `sessions` | Every session: `{ id, name, project, directory, worktree, status, open }`. `worktree` is the top of its Git working tree (`null` outside Git). `status` is its status dot: `working`, `running` (idle), `asking` (needs your answer), `attention` (finished, waiting for you) or `exited`. `open` is true for the session that's open. |
+| `activity` `{ ids, have }` | What Claude did in each session, read from its conversation: `[{ id, found, conversation, version, from, events }]`. Each event is `{ t, k, file, text, ok, q }`: its time; its kind (`prompt`, `read`, `search`, `edit`, `run`, `build`, `test`, `ask`, `say`, `agent`, `compact` or `other`); the file read or edited; the prompt, question, command or first sentence of an answer; whether a test, build or edit succeeded, once known; and whether an answer ends in a question. The first event of each reply also carries its cost, `ctx` (the tokens the agent was sent, cached or not) and `out` (the tokens it wrote). `have` maps a session id to the `{ conversation, version }` you already have, so only newer events come back, from index `from`. |
+| `folders` `{ sessionId }` | The top-level folders of the session's repository with how many tracked files each holds, and the folders directly in each with theirs (the biggest forty): `{ root, folders: [{ name, files, folders: [{ name, files }] }] }`, `root` being the repository's main worktree. `null` outside Git. |
+| `showSession` `{ sessionId }` | Opens the session, as clicking its tab would. |
+| `showPrompt` `{ sessionId, at, index, text }` | Opens the session's Conversation tab scrolled to the prompt sent at `at` (an ISO time from `activity`), or failing that the `index`th prompt; answers `{ index }`. Claude's full-screen mode keeps no terminal scrollback, so the Conversation tab is where a prompt can be jumped to. |
+
+[`samples/plugins/floor-plan`](samples/plugins/floor-plan) is a plugin that uses them: a project's sessions on a city of its code. Each top-level folder is a building, sized by its files, with a floor for each of its sub-folders; a file a session read lights one of its windows in blue, one it edited in amber; each session is a beacon on the street in front of the building it's working in, with a light trail along the streets it came by, and a card tells its story turn by turn; files outside the repository land on the plaza in front. A slider rewinds through everything that happened, and the whole thing takes the app's theme. To try it, copy the folder into your plugins folder.
+
+[`samples/plugins/timeline`](samples/plugins/timeline) is another, for the side panel: a live map of your sessions, each a line with your prompts as rings and what Claude did between them as marks, the newest ring showing whether it works, waits for you or idles; a switch shows every session or the one whose tab is open, with its prompts listed; click a prompt and the session's Conversation tab opens at it, click a count under it (edits, reads, commands) and it opens into what happened. Each row shows the tokens the session's last reply was sent (its context) and the tokens written in the window, read from the conversation file at no cost. Its **Summarise** button is the one thing that spends tokens: one `ask` call for what was done, decided and what's next, and the header counts the calls made today. With a theme called *Tron* or *Tron: Ares* on (the palette button), it dresses as the Grid: a ruled black floor, light-ribbons for the lines with a light cycle riding a working session's, amber for one that waits on you; under *Matrix* the Grid is green, in a monospaced face.
+
+**Asking Claude about your sessions.** A plugin with `"access": ["sessions", "ask"]` can also put a question about your sessions to an agent. You're asked separately before it may, because each question runs Claude once, headless, with your own sign-in, the way *Suggest a commit message* does, and counts against your usage. The agent is the sessions' own when they all share one that can answer this way (Codex, say), otherwise Claude; it runs with no tools and saves no conversation, so it can't change anything. The question goes with the conversations of the sessions named: your prompts, what the agent answered and the tools it used, each session's newest turns first within a fixed budget, so an old or long conversation is cut short at the top. The plugin sees the answers. **Stop it asking Claude about your sessions** in the palette menu takes it away again.
+
+| Request | Answer |
+|---|---|
+| `ask` `{ question, ids, history }` | `{ answer, writer, sessions }`: the agent's answer (light Markdown), the name of the agent that wrote it, and the ids of the sessions it was about. `ids` names the sessions to ask about (stopped ones too: their saved conversations are read); `history` is earlier `[{ question, answer }]` of the same chat, the last eight, so a follow-up makes sense. |
+
+**Typing into your sessions.** A plugin with `"access": ["type"]` can type into a session's terminal, as if you had pasted the text, and press Enter for you when it says so. You're asked before it may, since what it types reaches the agent there as a prompt; a toast says each time it types. It can't type into a session that has stopped at a question needing your answer, so it can never answer one for you. Text with several lines is pasted as one piece into Claude and Codex, which take a bracketed paste; a plain shell runs each line as it arrives, so a plugin should keep what it types into one to a single line. **Stop it typing into your sessions** in the palette menu takes it away again.
+
+| Request | Answer |
+|---|---|
+| `type` `{ sessionId, text, send }` | Types `text` (up to 20,000 characters) into the running session, and presses Enter when `send` is true: `{ sent }`. An error names why not: the session isn't running, or is waiting for your answer. |
+
+[`samples/plugins/ask`](samples/plugins/ask) uses all three: a chat in a tab (drag it beside a terminal) where you ask what each session is doing or waiting on, which one touched a file, or for a message to send one; each answer names the sessions it drew on, and can be typed into any running session, for you to send or sent straight away. Its title bar button and the **Ask about this session** item on a session's menu open it on that session. To try it, copy the folder into your plugins folder.
+
+**What a plugin can't do.** A plugin is only a page. It's given no terminals, files or Git, no sessions unless you allowed it to see them, and it can't reach the app:
 - it runs in a sandboxed frame with an origin of its own, so it can't read or change the app's page, or another plugin's;
-- the app listens to it for those two messages about its own tab only, and never through the bridge the app's own page uses; what it's told about a project or session is only what's in a command's `context`, when you pick its menu item;
+- the app listens to it only for the messages above, never through the bridge the app's own page uses, and answers a request only with what that plugin was allowed to see;
 - it can't navigate the app, open windows, or use storage, the clipboard, the camera or notifications;
-- other origins can't read a plugin's files, and its frame can't leave plugin addresses.
+- other origins can't read a plugin's files, and its frame can't leave its own plugin's address.
 
-It can still run scripts, show forms and dialogs, and load files from its own folder. Its page reloads when its tab is closed, or dragged to another group. Install only plugins you trust, as you would any page you open.
+It can still run scripts, show forms and dialogs, load files from its own folder, and reach websites as any page can, so a plugin you let see your sessions could send what it sees elsewhere. Its page reloads when its tab is closed, or dragged to another group. Install only plugins you trust, as you would any page you open.
 
 ### Theme and colours
 

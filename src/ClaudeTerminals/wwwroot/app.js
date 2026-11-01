@@ -2239,7 +2239,7 @@ function placePanels() {
   if (!state.panelsLoaded) return;   // until the host has said which panels exist, keep the saved layout as it is
   let changed = false;
   const live = new Set(state.panels.map(panelTab));
-  const pluginGone = (t) => plugins.loaded && pluginById(pluginOfTab(t))?.placement !== 'panel';
+  const pluginGone = (t) => plugins.loaded && (!pluginById(pluginOfTab(t)) || pluginPlacement(pluginById(pluginOfTab(t))) !== 'panel');
   for (const g of dock.groups) {
     const kept = g.tabs.filter((t) => isPluginDockTab(t) ? !pluginGone(t) : !isPanelTab(t) || live.has(t));
     if (kept.length !== g.tabs.length) { g.tabs = kept; changed = true; }
@@ -2317,7 +2317,6 @@ function makeGroupEl(g) {
   g.el = h('div', { class: 'dock-group' }, title, g.body, g.frames);
   g.el.dock = g;
   g.foldBtn = fold;
-  makeScrollable(g.tabsEl, 'tw');
 }
 
 /** A folded group shows only its tab row, so it stays one click away without taking room. */
@@ -2369,8 +2368,7 @@ function renderDockTabs(g, tabs, open) {
     }, h('span', { class: 'panel-tab-title' }, p.title), p.badge && h('span', { class: `tw-badge tone-${tone(p.badge.tone)}` }, p.badge.text),
     (t !== open || g.folded) && isUnseen(p) && h('span', { class: 'tw-dot', title: 'Updated since you last looked', 'aria-label': 'updated' }));
   }));
-  // With many tabs the row scrolls sideways (◀ ▶): keep the open one in view.
-  requestAnimationFrame(() => revealActive(g.tabsEl, '.tw-tab.active'));
+  // More tabs than fit the width go on to a second line (see .tw-tabs in app.css).
 }
 
 function activateTab(g, t) {
@@ -3856,7 +3854,7 @@ function closeDoc(key) {
   if (i < 0) return;
   const wasActive = docs.active === key;
   const wasSide = docs.side === key;
-  if (isPluginTab(docs.tabs[i])) closePluginFrame(docs.tabs[i].pluginId);
+  if (isPluginTab(docs.tabs[i])) { closePluginFrame(docs.tabs[i].pluginId); seatPanelPlugins(); }   // one opened wide goes back to the side panel
   docs.tabs.splice(i, 1);
   // The nearest shown tab after it, else before it, that `ok` accepts.
   const near = (ok) => docs.tabs.slice(i).find((t) => tabShown(t) && ok(t)) || docs.tabs.slice(0, i).reverse().find((t) => tabShown(t) && ok(t));
@@ -5224,9 +5222,11 @@ function themeMenu(x, y) {
     '-',
     { header: 'Plugins' },
     ...plugins.list.flatMap((p) => [
-      { label: p.title, kbd: p.placement === 'panel' ? 'Side panel' : '', action: () => openPlugin(p.id) },
+      { label: p.title, kbd: pluginPlacement(p) === 'panel' ? 'Side panel' : '', action: () => openPlugin(p.id) },
       ...p.menu.filter((m) => m.where.includes('palette')).map((m) => ({ label: [h('span', { class: 'menu-indent' }), m.label], action: () => openPlugin(p.id, m.command, { menu: 'palette' }) })),
       p.toolbar && hiddenPluginButtons.has(p.id) && { label: [h('span', { class: 'menu-indent' }), 'Show its title bar button'], action: () => setPluginButton(p.id, true) },
+      ...p.access.filter((kind) => PLUGIN_ACCESS[kind]).map((kind) => ({ label: [h('span', { class: 'menu-indent' }), pluginMayHave(p, kind) ? PLUGIN_ACCESS[kind].stop : PLUGIN_ACCESS[kind].let],
+        action: () => setPluginAccess(p, kind, !pluginMayHave(p, kind)) })),
     ]),
     plugins.problems.length > 0 && { label: `${plugins.problems.length} couldn't be loaded`, kbd: 'Why?', action: () => toast(plugins.problems.join('\n'), true) },
     { label: plugins.list.length ? 'Open the plugins folder' : 'Add a plugin: open the plugins folder', action: () => request('plugins.openFolder') },
@@ -5542,14 +5542,18 @@ function revealActive(row, selector) {
 /**
  * Plugins: web pages of their own (see PluginCatalog), opened from the palette menu, each in a document tab or, with
  * "placement": "panel" in its plugin.json, a tab in the side panel. A plugin runs in a sandboxed frame on its own origin
- * (https://<id>.plugin.local/), so it can't reach the app, its sessions, files or terminals, or another plugin.
+ * (https://<id>.plugin.local/), so it can't reach the app, its files or terminals, or another plugin, and sees sessions only if
+ * you allowed it (see pluginRequest).
  *
- * Messages, each { type: 'claude-terminals:<name>', … }. To a plugin: theme { theme: 'light' | 'dark' } (also ?theme= on
- * its address) whenever it changes, and command { command, context } when one of its menu items (or its title bar
+ * Messages, each { type: 'claude-terminals:<name>', … }. To a plugin: theme { theme: 'light' | 'dark', id, name, colors,
+ * font, glow } (the theme file on, if one is, and the page's colours by name so the plugin can match them; also ?theme=
+ * and ?look= on its address) whenever it changes, and command { command, context } when one of its menu items (or its title bar
  * button, see renderPluginButtons) is picked, context
  * saying what was clicked (see pluginMenuItems): a name and folder to go on, not a way into the session. From a plugin, about
- * its own tab and nothing else: badge { count } or { dot: true } ({ count: 0 } clears it), and title { title } (null
- * puts its name back). Anything else it sends is ignored.
+ * its own tab and nothing else: badge { count } or { dot: true } ({ count: 0 } clears it), title { title } (null puts
+ * its name back), and open { placement, state } to be moved to a document tab or the side panel for now (see
+ * movePlugin; its page starts again there and gets state { placement, state } back); and request, for what its
+ * "access" lets it see (see pluginRequest). Anything else it sends is ignored.
  */
 const plugins = { list: [], problems: [], folder: null, loaded: false };
 const pluginById = (id) => plugins.list.find((p) => p.id === id);
@@ -5561,6 +5565,11 @@ function pluginOfTab(t) { return t.slice('plugin:'.length); }
 
 /** Each plugin with a page up: id → { frame, ready, queue (messages for when it has loaded), badge, title }. */
 const pluginFrames = new Map();
+// A plugin can ask to be moved to the other placement for a while (an "open wide" button in a side panel plugin, say):
+// where each is now when not where its plugin.json says, and the state it sent along to get back once its page is up.
+const pluginPlaces = new Map();
+const pluginHandover = new Map();
+const pluginPlacement = (p) => pluginPlaces.get(p.id) ?? p.placement;
 
 /** Reads the plugins folder again (a plugin added since shows up without restarting). */
 async function loadPlugins() {
@@ -5568,8 +5577,24 @@ async function loadPlugins() {
     const r = await request('plugins.list');
     Object.assign(plugins, { list: r.plugins, problems: r.problems, folder: r.folder, loaded: true });
     renderPluginButtons();
+    seatPanelPlugins();
   }
   catch (e) { console.error('The plugins could not be read', e); }
+}
+
+// A side panel plugin takes a tab in the side panel on its own, so it's there without being opened first; one you
+// closed stays away until you open it again (kept per person).
+const closedPanelPlugins = new Set(store.get('panelPluginsClosed', []));
+const rememberClosedPanelPlugins = () => store.set('panelPluginsClosed', [...closedPanelPlugins]);
+function seatPanelPlugins() {
+  let seated = false;
+  for (const p of plugins.list) {
+    const t = 'plugin:' + p.id;
+    if (pluginPlacement(p) !== 'panel' || closedPanelPlugins.has(p.id) || groupOfTab(t) || !dock.groups.length) continue;
+    dock.groups[dock.groups.length - 1].tabs.push(t);
+    seated = true;
+  }
+  if (seated) { saveDock(); renderGit(); }
 }
 
 /** Opens a plugin where it shows; a command from one of its menu items reaches it once its page has loaded. */
@@ -5577,8 +5602,9 @@ function openPlugin(id, command = null, context = null) {
   const p = pluginById(id);
   if (!p) return;
   if (command != null) sendToPlugin(p, { type: 'claude-terminals:command', command, context });
-  if (p.placement === 'panel') {
+  if (pluginPlacement(p) === 'panel') {
     const t = 'plugin:' + id;
+    if (closedPanelPlugins.delete(id)) rememberClosedPanelPlugins();   // opened again: it seats itself from now on
     if (!groupOfTab(t)) dock.groups[dock.groups.length - 1].tabs.push(t);
     if (!state.gitVisible) { state.gitVisible = true; store.set('gitVisible', true); applyGitVisibility(); }
     activateTab(groupOfTab(t), t);
@@ -5612,6 +5638,8 @@ function pluginFrame(p) {
   if (f) return f;
   const url = new URL(p.url);
   url.searchParams.set('theme', isLight() ? 'light' : 'dark');
+  if (themeLook()?.id) url.searchParams.set('look', themeLook().id);
+  url.searchParams.set('placement', pluginPlacement(p));
   // No allow-same-origin: the page gets an opaque origin, so it can't reach this page, and has no storage to share.
   const frame = h('iframe', { class: 'plugin-frame', sandbox: 'allow-scripts allow-forms allow-modals', referrerpolicy: 'no-referrer', title: p.title, src: url.href });
   f = { frame, ready: false, queue: [], badge: null, title: null };
@@ -5619,6 +5647,11 @@ function pluginFrame(p) {
   frame.addEventListener('load', () => {
     entry.ready = true;
     postPluginTheme(frame);
+    if (pluginHandover.has(p.id)) {   // it was just moved: the state it sent along, back to it
+      const state = pluginHandover.get(p.id);
+      pluginHandover.delete(p.id);
+      frame.contentWindow?.postMessage({ type: 'claude-terminals:state', placement: pluginPlacement(p), state }, '*');
+    }
     for (const m of entry.queue.splice(0)) frame.contentWindow?.postMessage(m, '*');
   });
   pluginFrames.set(p.id, f);
@@ -5631,12 +5664,42 @@ function sendToPlugin(p, message) {
   else f.queue.push(message);
 }
 
-const postPluginTheme = (frame) => frame.contentWindow?.postMessage({ type: 'claude-terminals:theme', theme: isLight() ? 'light' : 'dark' }, '*');
+/** Tells a plugin the theme: light or dark, and which theme file is on (its id and name), if one is, so it can dress to match. */
+// The page's colours a plugin is told, by their names in app.css, so it can paint itself to match whatever theme is on.
+const PLUGIN_THEME_COLORS = ['chrome', 'chrome-2', 'panel', 'panel-2', 'hover', 'hover-strong', 'border', 'border-soft', 'border-strong',
+  'text', 'text-dim', 'text-faint', 'text-strong', 'accent', 'accent-strong', 'focus', 'select', 'terminal-bg', 'code-bg', 'code-fg',
+  'ok', 'working', 'attention', 'asking', 'danger', 'link'];
+const postPluginTheme = (frame) => {
+  const look = themeLook();
+  const css = getComputedStyle(document.documentElement);
+  const colors = Object.fromEntries(PLUGIN_THEME_COLORS.map((n) => [n, css.getPropertyValue('--' + n).trim()]).filter(([, v]) => v));
+  frame.contentWindow?.postMessage({ type: 'claude-terminals:theme', theme: isLight() ? 'light' : 'dark', id: look?.id ?? null, name: look?.name ?? null,
+    colors, font: look?.font ?? null, glow: !!look?.glow }, '*');
+};
 
-/** Its page goes when its tab closes; so do the caption and badge it set, which start afresh next time. */
+/** Its page goes when its tab closes; so do the caption and badge it set, which start afresh next time, and it goes back to where its plugin.json puts it. */
 function closePluginFrame(id) {
   pluginFrames.get(id)?.frame.remove();
   pluginFrames.delete(id);
+  pluginPlaces.delete(id);
+}
+
+/**
+ * Moves a plugin's page to the other placement, the document area ('tab') or the side panel ('panel'), at its own
+ * request: its page starts again there and gets back the state it sent along (the state message), and it returns to
+ * its plugin.json placement when that tab closes.
+ */
+function movePlugin(id, placement, state) {
+  const p = pluginById(id);
+  if (!p) return;
+  if ((placement !== 'tab' && placement !== 'panel') || placement === pluginPlacement(p)) { openPlugin(id); return; }
+  let handover = null;
+  try { const s = JSON.stringify(state ?? null); if (s.length <= 1_000_000) handover = JSON.parse(s); } catch { handover = null; }
+  if (docs.tabs.some((t) => t.key === pluginKey(id))) closeDoc(pluginKey(id));
+  if (groupOfTab('plugin:' + id)) closeDockPlugin('plugin:' + id, false);   // moved, not closed: it comes back to the panel when the tab closes
+  pluginPlaces.set(id, placement);
+  pluginHandover.set(id, handover);
+  openPlugin(id);
 }
 
 /** The plugin's tab caption: what it set, or its title. */
@@ -5666,12 +5729,14 @@ function showDockPlugin(g, t) {
   for (const f of g.frames.children) f.hidden = f !== frame;
 }
 
-function closeDockPlugin(t) {
+/** Closes a side panel plugin's tab; closed by you (`byYou`), it stays out of the panel until you open it again. */
+function closeDockPlugin(t, byYou = true) {
   const g = groupOfTab(t);
   if (!g) return;
   g.tabs.splice(g.tabs.indexOf(t), 1);
   if (!g.tabs.length) removeGroup(g);
   closePluginFrame(pluginOfTab(t));
+  if (byYou) { closedPanelPlugins.add(pluginOfTab(t)); rememberClosedPanelPlugins(); }
   saveDock();
   renderGit();
 }
@@ -5715,12 +5780,203 @@ function renderPluginButtons() {
   }));
 }
 
-// What a plugin asks for its own tab. Only its own frame is listened to, so it can't speak for another plugin.
+// ---- access: what a plugin can see beyond its own page
+
+/** Each kind of access a plugin can ask for (PluginCatalog.AccessKinds): what the dialog says it would let the plugin do, and its palette menu items. */
+const PLUGIN_ACCESS = {
+  sessions: {
+    verb: 'see your sessions', let: 'Let it see your sessions', stop: 'Stop it seeing your sessions',
+    dialog: (p) => [
+      h('p', {}, `${p.title} is a plugin, from ${plugins.folder}\\${p.id}. It asks to see:`),
+      h('ul', {},
+        h('li', {}, 'your sessions: their names, projects and folders, and whether each is working or waiting for you;'),
+        h('li', {}, 'what Claude did in each: your prompts, the files it read and edited, the commands it ran, the questions it asked and the tokens each reply used;'),
+        h('li', {}, 'how many files each top-level folder of their repositories holds.')),
+      h('p', {}, 'It can’t type into a session or change a file. But like any web page it could send what it sees to a website, so allow only a plugin you trust. The palette menu can stop it seeing them later.'),
+    ],
+  },
+  ask: {
+    verb: 'ask Claude about your sessions', let: 'Let it ask Claude about your sessions', stop: 'Stop it asking Claude about your sessions',
+    dialog: (p) => [
+      h('p', {}, `${p.title} is a plugin, from ${plugins.folder}\\${p.id}. It asks to put questions about your sessions to Claude:`),
+      h('ul', {},
+        h('li', {}, 'each question runs Claude (or a session’s own agent) once, headless, with your own sign-in, the way Suggest a commit message does, and counts against your usage;'),
+        h('li', {}, 'the question goes with the sessions’ conversations: your prompts, what the agent answered and the tools it used;'),
+        h('li', {}, 'the agent runs with no tools and saves no conversation, so it can’t change anything.')),
+      h('p', {}, 'The plugin sees the answers. Allow only a plugin you trust; the palette menu can stop it later.'),
+    ],
+  },
+  type: {
+    verb: 'type into your sessions', let: 'Let it type into your sessions', stop: 'Stop it typing into your sessions',
+    dialog: (p) => [
+      h('p', {}, `${p.title} is a plugin, from ${plugins.folder}\\${p.id}. It asks to type into your sessions:`),
+      h('ul', {},
+        h('li', {}, 'text goes into a running session’s terminal as if you had pasted it, for you to send, or sent for you (Enter pressed) when the plugin says so;'),
+        h('li', {}, 'what it types reaches the agent there as a prompt, so it can set a session to work;'),
+        h('li', {}, 'it can’t type into a session that has stopped at a question needing your answer.')),
+      h('p', {}, 'A toast says each time it types. Allow only a plugin you trust; the palette menu can stop it later.'),
+    ],
+  },
+};
+
+/**
+ * The access you allowed each plugin, by plugin id (["sessions", "ask", "type"]), kept; access you refused is only until the app
+ * restarts, so the plugin asks again then. A plugin is asked about only for what its plugin.json's "access" names.
+ */
+const pluginAccess = store.get('pluginAccess', {});
+const pluginRefused = new Set();   // 'id|kind'
+const pluginAsking = new Map();    // 'id|kind' → the answer, while you're being asked
+const pluginMayHave = (p, kind) => p.access.includes(kind) && !!pluginAccess[p.id]?.includes(kind);
+
+function setPluginAccess(p, kind, allowed) {
+  const kinds = new Set(pluginAccess[p.id] ?? []);
+  if (allowed) { kinds.add(kind); pluginRefused.delete(p.id + '|' + kind); } else { kinds.delete(kind); pluginRefused.add(p.id + '|' + kind); }
+  if (kinds.size) pluginAccess[p.id] = [...kinds]; else delete pluginAccess[p.id];
+  store.set('pluginAccess', pluginAccess);
+  // Stopped: the page starts over, so it no longer holds what it was shown.
+  const f = pluginFrames.get(p.id);
+  if (!allowed && f) { f.ready = false; f.frame.src = f.frame.src; }
+}
+
+/** Whether the plugin may see kind: allowed before, or you allow it now (asked once at a time, and not again once refused). */
+function pluginAllowed(p, kind) {
+  if (!p.access.includes(kind)) return Promise.resolve(false);
+  if (pluginMayHave(p, kind)) return Promise.resolve(true);
+  const key = p.id + '|' + kind;
+  if (pluginRefused.has(key)) return Promise.resolve(false);
+  if (!pluginAsking.has(key)) pluginAsking.set(key, askPluginAccess(p, kind).finally(() => pluginAsking.delete(key)));
+  return pluginAsking.get(key);
+}
+
+function askPluginAccess(p, kind) {
+  return new Promise((resolve) => {
+    let answered = false;
+    const answer = (yes) => {
+      if (answered) return;
+      answered = true;
+      setPluginAccess(p, kind, yes);
+      resolve(yes);
+    };
+    openModal(`Let ${p.title} ${PLUGIN_ACCESS[kind].verb}?`, h('div', {}, ...PLUGIN_ACCESS[kind].dialog(p)), [
+      h('button', { class: 'btn', 'data-autofocus': true, onclick: () => { answer(false); closeModal(); } }, 'Don’t allow'),
+      h('button', { class: 'btn primary', onclick: () => { answer(true); closeModal(); } }, 'Allow'),
+    ]);
+    onModalClose = () => answer(false);   // closed any other way
+  });
+}
+
+/** A session as plugins allowed to see sessions are told it. status is statusClass's: exited, asking (needs your answer), attention (finished, waiting for you), working or running (idle). */
+const pluginSessionInfo = (s) => ({
+  id: s.id, name: s.name, project: groupOf(s) === UNKNOWN ? null : projectName(groupOf(s)), directory: s.directory,
+  worktree: s.git?.isRepo ? s.git.root : null, status: statusClass(s), open: s.id === state.expandedId,
+});
+
+/**
+ * A plugin's request { requestId, name, … }; the answer is response { requestId, result } or { requestId, error }.
+ * With "sessions" access:
+ *   sessions            → every session (see pluginSessionInfo)
+ *   activity { ids, have } → what Claude did in each: [{ id, found, conversation, version, from, events }], events
+ *                          from `from` on ({ t, k, file, text, ok, q, ctx, out }; see ActivityReader). have: id → { conversation,
+ *                          version } that the plugin already has, so only what's new comes back
+ *   folders { sessionId } → { root, folders: [{ name, files }] }, the session's repository's top-level folders, or null
+ *   showSession { sessionId } → opens the session, as clicking its tab would
+ *   showPrompt { sessionId, at, index, text } → opens the session's Conversation tab at the prompt sent at `at` (ISO time;
+ *                          `index`, its number among the prompts, is the fallback): Claude's full-screen mode keeps no
+ *                          terminal scrollback, so the conversation is where a prompt can be jumped to. { index }
+ * With "ask" access (and "sessions"):
+ *   ask { question, ids, history } → { answer, writer, sessions }: an agent run headless (the sessions' own, or Claude)
+ *                          answers the question from the conversations of the sessions named; history is earlier
+ *                          [{ question, answer }] of the same chat, so a follow-up makes sense
+ * With "type" access:
+ *   type { sessionId, text, send } → types text into the session's terminal as if pasted, and presses Enter when send
+ *                          is true; refused while the session is stopped at a question needing your answer
+ */
+async function pluginRequest(p, m) {
+  const sessionArg = () => {
+    const s = state.byId.get(m.sessionId);
+    if (!s) throw new Error('There is no such session.');
+    return s;
+  };
+  const NEEDS = { sessions: 'sessions', activity: 'sessions', folders: 'sessions', showSession: 'sessions', showPrompt: 'sessions', ask: 'ask', type: 'type' };
+  const kind = NEEDS[m.name];
+  if (!kind) throw new Error(`There is no request "${m.name}".`);
+  if (!p.access.includes(kind)) throw new Error(`Its plugin.json doesn't ask for "${kind}" access.`);
+  if (!await pluginAllowed(p, kind)) throw new Error(`It isn't allowed to ${PLUGIN_ACCESS[kind].verb}.`);
+  switch (m.name) {
+    case 'sessions': return state.sessions.map(pluginSessionInfo);
+    case 'activity': {
+      const ids = (Array.isArray(m.ids) ? m.ids : []).filter((id) => typeof id === 'string' && state.byId.has(id)).slice(0, 100);
+      const have = m.have && typeof m.have === 'object' ? m.have : {};
+      return request('plugins.activity', { ids, have: Object.fromEntries(ids.filter((id) => have[id]).map((id) => [id, { conversation: String(have[id].conversation ?? ''), version: Number(have[id].version) || 0 }])) });
+    }
+    case 'folders': {
+      const s = sessionArg();
+      return s.git?.isRepo ? request('plugins.folders', { id: s.id }) : null;
+    }
+    case 'showSession': {
+      const s = sessionArg();
+      showTerminalDoc();
+      expand(s.id);
+      return null;
+    }
+    case 'showPrompt': {
+      // Claude's full-screen mode keeps no terminal scrollback, so the prompt is shown in the session's Conversation tab,
+      // found by when it was sent (the plugin's time comes from the same transcript), else by its number.
+      const s = sessionArg();
+      const at = typeof m.at === 'string' ? Date.parse(m.at) : NaN;
+      if (!s.convFull) await loadConversation(s, true);
+      const turns = s.convFull?.turns ?? [];
+      if (!turns.length) throw new Error('There is no conversation to show for that session.');
+      let i = Number.isFinite(at) ? turns.findIndex((t) => t.time && Math.abs(Date.parse(t.time) - at) < 5000) : -1;
+      if (i < 0 && Number.isInteger(m.index) && turns[m.index]) i = m.index;
+      if (i < 0) i = turns.length - 1;
+      openConversation(s, i);
+      return { index: i };
+    }
+    case 'ask': {
+      if (!p.access.includes('sessions') || !await pluginAllowed(p, 'sessions')) throw new Error('Asking about sessions needs "sessions" access as well.');
+      const question = typeof m.question === 'string' ? m.question.trim().slice(0, 4000) : '';
+      if (!question) throw new Error('There is no question.');
+      const ids = (Array.isArray(m.ids) ? m.ids : []).filter((id) => typeof id === 'string' && state.byId.has(id)).slice(0, 50);
+      if (!ids.length) throw new Error('There are no sessions to ask about.');
+      const history = (Array.isArray(m.history) ? m.history : []).slice(-8)
+        .filter((x) => x && typeof x.question === 'string' && typeof x.answer === 'string')
+        .map((x) => ({ question: x.question.slice(0, 4000), answer: x.answer.slice(0, 4000) }));
+      const about = ids.map((id) => { const i = pluginSessionInfo(state.byId.get(id)); return { id, name: i.name, project: i.project, status: i.status }; });
+      return request('plugins.ask', { question, history, sessions: about });
+    }
+    case 'type': {
+      const s = sessionArg();
+      const text = typeof m.text === 'string' ? m.text.slice(0, 20000) : '';
+      if (!text) throw new Error('There is nothing to type.');
+      if (s.startsOnOpen || !s.running) throw new Error(`"${s.name}" isn't running.`);
+      if (s.asking) throw new Error(`"${s.name}" is waiting for your answer to a question, so nothing is typed into it.`);
+      const send = m.send === true;
+      s.term.paste(text);
+      if (send) setTimeout(() => post({ type: 'input', id: s.id, data: '\r' }), 150);
+      toast(`${p.title} typed into "${s.name}"${send ? ' and sent it' : ''}.`);
+      return { sent: send };
+    }
+  }
+}
+
+// What a plugin asks for its own tab, and its requests. Only its own frame is listened to, so it can't speak for
+// another plugin (and the host keeps each plugin's frame on its own address).
 addEventListener('message', (e) => {
   const id = [...pluginFrames].find(([, f]) => f.frame.contentWindow === e.source)?.[0];
   const m = e.data;
   if (!id || typeof m?.type !== 'string') return;
   const f = pluginFrames.get(id);
+  if (m.type === 'claude-terminals:request') {
+    const p = pluginById(id), frame = f.frame;
+    const reply = (answer) => frame.contentWindow?.postMessage({ type: 'claude-terminals:response', requestId: m.requestId, ...answer }, '*');
+    pluginRequest(p, m).then((result) => reply({ result: result ?? null }), (err) => reply({ error: err.message }));
+    return;
+  }
+  if (m.type === 'claude-terminals:open') {
+    movePlugin(id, m.placement, m.state);
+    return;
+  }
   if (m.type === 'claude-terminals:badge') {
     const n = Math.floor(Number(m.count));
     f.badge = n > 0 ? { count: Math.min(n, 999) } : m.dot === true ? { dot: true } : null;

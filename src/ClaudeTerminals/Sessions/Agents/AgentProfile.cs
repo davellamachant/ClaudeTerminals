@@ -100,6 +100,12 @@ internal abstract class AgentProfile
     /// </summary>
     public virtual Conversation? ReadConversation(TerminalSession session, int[] processIds) => null;
 
+    /// <summary>
+    /// The session's own conversation read from disk while it isn't running (the one it would resume), for the
+    /// assistant to answer about a stopped session; null when there is none or it can't be read.
+    /// </summary>
+    public virtual Conversation? ReadSavedConversation(TerminalSession session) => null;
+
     // ---------------------------------------------------------------- panels
 
     /// <summary>Whether it reads the panel server from a file written for the session (Claude's --mcp-config) rather than its command line.</summary>

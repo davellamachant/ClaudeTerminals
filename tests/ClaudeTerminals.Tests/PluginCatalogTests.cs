@@ -110,6 +110,19 @@ public class PluginCatalogTests : IDisposable
     }
 
     [Fact]
+    public void A_plugin_names_what_it_asks_to_see()
+    {
+        Plugin("floor", """{ "access": ["Sessions", "files"] }""", "index.html");
+        Plugin("one", """{ "access": "sessions" }""", "index.html");
+        Plugin("plain", "{}", "index.html");
+        var (plugins, problems) = PluginCatalog.Load(folder);
+        Assert.Equal(["sessions"], plugins.Single(p => p.Id == "floor").Access);
+        Assert.Contains(problems, p => p.StartsWith("floor:") && p.Contains("\"files\", which there isn't"));
+        Assert.Equal(["sessions"], plugins.Single(p => p.Id == "one").Access);
+        Assert.Empty(plugins.Single(p => p.Id == "plain").Access);   // nothing beyond its own page
+    }
+
+    [Fact]
     public void A_title_bar_button_is_an_icon_from_the_plugins_folder()
     {
         Plugin("map", """{ "toolbar": { "icon": "img/map.svg", "tooltip": "Open the map", "command": "open" } }""", "index.html", "img/map.svg");
@@ -154,4 +167,13 @@ public class PluginCatalogTests : IDisposable
     [Fact]
     public void No_plugins_folder_means_no_plugins() =>
         Assert.Empty(PluginCatalog.Load(Path.Combine(folder, "none")).Plugins);
+
+    [Fact]
+    public void A_plugin_can_ask_for_asking_and_typing_too()
+    {
+        Plugin("ask", """{ "access": ["type", "ask", "sessions"] }""", "index.html");
+        var (plugins, problems) = PluginCatalog.Load(folder);
+        Assert.Empty(problems);
+        Assert.Equal(["sessions", "ask", "type"], plugins.Single().Access);   // in the catalog's order
+    }
 }

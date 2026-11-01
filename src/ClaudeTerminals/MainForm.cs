@@ -350,6 +350,18 @@ internal sealed class MainForm : Form
             core.NewWindowRequested += (_, args) => args.Handled = true;
             // Plugins are pages in frames of their own (see PluginCatalog): a plugin's frame stays on plugin addresses.
             core.FrameNavigationStarting += (_, args) => { if (!PluginCatalog.IsPluginUri(args.Uri) && args.Uri != "about:blank") args.Cancel = true; };
+            // And on its own plugin's address: the page answers a plugin's frame with what that plugin was allowed to see,
+            // so another plugin's page mustn't get into it.
+            core.FrameCreated += (_, created) =>
+            {
+                string? host = null;
+                created.Frame.NavigationStarting += (_, args) =>
+                {
+                    if (!Uri.TryCreate(args.Uri, UriKind.Absolute, out var u) || u.Scheme != Uri.UriSchemeHttps) return;
+                    host ??= u.Host;
+                    if (!string.Equals(host, u.Host, StringComparison.OrdinalIgnoreCase)) args.Cancel = true;
+                };
+            };
             // The terminal's Paste menu item reads the clipboard; without this WebView2 asks "Allow clipboard access?"
             // the first time, a prompt that also takes focus away from the terminal. Only the app's own origin gets it
             // (requests name the origin, not the page; navigation never leaves the app page anyway).
@@ -814,7 +826,8 @@ internal sealed class MainForm : Form
                 var others = OthersConversations(s);
                 var live = s.IsRunning ? await Task.Run(() => agent.LiveConversation(s, pids, others)) : null;
                 if (AdoptConversation(s, live)) { SaveSessions(); Post(SessionList()); }
-                var conv = await Task.Run(() => agent.ReadConversation(s, pids));
+                // A stopped session shows the conversation it would resume, so a prompt can still be jumped to in it.
+                var conv = await Task.Run(() => agent.ReadConversation(s, pids) ?? (s.IsRunning ? null : agent.ReadSavedConversation(s)));
                 if (conv == null) return new { found = false };
                 var same = OptStr(msg, "sessionId") == conv.SessionId;
                 if (same && msg.TryGetProperty("version", out var v) && v.ValueKind == JsonValueKind.Number && v.GetInt64() == conv.Version)
@@ -873,13 +886,44 @@ internal sealed class MainForm : Form
                 // Read the plugins folder again, so a plugin added or changed shows without restarting.
                 var (found, problems) = LoadPlugins();
                 return new { folder = PluginFolder, plugins = found.Select(p => new { id = p.Id, title = p.Title, description = p.Description, url = p.Url, placement = p.Placement,
-                    menu = p.Menu.Select(i => new { label = i.Label, command = i.Command, where = i.Where }),
+                    menu = p.Menu.Select(i => new { label = i.Label, command = i.Command, where = i.Where }), access = p.Access,
                     toolbar = p.Toolbar is { } t ? new { icon = t.Icon, tooltip = t.Tooltip, command = t.Command } : null }), problems };
             }
             case "plugins.openFolder":
                 Directory.CreateDirectory(PluginFolder);
                 OpenExternal(PluginFolder);
                 return null;
+            // What a plugin allowed to see sessions asks for. Only the app's page asks (as for everything here); it checks
+            // the plugin was allowed before it does.
+            case "plugins.folders":
+                // The top-level folders of the session's repository, with their file counts.
+                return await GitService.GetTopFoldersAsync(GitDir(msg));
+            case "plugins.activity":
+            {
+                // What each session has done: the events of its conversation (the one its Claude is in, or the saved one it
+                // would resume). The page says which version of each it has, and gets only what's new since; a different
+                // conversation starts it over.
+                var ids = msg.TryGetProperty("ids", out var list) && list.ValueKind == JsonValueKind.Array
+                    ? list.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!).ToList() : [];
+                var have = msg.TryGetProperty("have", out var h) && h.ValueKind == JsonValueKind.Object ? h.Clone() : default;
+                var asked = ids.Select(id => (id, s: sessions.GetValueOrDefault(id))).ToList();
+                return await Task.Run(() => asked.Select(a => ActivityOf(a.id, a.s, have)).ToList());
+            }
+            case "plugins.ask":
+            {
+                // A question about sessions, answered by an agent run headless over their conversations (see SessionAssistant).
+                // The page names the sessions, with what their status dots show; a stopped session's saved conversation is read.
+                var question = Str(msg, "question");
+                var history = msg.TryGetProperty("history", out var hist) && hist.ValueKind == JsonValueKind.Array
+                    ? hist.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.Object).Select(x => new AssistantExchange(Str(x, "question"), Str(x, "answer"))).ToList()
+                    : [];
+                var about = msg.TryGetProperty("sessions", out var list) && list.ValueKind == JsonValueKind.Array
+                    ? list.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.Object && sessions.ContainsKey(Str(x, "id"))).Select(x => x.Clone()).ToList()
+                    : [];
+                var briefs = await Task.Run(() => about.Select(x => BriefOf(sessions[Str(x, "id")], Str(x, "name"), OptStr(x, "project"), Str(x, "status"))).ToList());
+                var a = await SessionAssistant.AskAsync(question, history, briefs, DateTime.Now);
+                return new { answer = a.Answer, writer = a.Writer, sessions = a.Sessions };
+            }
 
             // ---- themes
             case "themes.list":
@@ -1083,6 +1127,43 @@ internal sealed class MainForm : Form
 
     private TerminalSession Get(JsonElement msg) =>
         sessions.TryGetValue(Str(msg, "id"), out var s) ? s : throw new KeyNotFoundException("Unknown session");
+
+    /// <summary>
+    /// One session's part of a plugins.activity answer: the events of the conversation its Claude is in (or the saved one
+    /// it would resume), from the version the page has (<paramref name="have"/>: id → { conversation, version }) on.
+    /// </summary>
+    private static object ActivityOf(string id, TerminalSession? s, JsonElement have)
+    {
+        string? conversation = null, path = null;
+        if (s != null)
+        {
+            if (s.IsRunning && ConversationReader.FindLiveSession(s.ProcessIds()) is { } live)
+            {
+                conversation = live.SessionId;
+                path = ConversationReader.FindTranscript(live.SessionId, live.Cwd);
+            }
+            if (path == null && s.Info.Conversation is { } saved)
+            {
+                conversation = saved;
+                path = ConversationReader.FindTranscript(saved, s.Info.Directory);
+            }
+        }
+        if (path == null) return new { id, found = false, conversation, version = 0L, from = 0, events = Array.Empty<ActivityEvent>() };
+        var data = ActivityReader.Read(path);
+        var from = 0;
+        if (have.ValueKind == JsonValueKind.Object && have.TryGetProperty(id, out var mine) && OptStr(mine, "conversation") == conversation &&
+            mine.TryGetProperty("version", out var v) && v.ValueKind == JsonValueKind.Number)
+            from = (int)Math.Clamp(v.GetInt64(), 0, data.Events.Count);
+        return new { id, found = true, conversation, version = data.Version, from, events = data.Events.Skip(from).ToArray() };
+    }
+
+    /// <summary>A session as the assistant is told about it: its conversation is the one its agent is in, or the saved one while it's stopped.</summary>
+    private static SessionBrief BriefOf(TerminalSession s, string name, string? project, string status)
+    {
+        var agent = s.Agent;
+        var conv = agent == null ? null : (s.IsRunning ? agent.ReadConversation(s, s.ProcessIds()) : null) ?? agent.ReadSavedConversation(s);
+        return new SessionBrief(s.Id, name.Length > 0 ? name : s.Id, project, s.Info.Directory, status, agent, conv);
+    }
 
     private string GitDir(JsonElement msg)
     {
