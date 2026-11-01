@@ -503,7 +503,7 @@ function rainSize() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = rain.floor; ctx.fillRect(0, 0, w, hgt);
   const n = Math.ceil(w / RAIN_CELL);
-  rain.cols = Array.from({ length: n }, () => ({ y: -Math.random() * hgt * 3 / RAIN_CELL, speed: 0.4 + Math.random() * 0.7 }));   // staggered, so only some columns rain at once
+  rain.cols = Array.from({ length: n }, () => ({ y: -Math.random() * hgt * 1.6 / RAIN_CELL, speed: 0.4 + Math.random() * 0.8 }));   // staggered, so the columns don't all rain at once
   rain.rows = Math.ceil(hgt / RAIN_CELL);
 }
 
@@ -519,14 +519,14 @@ function rainFrame() {
     const y = Math.floor(c.y);
     if (y >= 0 && y < rain.rows + 1) {
       const glyph = RAIN_GLYPHS[Math.floor(Math.random() * RAIN_GLYPHS.length)];
-      ctx.fillStyle = rain.colour; ctx.globalAlpha = 0.5;
+      ctx.fillStyle = rain.colour; ctx.globalAlpha = 0.6;
       ctx.fillText(glyph, i * RAIN_CELL + 1, (y - 1) * RAIN_CELL);   // last cell: back to the accent
       ctx.fillStyle = '#ffffff'; ctx.globalAlpha = 0.8;
       ctx.fillText(RAIN_GLYPHS[Math.floor(Math.random() * RAIN_GLYPHS.length)], i * RAIN_CELL + 1, y * RAIN_CELL);   // the head, white-hot
       ctx.globalAlpha = 1;
     }
     c.y += c.speed;
-    if (c.y > rain.rows + 2 && Math.random() < 0.015) { c.y = -Math.random() * 30; c.speed = 0.4 + Math.random() * 0.7; }
+    if (c.y > rain.rows + 2 && Math.random() < 0.035) { c.y = -Math.random() * 20; c.speed = 0.4 + Math.random() * 0.8; }
   }
 }
 addEventListener('resize', () => rainSize());
