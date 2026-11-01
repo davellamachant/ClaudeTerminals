@@ -6598,6 +6598,9 @@ const pluginSessionInfo = (s) => ({
  *                          version } that the plugin already has, so only what's new comes back
  *   folders { sessionId } → { root, folders: [{ name, files }] }, the session's repository's top-level folders, or null
  *   showSession { sessionId } → opens the session, as clicking its tab would
+ *   showPrompt { sessionId, at, index, text } → opens the session's Conversation tab at the prompt sent at `at` (ISO time;
+ *                          `index`, its number among the prompts, is the fallback): Claude's full-screen mode keeps no
+ *                          terminal scrollback, so the conversation is where a prompt can be jumped to. { index }
  * With "ask" access (and "sessions"):
  *   ask { question, ids, history } → { answer, writer, sessions }: an agent run headless (the sessions' own, or Claude)
  *                          answers the question from the conversations of the sessions named; history is earlier
@@ -6613,7 +6616,7 @@ async function pluginRequest(p, m) {
     if (!sees(m.sessionId)) throw new Error('There is no such session.');
     return state.byId.get(m.sessionId);
   };
-  const NEEDS = { sessions: 'sessions', activity: 'sessions', folders: 'sessions', showSession: 'sessions', messageTargets: 'message', sendMessage: 'message', readMessages: 'message', ask: 'ask', type: 'type' };
+  const NEEDS = { sessions: 'sessions', activity: 'sessions', folders: 'sessions', showSession: 'sessions', showPrompt: 'sessions', messageTargets: 'message', sendMessage: 'message', readMessages: 'message', ask: 'ask', type: 'type' };
   const kind = NEEDS[m.name];
   if (!kind) throw new Error(`There is no request "${m.name}".`);
   if (!p.access.includes(kind)) throw new Error(`Its plugin.json doesn't ask for "${kind}" access.`);
@@ -6644,6 +6647,20 @@ async function pluginRequest(p, m) {
       return request('relay.pluginSend', { plugin: p.id, to, text, replyTo: typeof m.replyTo === 'string' ? m.replyTo : null });
     }
     case 'readMessages': return request('relay.pluginRead', { plugin: p.id });
+    case 'showPrompt': {
+      // Claude's full-screen mode keeps no terminal scrollback, so the prompt is shown in the session's Conversation tab,
+      // found by when it was sent (the plugin's time comes from the same transcript), else by its number.
+      const s = sessionArg();
+      const at = typeof m.at === 'string' ? Date.parse(m.at) : NaN;
+      if (!s.convFull) await loadConversation(s, true);
+      const turns = s.convFull?.turns ?? [];
+      if (!turns.length) throw new Error('There is no conversation to show for that session.');
+      let i = Number.isFinite(at) ? turns.findIndex((t) => t.time && Math.abs(Date.parse(t.time) - at) < 5000) : -1;
+      if (i < 0 && Number.isInteger(m.index) && turns[m.index]) i = m.index;
+      if (i < 0) i = turns.length - 1;
+      openConversation(s, i);
+      return { index: i };
+    }
     case 'ask': {
       if (!p.access.includes('sessions') || !await pluginAllowed(p, 'sessions')) throw new Error('Asking about sessions needs "sessions" access as well.');
       const question = typeof m.question === 'string' ? m.question.trim().slice(0, 4000) : '';
