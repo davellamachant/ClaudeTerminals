@@ -266,7 +266,7 @@ plugins\
 
 - **The folder's name** is the plugin's id and its address: `https://counter.plugin.local/index.html`. Use letters, digits and hyphens.
 - **`title`** is its name on the menu and its tab (the folder's name if left out). **`icon`** is shown beside its name there and in Permissions: an image file in its folder (SVG, PNG, ICO, GIF, JPEG or WebP, up to 64 KB); without one it has its title bar button's icon, if it has a button, or the app's plugin icon. **`entry`** is its page, a file inside the folder (`index.html` if left out). Its scripts, styles and images load from the same folder with relative paths.
-- **`placement`:** `"tab"` (the default) opens it as a document tab; `"panel"` as a tab in the side panel, which you can drag to another group like the others. Close it with a middle-click or its right-click menu.
+- **`placement`:** `"tab"` (the default) opens it as a document tab; `"panel"` gives it a tab in the side panel, which is there as soon as the app has read the plugin, without opening it first, and which you can drag to another group like the others. Close it with a middle-click or its right-click menu; it then stays out of the panel until you open it again from the palette, a menu or its button.
 - **`menu`:** up to 8 items. Picking one opens the plugin and sends it the item's `command`, with what was clicked. **`where`** names the menus it's on, one or a list (the palette menu if left out):
   - `"palette"`: under the plugin's name in the palette menu;
   - `"project"`: a project's right-click menu in the Projects row;
