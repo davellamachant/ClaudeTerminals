@@ -79,17 +79,29 @@ public sealed class ThemeCatalogTests : IDisposable
         Assert.Equal("light-cycle", tron.Cursor);
         Assert.True(tron.Grid);
         Assert.False(tron.Rain);
+        Assert.False(tron.Cabin);
         Assert.Null(nerds.Cursor);
         Assert.False(nerds.Grid);
         Assert.False(nerds.Rain);
+        Assert.False(nerds.Cabin);
         var matrix = Assert.Single(themes, t => t.Id == "matrix");
         Assert.Equal(("Matrix", "dark", "Cascadia Mono", true, false, true, null, true), (matrix.Name, matrix.Base, matrix.Font, matrix.Glow, matrix.Grid, matrix.Rain, matrix.Cursor, matrix.BuiltIn));
         Assert.Equal(("#39ff6a", "#0b6b26"), (matrix.Accent!.Line, matrix.Accent.Strong));
         Assert.DoesNotContain(themes, t => t.Id == "tron-ares");   // Tron in red is Tron with a red accent now
-        // Matrix is written out in full: every colour the page, the terminals and the diff editor can take, so nothing of Dark shows through.
-        Assert.Equal(ThemeCatalog.ColorNames.OrderBy(n => n), matrix.Colors.Keys.OrderBy(n => n));
-        Assert.Equal(ThemeCatalog.DiffNames.OrderBy(n => n), matrix.Diff.Keys.OrderBy(n => n));
-        Assert.Equal(ThemeCatalog.TerminalNames.Except(["selectionForeground"]).OrderBy(n => n), matrix.Terminal.Keys.OrderBy(n => n));
+        Assert.False(matrix.Cabin);
+        var pirate = Assert.Single(themes, t => t.Id == "steampunk-pirate");
+        Assert.Equal(("Steampunk Pirate", "dark", "Constantia", false, false, false, true, null, true),
+            (pirate.Name, pirate.Base, pirate.Font, pirate.Glow, pirate.Grid, pirate.Rain, pirate.Cabin, pirate.Cursor, pirate.BuiltIn));
+        Assert.Equal(("#d4aa4f", "#6b5118"), (pirate.Accent!.Line, pirate.Accent.Strong));
+        // Its own brass, and the alternatives it offers in its place.
+        Assert.Equal(["Brass", "Copper", "Verdigris", "Blood red"], pirate.Accents.Select(a => a.Name));
+        // Matrix and Steampunk Pirate are written out in full: every colour the page, the terminals and the diff editor can take, so nothing of Dark shows through.
+        foreach (var t in new[] { matrix, pirate })
+        {
+            Assert.Equal(ThemeCatalog.ColorNames.OrderBy(n => n), t.Colors.Keys.OrderBy(n => n));
+            Assert.Equal(ThemeCatalog.DiffNames.OrderBy(n => n), t.Diff.Keys.OrderBy(n => n));
+            Assert.Equal(ThemeCatalog.TerminalNames.Except(["selectionForeground"]).OrderBy(n => n), t.Terminal.Keys.OrderBy(n => n));
+        }
     }
 
     [Fact]
