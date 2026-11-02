@@ -79,17 +79,29 @@ public sealed class ThemeCatalogTests : IDisposable
         Assert.Equal("light-cycle", tron.Cursor);
         Assert.True(tron.Grid);
         Assert.False(tron.Rain);
+        Assert.False(tron.Glitch);
         Assert.Null(nerds.Cursor);
         Assert.False(nerds.Grid);
         Assert.False(nerds.Rain);
+        Assert.False(nerds.Glitch);
         var matrix = Assert.Single(themes, t => t.Id == "matrix");
         Assert.Equal(("Matrix", "dark", "Cascadia Mono", true, false, true, null, true), (matrix.Name, matrix.Base, matrix.Font, matrix.Glow, matrix.Grid, matrix.Rain, matrix.Cursor, matrix.BuiltIn));
         Assert.Equal(("#39ff6a", "#0b6b26"), (matrix.Accent!.Line, matrix.Accent.Strong));
         Assert.DoesNotContain(themes, t => t.Id == "tron-ares");   // Tron in red is Tron with a red accent now
-        // Matrix is written out in full: every colour the page, the terminals and the diff editor can take, so nothing of Dark shows through.
-        Assert.Equal(ThemeCatalog.ColorNames.OrderBy(n => n), matrix.Colors.Keys.OrderBy(n => n));
-        Assert.Equal(ThemeCatalog.DiffNames.OrderBy(n => n), matrix.Diff.Keys.OrderBy(n => n));
-        Assert.Equal(ThemeCatalog.TerminalNames.Except(["selectionForeground"]).OrderBy(n => n), matrix.Terminal.Keys.OrderBy(n => n));
+        Assert.False(matrix.Glitch);
+        var cyberpunk = Assert.Single(themes, t => t.Id == "cyberpunk-2077");
+        Assert.Equal(("Cyberpunk 2077", "dark", "Bahnschrift SemiCondensed", true, false, false, true, null, true),
+            (cyberpunk.Name, cyberpunk.Base, cyberpunk.Font, cyberpunk.Glow, cyberpunk.Grid, cyberpunk.Rain, cyberpunk.Glitch, cyberpunk.Cursor, cyberpunk.BuiltIn));
+        Assert.Equal(("#fcee0a", "#8a7f00"), (cyberpunk.Accent!.Line, cyberpunk.Accent.Strong));
+        // Its own yellow, and the alternatives it offers in its place.
+        Assert.Equal([new ThemeAccentChoice("Night City yellow", "#fcee0a"), new ThemeAccentChoice("Netrunner cyan", "#00f0ff"), new ThemeAccentChoice("Neon magenta", "#ff2bd6"), new ThemeAccentChoice("Crimson", "#ff003c")], cyberpunk.Accents);
+        // Matrix and Cyberpunk 2077 are written out in full: every colour the page, the terminals and the diff editor can take, so nothing of Dark shows through.
+        foreach (var t in new[] { matrix, cyberpunk })
+        {
+            Assert.Equal(ThemeCatalog.ColorNames.OrderBy(n => n), t.Colors.Keys.OrderBy(n => n));
+            Assert.Equal(ThemeCatalog.DiffNames.OrderBy(n => n), t.Diff.Keys.OrderBy(n => n));
+            Assert.Equal(ThemeCatalog.TerminalNames.Except(["selectionForeground"]).OrderBy(n => n), t.Terminal.Keys.OrderBy(n => n));
+        }
     }
 
     [Fact]

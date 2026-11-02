@@ -473,10 +473,24 @@ function themeLook() {
   if (!themes.list.includes(t)) return t;   // the kept look
   const made = t.monochrome ? monochromeLook(accentColour(), t.base === 'light') : {};
   return {
-    id: t.id, name: t.name, base: t.base, font: t.font, glow: t.glow, grid: !!t.grid, rain: !!t.rain, monochrome: t.monochrome, cursor: t.cursor ?? null,
+    id: t.id, name: t.name, base: t.base, font: t.font, glow: t.glow, grid: !!t.grid, rain: !!t.rain, glitch: !!t.glitch, monochrome: t.monochrome, cursor: t.cursor ?? null,
     colors: { ...made.colors, ...t.colors }, terminal: { ...made.terminal, ...t.terminal }, diff: { ...made.diff, ...t.diff },
-    accent: t.accent ?? made.accent ?? null,
+    accent: pickedAccent(t) ?? t.accent ?? made.accent ?? null,
   };
+}
+
+/**
+ * For a theme with an accent of its own that suggests others: the suggestion picked in Accent colour, if one is, in place
+ * of its own (the theme's own again when the suggestion is that colour). Null leaves the theme's own, or a monochrome
+ * theme's building, as they were.
+ */
+function pickedAccent(t) {
+  if (!t.accent || !t.accents?.length) return null;
+  const c = String(accent.choice).toLowerCase();
+  if (!t.accents.some((a) => a.color === c)) return null;
+  if (c === t.accent.line.toLowerCase()) return t.accent;
+  const p = shadesOf(c);
+  return { line: c, strong: [3, 4, 5, 6].map((i) => p[i]).find((s) => contrast(s, '#ffffff') >= 4.5) ?? p[6] };
 }
 
 let themeColors = [];   // the colours the theme in use set on the page, to take off again
@@ -550,6 +564,367 @@ function rainFrame() {
 }
 addEventListener('resize', () => rainSize());
 
+// The glitch (a theme's "glitch": true): the window's floor is a Night City screen, on a canvas fixed behind everything like
+// the rain's (see #glitch in app.css): a hazard-trimmed frame with chamfered corners in the accent colour, bundles of cyan
+// circuit traces routed in from the edges to end in pads, a drift of specks across the middle, a Breach Protocol matrix
+// solving itself over and over, a strip of in-world readouts, and along the bottom the city's skyline, its windows lit and
+// flickering under a magenta haze with the odd aerial vehicle crossing above it; a scan line sweeps down it, and every few
+// seconds a glitch, the screen jolted sideways and slices of it thrown further for a moment with red and cyan fringes while
+// the Relic readout fails. The title bar, tabs, panels and terminals are see-through over it.
+const glitch = {
+  canvas: null, ctx: null, inks: [], timer: null, colour: '#fcee0a', floor: '#060608', dpr: 1,
+  traces: [], specks: [], labels: [], relic: null, buildings: [], flickers: [], lamps: [],
+  matrix: null, panels: [], stage: -1,   // the Breach Protocol matrix, its panel in three inks, and the stage they show
+  av: null, avNext: 0,   // the aerial vehicle crossing, and when the next takes off
+  sweep: 0, until: 0, next: 0, rolled: 0, shift: 0, slices: [],
+};
+const GLITCH_MS = 50, GLITCH_RED = '#ff003c', GLITCH_CYAN = '#00f0ff', GLITCH_MAGENTA = '#ff2bd6';
+const GLITCH_CODE = ['1C', '55', '7A', 'BD', 'E9', 'FF'];   // the bytes of a Breach Protocol matrix
+const GLITCH_PITCH = 11;   // between the traces of a bundle
+const GLITCH_FONT = '600 10px "Bahnschrift SemiCondensed", Bahnschrift, "Segoe UI", sans-serif', GLITCH_MONO = '11px "Cascadia Mono", Consolas, monospace';
+const BREACH_W = 310, BREACH_H = 182, BREACH_CELL = 30, BREACH_ROW = 22;   // the matrix panel
+const BREACH_STAGES = [0, 1500, 5500, 9500, 13500];   // when each byte is taken, and when the breach succeeds; a new matrix at
+const BREACH_CYCLE = 15500;                             // the cycle's end
+
+/** Puts the screen on the floor, or takes it away. */
+function glitchFloor(on) {
+  if (!on) {
+    clearInterval(glitch.timer); glitch.timer = null;
+    glitch.canvas?.remove(); glitch.canvas = glitch.ctx = null; glitch.inks = []; glitch.panels = []; glitch.stage = -1;
+    return;
+  }
+  if (glitch.canvas) { glitchColours(); return; }
+  const canvas = h('canvas', { id: 'glitch', 'aria-hidden': 'true' });
+  document.body.prepend(canvas);
+  glitch.canvas = canvas; glitch.ctx = canvas.getContext('2d');
+  Object.assign(glitch, readGlitchColours());
+  glitchSize();
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;   // the screen, still: no scan line, no glitches, no traffic
+  glitch.sweep = -40; glitch.next = performance.now() + 1500; glitch.until = 0; glitch.avNext = performance.now() + 8000 + Math.random() * 12000;
+  glitch.timer = setInterval(() => { if (!document.hidden) glitchFrame(); }, GLITCH_MS);
+}
+
+/** The screen's colours, from the theme on screen: the accent for its frame, labels and scan line, the chrome for the floor it sits on. */
+function readGlitchColours() {
+  const css = getComputedStyle(document.documentElement);
+  return { colour: css.getPropertyValue('--accent').trim() || '#fcee0a', floor: css.getPropertyValue('--chrome').trim() || '#060608' };
+}
+
+/** Draws the screen again if the theme's colours changed under it. */
+function glitchColours() {
+  if (!glitch.canvas) return;
+  const { colour, floor } = readGlitchColours();
+  if (colour === glitch.colour && floor === glitch.floor) return;
+  Object.assign(glitch, { colour, floor });
+  glitchSize();
+}
+
+/** Fits the canvas to the window at the device's resolution, lays the screen out again and draws it in its three inks. */
+function glitchSize() {
+  const { canvas, ctx } = glitch;
+  if (!canvas) return;
+  const dpr = devicePixelRatio || 1, w = innerWidth, hgt = innerHeight;
+  canvas.width = Math.round(w * dpr); canvas.height = Math.round(hgt * dpr);
+  canvas.style.width = w + 'px'; canvas.style.height = hgt + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  glitch.dpr = dpr;
+  Object.assign(glitch, glitchBoard(w, hgt));   // the same layout in every ink
+  glitch.inks = [null, GLITCH_RED, GLITCH_CYAN].map((ink) => glitchScreen(w, hgt, dpr, ink));   // the screen in its own colours, and the fringes'
+  glitch.stage = -1;   // the matrix panel is drawn again too
+  glitch.slices = []; glitch.until = 0;
+  glitchFrame(true);
+}
+
+/** Lays the screen out for a window this size: the traces as bundles routed in from the top and the sides, the specks, the
+ *  Breach Protocol matrix's place, the readouts, and the skyline with the windows that flicker and the mast lamps apart. */
+function glitchBoard(w, hgt) {
+  const rnd = (a, b) => a + Math.random() * (b - a), pick = (list) => list[Math.floor(Math.random() * list.length)];
+  const traces = [];
+  // A bundle: one route, a few traces running beside it at a fixed pitch, pads alternating between rings and dots.
+  const bundle = (route, n) => {
+    for (let i = 0; i < n; i++) traces.push({ points: glitchOffset(route, (i - (n - 1) / 2) * GLITCH_PITCH), pad: i % 2 ? 'dot' : 'ring' });
+  };
+  // Down from the top edge, a bend to one side, a run, and a bend down again.
+  for (let x = rnd(40, 160); x < w - 60; x += rnd(170, 320)) {
+    const side = Math.random() < 0.5 ? -1 : 1, drop = rnd(40, 200), run = rnd(50, 190), bend = rnd(22, 48);
+    bundle([[x, -4], [x, drop], [x + side * bend, drop + bend], [x + side * (bend + run), drop + bend], [x + side * (bend + run + bend), drop + bend + bend], [x + side * (bend + run + bend), drop + bend + bend + rnd(10, 70)]], 2 + Math.floor(Math.random() * 3));
+  }
+  // In from each side, high up, with a bend down.
+  for (const [x0, dir] of [[-4, 1], [w + 4, -1]]) {
+    const y = rnd(hgt * 0.14, hgt * 0.45), run = rnd(90, 260), bend = rnd(24, 50);
+    bundle([[x0, y], [x0 + dir * run, y], [x0 + dir * (run + bend), y + bend], [x0 + dir * (run + bend), y + bend + rnd(30, 110)]], 3 + Math.floor(Math.random() * 2));
+  }
+  // The specks: a drift across the middle of the window, thicker towards its centre line.
+  const specks = Array.from({ length: Math.min(600, Math.round((w * hgt) / 3600)) }, () => [rnd(0, w), hgt * 0.5 + (Math.random() + Math.random() + Math.random() - 1.5) * hgt * 0.16, rnd(0.7, 2)]);
+  // The skyline: buildings shoulder to shoulder along the bottom, some with a mast and its lamp, their windows lit here and
+  // there; one window in eight flickers, so it's drawn by the frame rather than on the screen.
+  const skyMax = Math.min(180, hgt * 0.2), buildings = [], flickers = [], lamps = [];
+  for (let x = -10; x < w + 10;) {
+    const bw = rnd(16, 64), bh = (Math.random() < 0.15 ? rnd(0.85, 1) : rnd(0.25, 0.75)) * skyMax, mast = bh > skyMax * 0.7 && Math.random() < 0.5 ? rnd(10, 30) : 0;
+    const windows = [];
+    for (let wx = x + 4; wx < x + bw - 4; wx += 7) for (let wy = hgt - bh + 6; wy < hgt - 4; wy += 9) {
+      if (Math.random() >= 0.22) continue;
+      const colour = pick([GLITCH_CYAN, GLITCH_CYAN, '#fcee0a', GLITCH_MAGENTA, '#ffffff']);
+      if (Math.random() < 0.125) flickers.push({ x: wx, y: wy, colour, period: rnd(1800, 9000), phase: rnd(0, Math.PI * 2) });
+      else windows.push([wx, wy, colour]);
+    }
+    if (mast) lamps.push({ x: x + bw / 2 - 1, y: hgt - bh - mast - 1, phase: rnd(0, 2000) });
+    buildings.push({ x, w: bw, h: bh, mast, windows });
+    x += bw + rnd(0, 6);
+  }
+  // The readouts, in a strip above the skyline; the Relic's is the one that fails during a glitch.
+  const ly = Math.round(hgt - skyMax - 18), span = Math.min(w * 0.68, 1100);
+  const labels = [['NIGHT CITY', 36, ly], ['NETWATCH  ·  NET ACCESS MONITORED', 36 + span * 0.28, ly], ['ICE  LVL 03', 36 + span * 0.66, ly], ['RELIC  ▸  NOMINAL', 36 + span * 0.84, ly]];
+  return { traces, specks, buildings, flickers, lamps, labels, relic: { x: 36 + span * 0.84, y: ly }, matrix: { x: 36, y: Math.round(hgt * 0.36) - 12, skyTop: hgt - skyMax } };
+}
+
+/** A new Breach Protocol: a 5×5 grid of bytes, a sequence of three to find through it (first row, then that column, then
+ *  that row, as the minigame goes) that the grid is made to hold, and a longer sequence that's only there to distract. */
+function newBreach(now) {
+  const pick = () => GLITCH_CODE[Math.floor(Math.random() * GLITCH_CODE.length)];
+  const grid = Array.from({ length: 5 }, () => Array.from({ length: 5 }, pick));
+  const c0 = Math.floor(Math.random() * 5), r1 = 1 + Math.floor(Math.random() * 4), c2 = (c0 + 1 + Math.floor(Math.random() * 4)) % 5;
+  const seq = [pick(), pick(), pick()];
+  grid[0][c0] = seq[0]; grid[r1][c0] = seq[1]; grid[r1][c2] = seq[2];
+  return { t0: now, grid, seq, decoy: [pick(), pick(), pick(), pick()], path: [[0, c0], [r1, c0], [r1, c2]] };
+}
+
+/** The matrix's panel at a stage of the breach, in one ink or (ink null) its own colours: the title and rule, the buffer's
+ *  six slots with the bytes taken so far, the grid with the row or column in play lit and the taken cells boxed, the
+ *  sequences beside it, and BREACH SUCCESSFUL when the three are in. */
+function breachPanel(b, stage, ink) {
+  const dpr = glitch.dpr, c = document.createElement('canvas');
+  c.width = Math.round(BREACH_W * dpr); c.height = Math.round(BREACH_H * dpr);
+  const x = c.getContext('2d');
+  x.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const accent = ink || glitch.colour, cyan = ink || GLITCH_CYAN, taken = b.path.slice(0, stage), done = stage >= 3;
+  x.globalAlpha = 0.7; x.fillStyle = accent;
+  glitchLabel(x, 'BREACH PROTOCOL', 0, 12);
+  x.fillRect(0, 18, BREACH_W - 6, 1);
+  x.font = GLITCH_MONO; x.textBaseline = 'middle'; x.textAlign = 'center'; x.lineWidth = 1;
+  for (let i = 0; i < 6; i++) {   // the buffer
+    x.globalAlpha = 0.55; x.strokeStyle = cyan; x.strokeRect(0.5 + i * 24, 27.5, 18, 18);
+    if (i < taken.length) { x.globalAlpha = 0.85; x.fillStyle = accent; x.fillText(b.grid[taken[i][0]][taken[i][1]], 9 + i * 24, 37); }
+  }
+  const gy = 58;
+  if (!done) {   // the row or column in play
+    const [r, cI] = taken.length ? taken[taken.length - 1] : [0, -1], byRow = taken.length % 2 === 0;
+    x.globalAlpha = ink ? 0.25 : 0.12; x.fillStyle = accent;
+    if (byRow) x.fillRect(0, gy + r * BREACH_ROW, 5 * BREACH_CELL, BREACH_ROW); else x.fillRect(cI * BREACH_CELL, gy, BREACH_CELL, 5 * BREACH_ROW);
+    x.globalAlpha = 0.55; x.strokeStyle = accent;
+    if (byRow) x.strokeRect(0.5, gy + r * BREACH_ROW + 0.5, 5 * BREACH_CELL - 1, BREACH_ROW - 1); else x.strokeRect(cI * BREACH_CELL + 0.5, gy + 0.5, BREACH_CELL - 1, 5 * BREACH_ROW - 1);
+  }
+  for (let r = 0; r < 5; r++) for (let cI = 0; cI < 5; cI++) {
+    const cx = cI * BREACH_CELL + BREACH_CELL / 2, cy = gy + r * BREACH_ROW + BREACH_ROW / 2;
+    if (taken.some(([tr, tc]) => tr === r && tc === cI)) {   // a byte taken: a box in the accent, its text in the floor's colour
+      if (ink) { x.globalAlpha = 0.8; x.strokeStyle = ink; x.strokeRect(cI * BREACH_CELL + 2.5, gy + r * BREACH_ROW + 2.5, BREACH_CELL - 5, BREACH_ROW - 5); }
+      else { x.globalAlpha = 0.85; x.fillStyle = accent; x.fillRect(cI * BREACH_CELL + 2, gy + r * BREACH_ROW + 2, BREACH_CELL - 4, BREACH_ROW - 4); x.fillStyle = glitch.floor; x.fillText(b.grid[r][cI], cx, cy); }
+      continue;
+    }
+    x.globalAlpha = 0.45; x.fillStyle = cyan; x.fillText(b.grid[r][cI], cx, cy);
+  }
+  const sx = 5 * BREACH_CELL + 24;
+  x.textAlign = 'left'; x.globalAlpha = 0.7; x.fillStyle = accent;
+  glitchLabel(x, 'SEQUENCE REQUIRED', sx, gy + 8);
+  x.font = GLITCH_MONO; x.textBaseline = 'middle';
+  x.globalAlpha = done ? 0.95 : 0.75; x.fillStyle = accent; x.fillText(b.seq.join('  '), sx, gy + 28);
+  if (taken.length && !done) { x.globalAlpha = 0.9; x.fillRect(sx, gy + 36, taken.length * 22 - 4, 1.5); }   // how far along it is
+  x.globalAlpha = 0.45; x.fillStyle = cyan; x.fillText(b.decoy.join('  '), sx, gy + 28 + BREACH_ROW);
+  if (done) { x.globalAlpha = 0.95; x.fillStyle = accent; glitchLabel(x, 'BREACH SUCCESSFUL', sx, gy + 88); x.fillRect(sx, gy + 94, 120, 1.5); }
+  return c;
+}
+
+/** Moves the breach along: the stage from how long this one has run, a new matrix when the cycle ends, and the panel drawn
+ *  again in its three inks when the stage changes. Still (reduced motion), it stands with the first byte taken. */
+function glitchBreach(now, still) {
+  if (!glitch.breach || (!still && now - glitch.breach.t0 >= BREACH_CYCLE)) { glitch.breach = newBreach(now); glitch.stage = -1; }
+  const e = still ? BREACH_STAGES[1] : now - glitch.breach.t0;
+  const stage = BREACH_STAGES.filter((t) => e >= t).length - 1;
+  if (stage === glitch.stage) return;
+  glitch.stage = stage;
+  glitch.panels = [null, GLITCH_RED, GLITCH_CYAN].map((ink) => breachPanel(glitch.breach, stage, ink));
+}
+
+/** The city's life, drawn each frame over the screen: the windows that flicker, the mast lamps blinking, and now and then
+ *  an aerial vehicle crossing above the roofline. Still, every window is lit and nothing flies. */
+function glitchCity(ctx, now, still, shift) {
+  for (const f of glitch.flickers) {
+    if (!still && Math.sin(now / f.period * Math.PI * 2 + f.phase) < -0.35) continue;
+    ctx.globalAlpha = 0.8; ctx.fillStyle = f.colour; ctx.fillRect(f.x + shift, f.y, 2, 3);
+  }
+  for (const l of glitch.lamps) {
+    if (!still && (now + l.phase) % 2000 > 1700) continue;
+    ctx.globalAlpha = 0.9; ctx.fillStyle = GLITCH_RED; ctx.fillRect(l.x + shift, l.y, 2, 2);
+  }
+  if (still) return;
+  const w = glitch.canvas.clientWidth, m = glitch.matrix;
+  if (!glitch.av && now >= glitch.avNext) {
+    const dir = Math.random() < 0.5 ? 1 : -1;
+    glitch.av = { x: dir > 0 ? -20 : w + 20, y: m.skyTop - 40 - Math.random() * 80, dir, speed: 0.035 + Math.random() * 0.035, at: now };
+  }
+  const av = glitch.av;
+  if (!av) return;
+  av.x += av.dir * av.speed * (now - av.at); av.at = now;
+  if (av.x < -30 || av.x > w + 30) { glitch.av = null; glitch.avNext = now + 25000 + Math.random() * 35000; return; }
+  const beam = ctx.createLinearGradient(av.x - av.dir * 26, 0, av.x, 0);
+  beam.addColorStop(0, 'rgba(0,0,0,0)'); beam.addColorStop(1, GLITCH_CYAN);
+  ctx.globalAlpha = 0.3; ctx.fillStyle = beam; ctx.fillRect(Math.min(av.x, av.x - av.dir * 26) + shift, av.y, 26, 1);
+  ctx.globalAlpha = 0.95; ctx.fillStyle = '#ffffff'; ctx.fillRect(av.x + shift, av.y - 1, 2, 2);
+  ctx.fillStyle = GLITCH_RED; ctx.fillRect(av.x - av.dir * 8 + shift, av.y - 1, 2, 2);
+  if (Math.floor(now / 500) % 2 === 0) { ctx.fillStyle = GLITCH_CYAN; ctx.fillRect(av.x - av.dir * 4 + shift, av.y - 3, 1, 1); }   // a strobe
+}
+
+/** A polyline the given distance to one side of another: each segment moved along its normal, the corners where they meet. */
+function glitchOffset(route, d) {
+  if (!d) return route;
+  const segs = [];
+  for (let i = 1; i < route.length; i++) {
+    const [ax, ay] = route[i - 1], [bx, by] = route[i], len = Math.hypot(bx - ax, by - ay) || 1, nx = -(by - ay) / len * d, ny = (bx - ax) / len * d;
+    segs.push([[ax + nx, ay + ny], [bx + nx, by + ny]]);
+  }
+  const points = [segs[0][0]];
+  for (let i = 1; i < segs.length; i++) {
+    const [[x1, y1], [x2, y2]] = segs[i - 1], [[x3, y3], [x4, y4]] = segs[i];
+    const den = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+    if (Math.abs(den) < 1e-6) { points.push([x2, y2]); continue; }
+    const t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / den;
+    points.push([x1 + t * (x2 - x1), y1 + t * (y2 - y1)]);
+  }
+  points.push(segs[segs.length - 1][1]);
+  return points;
+}
+
+/** Writes a readout in the screen's stencil face. */
+function glitchLabel(x, text, px, py) {
+  x.font = GLITCH_FONT; x.letterSpacing = '1.5px'; x.textBaseline = 'alphabetic';
+  x.fillText(text, px, py);
+  x.letterSpacing = '0px';
+}
+
+/** The screen itself over nothing, all of it that stands still: the haze and skyline, the board's traces and specks, the
+ *  readouts, the frame and scan lines. In one ink for a glitch's fringe copies (the skyline then as outlines); in its own
+ *  colours (cyan board, accent frame and readouts, magenta haze, lit windows) for the screen as it stands. */
+function glitchScreen(w, hgt, dpr, ink) {
+  const c = document.createElement('canvas');
+  c.width = Math.round(w * dpr); c.height = Math.round(hgt * dpr);
+  const x = c.getContext('2d');
+  x.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const accent = ink || glitch.colour, cyan = ink || GLITCH_CYAN;
+  if (!ink) {   // the haze, from the bottom corners, behind the skyline
+    for (const [cx, a] of [[0, 0.3], [w, 0.2]]) {
+      const haze = x.createRadialGradient(cx, hgt, 0, cx, hgt, hgt * 0.55);
+      haze.addColorStop(0, GLITCH_MAGENTA); haze.addColorStop(1, 'rgba(0,0,0,0)');
+      x.globalAlpha = a; x.fillStyle = haze; x.fillRect(0, 0, w, hgt);
+    }
+  }
+  x.lineJoin = 'round'; x.lineCap = 'round';
+  for (const b of glitch.buildings) {   // the skyline: black blocks against the haze, outlined faintly; in one ink, outlines alone
+    const top = hgt - b.h;
+    if (!ink) { x.globalAlpha = 1; x.fillStyle = '#07060a'; x.fillRect(b.x, top, b.w, b.h); }
+    x.globalAlpha = ink ? 0.5 : 0.3; x.strokeStyle = cyan; x.lineWidth = 1;
+    x.beginPath(); x.moveTo(b.x, hgt); x.lineTo(b.x, top); x.lineTo(b.x + b.w, top); x.lineTo(b.x + b.w, hgt); x.stroke();
+    if (b.mast) { x.beginPath(); x.moveTo(b.x + b.w / 2, top); x.lineTo(b.x + b.w / 2, top - b.mast); x.stroke(); }
+    x.globalAlpha = ink ? 0.6 : 0.8;
+    for (const [wx, wy, colour] of b.windows) { x.fillStyle = ink || colour; x.fillRect(wx, wy, 2, 3); }
+  }
+  x.strokeStyle = x.fillStyle = cyan; x.lineWidth = 2;
+  x.globalAlpha = 0.85;   // the traces, each ending in a pad: a ring or a dot
+  for (const { points, pad } of glitch.traces) {
+    x.beginPath(); points.forEach(([px, py], i) => (i ? x.lineTo(px, py) : x.moveTo(px, py))); x.stroke();
+    const [ex, ey] = points[points.length - 1];
+    x.beginPath(); x.arc(ex, ey, pad === 'ring' ? 5.5 : 3.5, 0, Math.PI * 2);
+    if (pad === 'ring') x.stroke(); else x.fill();
+  }
+  x.globalAlpha = 0.75;   // the specks
+  for (const [px, py, r] of glitch.specks) { x.beginPath(); x.arc(px, py, r, 0, Math.PI * 2); x.fill(); }
+  x.globalAlpha = 0.65; x.fillStyle = accent;   // the readouts
+  for (const [text, lx, ly] of glitch.labels) glitchLabel(x, text, lx, ly);
+  // The frame: chamfered corners, a notch in the top and bottom edges, hazard stripes along two stretches of it.
+  const inset = 8, ch = 16, nx1 = w * 0.4, nx2 = w * 0.6;
+  x.globalAlpha = 0.55; x.strokeStyle = accent; x.lineWidth = 1.5; x.lineJoin = 'miter';
+  x.beginPath();
+  x.moveTo(inset + ch, inset); x.lineTo(nx1, inset); x.lineTo(nx1 + 6, inset + 6); x.lineTo(nx1 + 126, inset + 6); x.lineTo(nx1 + 132, inset);
+  x.lineTo(w - inset - ch, inset); x.lineTo(w - inset, inset + ch); x.lineTo(w - inset, hgt - inset - ch); x.lineTo(w - inset - ch, hgt - inset);
+  x.lineTo(nx2 + 132, hgt - inset); x.lineTo(nx2 + 126, hgt - inset - 6); x.lineTo(nx2 + 6, hgt - inset - 6); x.lineTo(nx2, hgt - inset);
+  x.lineTo(inset + ch, hgt - inset); x.lineTo(inset, hgt - inset - ch); x.lineTo(inset, inset + ch); x.closePath(); x.stroke();
+  x.fillStyle = accent;
+  for (const [sx, sy, sw] of [[inset + 24, hgt - inset - 8, 170], [w - inset - 24 - 170, inset + 1, 170]]) {   // the stripes
+    x.save(); x.beginPath(); x.rect(sx, sy, sw, 7); x.clip();
+    for (let px = sx - 8; px < sx + sw + 8; px += 12) { x.beginPath(); x.moveTo(px, sy + 7); x.lineTo(px + 7, sy); x.lineTo(px + 12, sy); x.lineTo(px + 5, sy + 7); x.closePath(); x.fill(); }
+    x.restore();
+  }
+  x.globalAlpha = 0.14; x.fillStyle = '#000000';   // scan lines, the fine kind
+  for (let py = 0; py < hgt; py += 3) x.fillRect(0, py, w, 1);
+  return c;
+}
+
+/** One frame: the screen (jolted sideways during a glitch, its fringes pulled apart), the matrix's panel, the city's life,
+ *  the scan line, and during a glitch the slices thrown further, their bars of colour, and the Relic readout failing. */
+function glitchFrame(still = false) {
+  const { ctx, canvas, inks, dpr } = glitch;
+  if (!ctx || !inks.length) return;
+  const w = canvas.clientWidth, hgt = canvas.clientHeight, now = performance.now(), m = glitch.matrix;
+  if (!still) {
+    // A glitch every few seconds, lasting a moment; while it lasts, the jolt and the slices roll again every other frame
+    // so it jitters, a third of the rolls jolting the whole screen.
+    if (now >= glitch.next && now >= glitch.until) {
+      glitch.until = now + 180 + Math.random() * 420;
+      glitch.next = glitch.until + 1800 + Math.random() * 5000;
+      glitch.rolled = 0;
+    }
+    if (now < glitch.until && now >= glitch.rolled) {
+      glitch.rolled = now + 70;
+      glitch.shift = Math.random() < 0.35 ? (Math.random() < 0.5 ? -1 : 1) * (2 + Math.random() * 5) : 0;
+      glitch.slices = Array.from({ length: 4 + Math.floor(Math.random() * 5) }, () => ({
+        y: Math.random() * hgt, h: Math.random() < 0.2 ? 40 + Math.random() * 50 : 3 + Math.random() * 30, dx: (Math.random() < 0.5 ? -1 : 1) * (8 + Math.random() * 52), f: 3 + Math.random() * 7,
+        bar: { x: Math.random() * w, w: 60 + Math.random() * 400, ink: Math.random() < 0.5 ? GLITCH_RED : GLITCH_CYAN, block: Math.random() < 0.5 },
+      }));
+    }
+  }
+  const bursting = !still && now < glitch.until, shift = bursting ? glitch.shift : 0;
+  ctx.globalAlpha = 1; ctx.fillStyle = glitch.floor; ctx.fillRect(0, 0, w, hgt);
+  if (shift) { ctx.globalAlpha = 0.55; ctx.drawImage(inks[1], shift - 3, 0, w, hgt); ctx.drawImage(inks[2], shift + 3, 0, w, hgt); ctx.globalAlpha = 1; }
+  ctx.drawImage(inks[0], shift, 0, w, hgt);
+  glitchBreach(now, still);
+  ctx.drawImage(glitch.panels[0], m.x + shift, m.y, BREACH_W, BREACH_H);
+  glitchCity(ctx, now, still, shift);
+  if (still) return;
+  // The scan line, sweeping down with a soft trail above it.
+  const y = glitch.sweep;
+  const trail = ctx.createLinearGradient(0, y - 36, 0, y);
+  trail.addColorStop(0, 'rgba(0,0,0,0)'); trail.addColorStop(1, glitch.colour);
+  ctx.globalAlpha = 0.18; ctx.fillStyle = trail; ctx.fillRect(0, y - 36, w, 36);
+  ctx.globalAlpha = 0.6; ctx.fillStyle = glitch.colour; ctx.fillRect(0, y, w, 1.5);
+  glitch.sweep = y > hgt + 40 ? -40 : y + 1.6;
+  if (!bursting) return;
+  // While it lasts, the Relic readout fails…
+  const { relic } = glitch;
+  ctx.globalAlpha = 1; ctx.fillStyle = glitch.floor; ctx.fillRect(relic.x - 2 + shift, relic.y - 11, 150, 14);
+  ctx.globalAlpha = 0.9; ctx.fillStyle = GLITCH_RED; glitchLabel(ctx, 'RELIC  ▸  MALFUNCTION', relic.x + shift, relic.y);
+  // …and slices of the screen are thrown sideways, their red and cyan fringes pulled apart, with a bar of solid colour or
+  // a block of it over each. The matrix's panel goes with its slice.
+  const slice = (src, sy, sh, dx) => {
+    ctx.drawImage(src, 0, sy * dpr, w * dpr, sh * dpr, dx, sy, w, sh);
+  };
+  const panelSlice = (src, sy, sh, dx) => {
+    const top = Math.max(sy, m.y), bottom = Math.min(sy + sh, m.y + BREACH_H);
+    if (bottom > top) ctx.drawImage(src, 0, (top - m.y) * dpr, BREACH_W * dpr, (bottom - top) * dpr, m.x + dx, top, BREACH_W, bottom - top);
+  };
+  for (const s of glitch.slices) {
+    const sy = Math.round(s.y), sh = Math.ceil(s.h);
+    ctx.globalAlpha = 1; ctx.fillStyle = glitch.floor; ctx.fillRect(0, sy, w, sh);
+    ctx.globalAlpha = 0.9;
+    slice(inks[1], sy, sh, s.dx - s.f); panelSlice(glitch.panels[1], sy, sh, s.dx - s.f);
+    slice(inks[2], sy, sh, s.dx + s.f); panelSlice(glitch.panels[2], sy, sh, s.dx + s.f);
+    ctx.globalAlpha = 1;
+    slice(inks[0], sy, sh, s.dx); panelSlice(glitch.panels[0], sy, sh, s.dx);
+    ctx.fillStyle = s.bar.ink;
+    if (s.bar.block) { ctx.globalAlpha = 0.25; ctx.fillRect(s.bar.x, sy, s.bar.w, sh); }
+    ctx.globalAlpha = 0.8; ctx.fillRect(s.bar.x, sy + sh / 2, s.bar.w, 2.5); ctx.globalAlpha = 1;
+  }
+}
+addEventListener('resize', () => glitchSize());
+
 /** Marks the page with the theme: data-theme light or dark for the stylesheet, and a theme's own colours, font and glow. */
 function markTheme(look = themeLook()) {
   const root = document.documentElement;
@@ -564,7 +939,10 @@ function markTheme(look = themeLook()) {
   else delete root.dataset.grid;
   if (look?.rain) root.dataset.rain = '';
   else delete root.dataset.rain;
+  if (look?.glitch) root.dataset.glitch = '';
+  else delete root.dataset.glitch;
   digitalRain(!!look?.rain);
+  glitchFloor(!!look?.glitch);
 }
 markTheme(themes.last?.id === theme.pref ? themes.last : null);   // the accent isn't known yet: last time's look
 
@@ -680,7 +1058,7 @@ function monochromeLook(hex, light) {
 }
 
 /** The accent changed: a monochrome theme is built from it, so everything is recoloured; otherwise only the accent. */
-const accentChanged = () => { if (currentTheme()?.monochrome) applyTheme(); else applyAccent(); rainColours(); };
+const accentChanged = () => { if (currentTheme()?.monochrome) applyTheme(); else applyAccent(); rainColours(); glitchColours(); };
 
 // How the status dots move (see app.css): picked in Status dots… from the theme menu, and kept per person.
 const DOT_STYLES = [
@@ -738,7 +1116,7 @@ function dressCursor(s) {
   const t = termTheme();
   const theme = { ...t };
   const look = themeLook();
-  if (look?.grid || look?.rain) theme.background = 'rgba(0, 0, 0, 0)';
+  if (look?.grid || look?.rain || look?.glitch) theme.background = 'rgba(0, 0, 0, 0)';
   if (s.cycle) { theme.cursor = t.background; theme.cursorAccent = t.background; }
   s.term.options.theme = theme;
   s.term.options.cursorStyle = s.cycle ? 'underline' : 'block';
@@ -5103,7 +5481,8 @@ function applyTheme(before = null) {
   for (const s of state.sessions) lightCycle(s, look?.cursor === 'light-cycle');   // sets the terminal's colours either way
   if (window.monaco) monaco.editor.setTheme(diffTheme(look));
   applyAccent();
-  rainColours();   // the rain takes the accent, which is only now on the page
+  rainColours();   // the rain and the glitch's screen take the accent, which is only now on the page
+  glitchColours();
   for (const f of pluginFrames.values()) postPluginTheme(f.frame);
   // A theme's window and title bar take its own background; Light and Dark keep Windows' own.
   post({ type: 'theme', light: isLight(), background: look?.colors.chrome ?? null });
@@ -5305,9 +5684,11 @@ function themeMenu(x, y) {
     { icon: 'folder', label: 'Open the themes folder', action: () => request('themes.openFolder') },
     '-',
     { header: 'Accent colour' },
-    own?.accent
+    own?.accent && !suggested.length
       ? { icon: h('span', { class: 'accent-dot', style: `background:${own.accent.line}` }), label: `${own.name}'s own`,
         action: () => toast(`${own.name} has an accent colour of its own. Choose another theme to change it.`) }
+      : own?.accent   // its own, or the alternative it offers that's picked
+      ? { icon: h('span', { class: 'accent-dot', style: `background:${named ? named.color : own.accent.line}` }), label: named ? named.name : `${own.name}'s own`, kbd: 'Change…', action: showAccentDialog }
       : { icon: h('span', { class: 'accent-dot', style: `background:${colour}` }),   // one the theme suggests goes by its name
         label: named ? named.name : c === 'windows' ? 'Windows accent' : c === 'purple' ? 'Original purple' : 'Custom',
         kbd: 'Change…', action: showAccentDialog },
@@ -5329,8 +5710,8 @@ function themeMenu(x, y) {
   ]);
 }
 
-/** The accent colours the theme on suggests ({ name, color }), offered first in Accent colour, unless it has an accent of its own. */
-const suggestedAccents = () => { const t = currentTheme(); return t?.accent ? [] : t?.accents ?? []; };
+/** The accent colours the theme on suggests ({ name, color }), offered first in Accent colour; for a theme with an accent of its own, the alternatives to it. */
+const suggestedAccents = () => currentTheme()?.accents ?? [];
 
 /**
  * Save as a new theme: the theme on screen, whichever it is, written to the themes folder as a file with every colour, to
@@ -5378,6 +5759,7 @@ function themeSnapshot(title) {
     ...(look?.glow ? { glow: true } : {}),
     ...(look?.grid ? { grid: true } : {}),
     ...(look?.rain ? { rain: true } : {}),
+    ...(look?.glitch ? { glitch: true } : {}),
     ...(look?.cursor ? { cursor: look.cursor } : {}),
     accent: { line: value('accent'), strong: value('accent-strong') },
     colors: Object.fromEntries(themes.names.colors.map((n) => [n, value(n)]).filter(([, v]) => v)),
@@ -5456,11 +5838,10 @@ function showAccentDialog() {
       : 'Very light or dark colours are shaded where needed, so text on them stays readable in both themes.';
   }
   let saved = false;
+  const ownOnly = !!currentTheme()?.accent;   // a theme with an accent of its own takes only the alternatives it offers
   openModal('Accent colour', [
-    ...(theirs.length ? [h('div', { class: 'field help' }, `Suggested by ${currentTheme().name}`), h('div', { class: 'swatch-row' }, theirs)] : []),
-    h('div', { class: 'swatch-row' }, windowsBtn, purpleBtn),
-    h('div', { class: 'swatch-row' }, swatches, customBtn, custom),
-    note,
+    ...(theirs.length ? [h('div', { class: 'field help' }, ownOnly ? `${currentTheme().name} has an accent colour of its own; these are the alternatives it offers.` : `Suggested by ${currentTheme().name}`), h('div', { class: 'swatch-row' }, theirs)] : []),
+    ...(ownOnly ? [] : [h('div', { class: 'swatch-row' }, windowsBtn, purpleBtn), h('div', { class: 'swatch-row' }, swatches, customBtn, custom), note]),
   ], [
     h('button', { class: 'btn', onclick: closeModal }, 'Cancel'),
     h('button', { class: 'btn primary', onclick: () => { saved = true; store.set('accentColour', accent.choice); closeModal(); } }, 'OK'),
