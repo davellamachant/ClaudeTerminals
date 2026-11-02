@@ -78,7 +78,7 @@ Releases are signed by **Llamachant Technology Ltd**. If SmartScreen still warns
 | Check for updates | Click the version chip (**v1.x.y ▾**) at the top right |
 | Terminal font size | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
 | Newline in Claude prompt | `Shift+Enter` |
-| Copy / paste | `Ctrl+C` with a selection / `Ctrl+V` (or right-click when expanded) |
+| Copy / paste | `Ctrl+C` with a selection / `Ctrl+V` (or right-click when expanded). With an image on the clipboard, such as a screenshot, `Ctrl+V` pastes the path of a PNG saved from it, which Claude Code and Codex attach; files copied in Explorer paste as their paths |
 | Diff tabs | Click a file for a preview tab (italic, reused); double-click to keep it open. Tabs belong to their session's project: switching to a session in another project shows that project's tabs, and yours come back when you return |
 | Terminal ↔ diffs | Click the Terminal tab, `Shift+Esc` from a diff, or `Ctrl+PgUp` / `Ctrl+PgDn` |
 | A tab beside the terminal | Drag a diff, Conversation or plugin tab down into the area, near the edge you want it on (left, right, top or bottom), or right-click it and pick a side; the middle shows it on its own again. Drag the Terminal tab the same way to put the terminal on that side of the tab. While split, the tab you pick goes beside the terminal, `Shift+Esc` goes back to the terminal and leaves it there, and `Ctrl+W` closes the tab only while you're in it. Drag the divider to resize (double-click to even up); the side and size are remembered |
