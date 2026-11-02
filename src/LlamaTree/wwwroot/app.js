@@ -579,6 +579,7 @@ const cabin = {
   governor: null, sprocket: null, lamps: null, serpent: null, dividers: null, glass: null, bell: null, helm: null, smokeAt: 0,
   lantern: null, pennant: null, goggles: null, bottle: null, boiler: null, tesla: null, arcUntil: 0, arcNext: 0, stackAt: 0,
   whistle: null, whistleAt: 0, whistleUntil: 0, jet: null, jetAt: 0, jetUntil: 0, leaks: [], leakAt: 0, haze: [],
+  escapement: null, telegraph: null, tape: null, counter: null, leagues: 0, leaguesAt: 0, drip: null, dripAt: 0,
   course: null, steam: [], puffAt: 0, airship: null, airshipAt: 0, stroke: 0,
 };
 const CABIN_MS = 60, CABIN_BAND = 14, CABIN_PITCH = 3.5;   // the frame's width; a gear's radius per tooth, so gears mesh
@@ -696,6 +697,10 @@ function cabinLayout(w, hgt) {
   const boiler = { x: piston.cyl.x + piston.cyl.len + 44, y: hgt - 126, w: 112, h: 82 };
   const tesla = { x: 330, y: hgt - 236, h: 64, rod: { x: 410, y: hgt - 262 } };
   const whistle = { x: boiler.x + boiler.w - 30, y: boiler.y - 22 };   // on top of the drum
+  const escapement = { x: 236, y: hgt - 300 };   // the balance wheel and its escapement, between the helm and the coil
+  const telegraph = { x: w * 0.17, y: hgt * 0.33, run: 190 };   // the sounder, with its tape running out to the right
+  const counter = { x: plate.x + plate.w - 118, y: plate.y - 30, digits: 5 };   // the leagues run, above the plate's right end
+  const drip = { x: 26, y: hgt * 0.5 + 6, floor: hgt - CABIN_BAND - 2 };   // where the left pipe's flange weeps oil
   const jet = { x: boiler.x + boiler.w + 6, y: boiler.y + 50 };   // the safety valve's nozzle, out of the drum's end
   const haze = Array.from({ length: 7 }, () => ({ x: rnd(0, w), y: rnd(hgt * 0.5, hgt * 0.92), r: rnd(60, 130), v: rnd(0.006, 0.016), a: rnd(0.035, 0.07) }));
   // Pipework: up the left side from the plate to the top band and along it to the gear train, with flanges and a hand-wheel; and along the bottom from the plate to the cylinder.
@@ -704,7 +709,7 @@ function cabinLayout(w, hgt) {
     { points: [[plate.x + plate.w, hgt - 34], [piston.cyl.x + piston.cyl.len + 8, hgt - 34], [piston.cyl.x + piston.cyl.len + 8, piston.cyl.y + 8]], width: 6, flanges: [[plate.x + plate.w + 56, hgt - 34], [plate.x + plate.w + 124, hgt - 34], [(plate.x + plate.w + 200 + piston.cyl.x) / 2, hgt - 34]] },
   ];
   const wheel = { x: 26, y: hgt * 0.4, r: 11 };   // on the left pipe, its stem out to the right
-  Object.assign(cabin, { coast, island, soundings, stains, rose, gears, piston, plate, gauges, clock, pipes, wheel, lamps, governor, sprocket, serpent, dividers, glass, bell, helm, lantern, pennant, goggles, bottle, boiler, tesla, whistle, jet, haze, leaks: [[26, plate.y - 60], [w * 0.45, CABIN_BAND + 10]], lamp: { x: w * 0.42, y: 10 }, valve: { x: plate.x + plate.w + 26, y: hgt - CABIN_BAND - 2 }, course: null, steam: [], airship: null });
+  Object.assign(cabin, { coast, island, soundings, stains, rose, gears, piston, plate, gauges, clock, pipes, wheel, lamps, governor, sprocket, serpent, dividers, glass, bell, helm, lantern, pennant, goggles, bottle, boiler, tesla, whistle, jet, haze, escapement, telegraph, counter, drip, tape: null, leaks: [[26, plate.y - 60], [w * 0.45, CABIN_BAND + 10]], lamp: { x: w * 0.42, y: 10 }, valve: { x: plate.x + plate.w + 26, y: hgt - CABIN_BAND - 2 }, course: null, steam: [], airship: null });
 }
 
 /** The coast's height at x: land lies below it. Past the coast's end there is only sea. */
@@ -831,16 +836,28 @@ function cabinScreen(w, hgt, dpr) {
   x.globalAlpha = 0.35; x.lineWidth = 1; x.beginPath(); x.arc(0, 0, rose.r * 1.3 + 5, 0, Math.PI * 2); x.stroke(); x.beginPath(); x.arc(0, 0, rose.r * 1.3 - 5, 0, Math.PI * 2); x.stroke();
   for (let i = 0; i < 8; i++) { const a = (i / 8) * Math.PI * 2 + Math.PI / 8; x.globalAlpha = 0.8; x.fillStyle = brass; x.beginPath(); x.arc(Math.cos(a) * rose.r * 1.3, Math.sin(a) * rose.r * 1.3, 3, 0, Math.PI * 2); x.fill(); x.globalAlpha = 0.6; x.fillStyle = '#000000'; x.beginPath(); x.arc(Math.cos(a) * rose.r * 1.3 + 0.8, Math.sin(a) * rose.r * 1.3 + 0.8, 1.3, 0, Math.PI * 2); x.fill(); }
   x.restore();
-  // The sea serpent: three humps and a head with a forked tongue, and the old warning under it.
+  // The old warning under where the serpent swims (the serpent itself moves, so the frame draws it).
   const sp = cabin.serpent;
-  x.save(); x.translate(sp.x, sp.y); x.globalAlpha = 0.5; x.strokeStyle = ink; x.fillStyle = ink; x.lineWidth = 2; x.lineCap = 'round';
-  for (const hx of [-54, -18, 18]) { x.beginPath(); x.arc(hx, 0, 16, Math.PI, 0); x.stroke(); }
-  x.beginPath(); x.moveTo(34, 0); x.quadraticCurveTo(44, -16, 56, -14); x.lineTo(66, -20); x.lineTo(70, -14); x.lineTo(66, -8); x.quadraticCurveTo(56, -4, 50, 0); x.closePath(); x.fill();   // the head
-  x.lineWidth = 1; x.beginPath(); x.moveTo(70, -14); x.lineTo(78, -16); x.moveTo(70, -14); x.lineTo(77, -11); x.stroke();   // the tongue
-  x.globalAlpha = 0.9; x.fillStyle = cabin.paper; x.beginPath(); x.arc(61, -15, 1.4, 0, Math.PI * 2); x.fill();   // the eye
-  for (const hx of [-54, -18, 18]) { x.globalAlpha = 0.5; x.fillStyle = ink; x.beginPath(); x.moveTo(hx - 3, -16); x.lineTo(hx, -24); x.lineTo(hx + 3, -16); x.closePath(); x.fill(); }   // the fins
-  x.globalAlpha = 0.45; x.font = CABIN_FONT; x.textAlign = 'center'; x.textBaseline = 'alphabetic'; x.fillText('here be monsters', 0, 24);
-  x.restore();
+  x.globalAlpha = 0.45; x.fillStyle = ink; x.font = CABIN_FONT; x.textAlign = 'center'; x.textBaseline = 'alphabetic'; x.fillText('here be monsters', sp.x, sp.y + 26);
+  // The escapement's cock: a brass bracket the balance wheel hangs from, and the escape wheel's arbor plate.
+  const es = cabin.escapement;
+  x.globalAlpha = 0.8; x.strokeStyle = brass; x.lineWidth = 3; x.lineCap = 'round';
+  x.beginPath(); x.moveTo(es.x - 30, es.y - 34); x.lineTo(es.x + 30, es.y - 34); x.lineTo(es.x, es.y - 34); x.lineTo(es.x, es.y - 26); x.stroke();
+  x.beginPath(); x.moveTo(es.x - 30, es.y - 34); x.lineTo(es.x - 30, es.y + 70); x.moveTo(es.x + 30, es.y - 34); x.lineTo(es.x + 30, es.y + 70); x.stroke();   // the pillars
+  x.beginPath(); x.moveTo(es.x - 34, es.y + 70); x.lineTo(es.x + 34, es.y + 70); x.stroke();   // the foot
+  // The telegraph: a brass base with the sounder's magnets, the stylus arm's pivot, and the slot the tape runs out of.
+  const tg = cabin.telegraph;
+  x.globalAlpha = 0.9; x.fillStyle = '#0d0906'; x.strokeStyle = brass; x.lineWidth = 2; x.lineJoin = 'round';
+  x.beginPath(); x.roundRect(tg.x - 30, tg.y - 10, 60, 20, 3); x.fill(); x.stroke();
+  x.fillStyle = cabin.copper; x.globalAlpha = 0.8; x.fillRect(tg.x - 22, tg.y - 6, 9, 12); x.fillRect(tg.x - 10, tg.y - 6, 9, 12);   // the coils
+  x.globalAlpha = 0.9; x.fillStyle = brass; x.beginPath(); x.arc(tg.x + 14, tg.y - 10, 3, 0, Math.PI * 2); x.fill();   // the pivot
+  x.fillRect(tg.x + 26, tg.y - 4, 6, 8);   // the slot
+  x.globalAlpha = 0.5; x.fillStyle = ink; x.font = CABIN_LABEL; x.textAlign = 'center'; x.textBaseline = 'alphabetic'; x.letterSpacing = '1px'; x.fillText('TELEGRAPH', tg.x, tg.y + 22); x.letterSpacing = '0px';
+  // The counter's housing: a brass frame with a window for its drums.
+  const ct = cabin.counter;
+  x.globalAlpha = 0.9; x.fillStyle = '#0d0906'; x.strokeStyle = brass; x.lineWidth = 2;
+  x.beginPath(); x.roundRect(ct.x - 4, ct.y - 4, ct.digits * 14 + 8, 26, 3); x.fill(); x.stroke();
+  x.globalAlpha = 0.5; x.fillStyle = ink; x.font = CABIN_LABEL; x.textAlign = 'left'; x.textBaseline = 'middle'; x.fillText('LEAGUES', ct.x + ct.digits * 14 + 10, ct.y + 9);
   // Dividers lying on the chart: two legs from a hinge, their points on the paper.
   const dv = cabin.dividers;
   x.save(); x.translate(dv.x, dv.y); x.globalAlpha = 0.8; x.strokeStyle = brass; x.lineWidth = 3; x.lineCap = 'round';
@@ -1345,6 +1362,145 @@ function cabinTesla(ctx, now, still) {
   ctx.restore();
 }
 
+/** The balance wheel swinging to and fro on its hairspring, the pallet anchor rocking with it, and the escape wheel ticking round a tooth at a time. */
+function cabinEscapement(ctx, now, still) {
+  const es = cabin.escapement, swing = still ? 0 : Math.sin(now / 1000 * Math.PI * 2) * 0.6;
+  ctx.save(); ctx.translate(es.x, es.y);
+  ctx.globalAlpha = 0.85; ctx.strokeStyle = cabin.colour; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+  ctx.save(); ctx.rotate(swing);
+  ctx.beginPath(); ctx.arc(0, 0, 22, 0, Math.PI * 2); ctx.stroke();   // the balance wheel's rim
+  ctx.lineWidth = 2; for (let i = 0; i < 3; i++) { const a = (i / 3) * Math.PI * 2; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(Math.cos(a) * 22, Math.sin(a) * 22); ctx.stroke(); }   // its spokes
+  ctx.globalAlpha = 0.6; ctx.lineWidth = 1; ctx.beginPath();   // the hairspring, a spiral that breathes with the swing
+  for (let a = 0; a < Math.PI * 7; a += 0.2) { const r = 2 + a * (0.9 + swing * 0.12); ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r); }
+  ctx.stroke();
+  ctx.restore();
+  ctx.globalAlpha = 0.9; ctx.fillStyle = cabin.ok; ctx.beginPath(); ctx.arc(0, 0, 2.5, 0, Math.PI * 2); ctx.fill();   // the jewel
+  const tick = still ? 0 : Math.floor(now / 500), rock = still ? 0 : (Math.sin(now / 1000 * Math.PI * 2) > 0 ? 0.22 : -0.22);
+  ctx.save(); ctx.translate(0, 34); ctx.rotate(rock);   // the pallet anchor
+  ctx.globalAlpha = 0.85; ctx.strokeStyle = cabin.colour; ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.moveTo(-16, 8); ctx.quadraticCurveTo(0, -4, 16, 8); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-16, 8); ctx.lineTo(-13, 13); ctx.moveTo(16, 8); ctx.lineTo(13, 13); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0, 2); ctx.lineTo(0, -8); ctx.stroke();
+  ctx.restore();
+  ctx.save(); ctx.translate(0, 56); ctx.rotate((tick % 15) * (Math.PI * 2 / 15));   // the escape wheel, fifteen teeth, a tooth a tick
+  ctx.globalAlpha = 0.85; ctx.strokeStyle = cabin.colour; ctx.lineWidth = 1.5; ctx.fillStyle = cabin.floor;
+  ctx.beginPath();
+  for (let i = 0; i < 15; i++) { const a = (i / 15) * Math.PI * 2, b = a + Math.PI * 2 / 15; ctx.lineTo(Math.cos(a) * 14, Math.sin(a) * 14); ctx.lineTo(Math.cos(a + 0.1) * 9, Math.sin(a + 0.1) * 9); ctx.lineTo(Math.cos(b - 0.05) * 9, Math.sin(b - 0.05) * 9); }
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = cabin.colour; ctx.beginPath(); ctx.arc(0, 0, 2.5, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+  ctx.restore();
+}
+
+const MORSE = { A: '.-', B: '-...', C: '-.-.', D: '-..', E: '.', F: '..-.', G: '--.', H: '....', I: '..', J: '.---', K: '-.-', L: '.-..', M: '--', N: '-.', O: '---', P: '.--.', Q: '--.-', R: '.-.', S: '...', T: '-', U: '..-', V: '...-', W: '.--', X: '-..-', Y: '-.--', Z: '--..', 0: '-----', 1: '.----', 2: '..---', 3: '...--', 4: '....-', 5: '.....', 6: '-....', 7: '--...', 8: '---..', 9: '----.' };
+
+/** The tape's marks for a text: Morse, in units (a dot is one, a dash three, a gap one, between letters three, between words seven), with a long gap before it comes round again. */
+function morseTape(text) {
+  const marks = []; let at = 0;
+  for (const word of text.toUpperCase().split(/\s+/).filter(Boolean)) {
+    for (const ch of word) {
+      const code = MORSE[ch]; if (!code) continue;
+      for (const sym of code) { const len = sym === '.' ? 1 : 3; marks.push({ start: at, len }); at += len + 1; }
+      at += 2;
+    }
+    at += 4;
+  }
+  return { text, marks, total: at + 20 };
+}
+
+/** The telegraph: a paper tape running out of the sounder with the session names tapped on it in Morse, the stylus arm dropping as each mark is made. */
+function cabinTelegraph(ctx, now, still, sessions) {
+  const tg = cabin.telegraph, text = sessions.length ? sessions.map((s) => s.name).join(' / ') : 'NIGHT WATCH';
+  if (!cabin.tape || cabin.tape.text !== text) cabin.tape = morseTape(text);
+  const tape = cabin.tape, U = 5, speed = 0.028, offset = still ? 0 : (now * speed) % (tape.total * U);
+  const exit = tg.x + 32, end = exit + tg.run;
+  ctx.save();
+  ctx.globalAlpha = 0.8; ctx.fillStyle = cabin.paper; ctx.fillRect(exit, tg.y - 5, tg.run, 10);   // the paper
+  ctx.beginPath(); ctx.moveTo(end, tg.y - 5); ctx.quadraticCurveTo(end + 22, tg.y - 2, end + 14, tg.y + 18); ctx.quadraticCurveTo(end + 8, tg.y + 26, end, tg.y + 5); ctx.closePath(); ctx.fill();   // curling off the table
+  ctx.globalAlpha = 0.9; ctx.fillStyle = '#1a120c';
+  let printing = false;
+  for (const m of tape.marks) {
+    let x0 = exit + m.start * U - offset, x1 = x0 + m.len * U - 1.5;
+    if (x1 < exit) { x0 += tape.total * U; x1 += tape.total * U; }   // the marks that have gone round
+    if (x0 > end || x1 < exit) continue;
+    ctx.fillRect(Math.max(exit, x0), tg.y - 1.5, Math.min(end, x1) - Math.max(exit, x0), 3);
+    if (x0 <= exit + 2 && x1 >= exit) printing = true;
+  }
+  ctx.globalAlpha = 0.9; ctx.strokeStyle = cabin.colour; ctx.lineWidth = 2.5; ctx.lineCap = 'round';   // the stylus arm, down when a mark is being made
+  ctx.beginPath(); ctx.moveTo(tg.x + 14, tg.y - 10); ctx.lineTo(tg.x + 29, tg.y - (printing ? 6 : 14)); ctx.stroke();
+  ctx.fillStyle = cabin.danger; ctx.beginPath(); ctx.arc(tg.x + 29, tg.y - (printing ? 6 : 14), 2, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+
+/** The leagues counter: brass drums behind a window, counting the distance the course has run, the last drum rolling. */
+function cabinCounter(ctx, now, still) {
+  const ct = cabin.counter, c = cabin.course;
+  if (c && !still) {   // how far along the course we are, in leagues: a tenth of the chart's pixels
+    const legs = c.points.length - 1, e = now - c.t0, done = Math.min(legs, Math.floor(e / COURSE_LEG_MS)), part = done >= legs ? 0 : (e % COURSE_LEG_MS) / COURSE_LEG_MS;
+    let run = 0;
+    for (let i = 1; i <= done; i++) run += Math.hypot(c.points[i][0] - c.points[i - 1][0], c.points[i][1] - c.points[i - 1][1]);
+    if (done < legs) run += part * Math.hypot(c.points[done + 1][0] - c.points[done][0], c.points[done + 1][1] - c.points[done][1]);
+    if (run < cabin.leaguesAt) cabin.leagues += cabin.leaguesAt;   // a new course: bank the last one
+    cabin.leaguesAt = run;
+  }
+  const value = (cabin.leagues + cabin.leaguesAt) / 10;
+  ctx.save(); ctx.beginPath(); ctx.rect(ct.x, ct.y, ct.digits * 14, 18); ctx.clip();
+  ctx.font = '700 13px Constantia, Georgia, serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (let i = 0; i < ct.digits; i++) {
+    const place = Math.pow(10, ct.digits - 1 - i), digit = Math.floor(value / place) % 10, roll = i === ct.digits - 1 ? value % 1 : (Math.floor(value / (place / 10)) % 10 === 9 ? value % 1 : 0);
+    const cx = ct.x + i * 14 + 7;
+    ctx.globalAlpha = 0.9; ctx.fillStyle = '#17110a'; ctx.fillRect(ct.x + i * 14 + 1, ct.y, 12, 18);
+    ctx.fillStyle = cabin.paper;
+    ctx.fillText(String(digit), cx, ct.y + 9 - roll * 18);
+    ctx.fillText(String((digit + 1) % 10), cx, ct.y + 27 - roll * 18);
+  }
+  ctx.restore();
+  ctx.globalAlpha = 0.25; ctx.fillStyle = '#000000'; ctx.fillRect(ct.x, ct.y, ct.digits * 14, 4); ctx.fillRect(ct.x, ct.y + 14, ct.digits * 14, 4);   // the drums' shading
+}
+
+/** The sea serpent swimming: humps rising and sinking in turn, the head lifting, ripples where it breaks the water. */
+function cabinSerpent(ctx, now, still) {
+  const sp = cabin.serpent, ink = cabin.ink, ph = still ? 0 : now / 1400;
+  ctx.save(); ctx.translate(sp.x, sp.y); ctx.lineCap = 'round';
+  [-54, -18, 18].forEach((hx, i) => {
+    const lift = still ? 0 : Math.sin(ph + i * 1.1) * 5, r = 16 + (still ? 0 : Math.sin(ph + i * 1.1) * 2);
+    ctx.globalAlpha = 0.5; ctx.strokeStyle = ink; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(hx, lift, r, Math.PI, 0); ctx.stroke();
+    ctx.fillStyle = ink; ctx.beginPath(); ctx.moveTo(hx - 3, lift - r); ctx.lineTo(hx, lift - r - 8); ctx.lineTo(hx + 3, lift - r); ctx.closePath(); ctx.fill();   // the fin
+    ctx.globalAlpha = 0.2; ctx.lineWidth = 1; ctx.beginPath(); ctx.ellipse(hx, lift + 2, r + 6, 3, 0, 0, Math.PI * 2); ctx.stroke();   // the water round it
+  });
+  const hl = still ? 0 : Math.sin(ph + 3.5) * 6;
+  ctx.globalAlpha = 0.5; ctx.fillStyle = ink; ctx.strokeStyle = ink; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(34, 0); ctx.quadraticCurveTo(44, -16 + hl, 56, -14 + hl); ctx.lineTo(66, -20 + hl); ctx.lineTo(70, -14 + hl); ctx.lineTo(66, -8 + hl); ctx.quadraticCurveTo(56, -4 + hl * 0.5, 50, 0); ctx.closePath(); ctx.fill();   // the head
+  ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(70, -14 + hl); ctx.lineTo(78, -16 + hl); ctx.moveTo(70, -14 + hl); ctx.lineTo(77, -11 + hl); ctx.stroke();   // the tongue
+  ctx.globalAlpha = 0.9; ctx.fillStyle = cabin.paper; ctx.beginPath(); ctx.arc(61, -15 + hl, 1.4, 0, Math.PI * 2); ctx.fill();   // the eye
+  ctx.restore();
+}
+
+/** An oil drip from the left pipe's flange: a drop swelling, letting go, falling faster, and a ring where it lands. */
+function cabinDrip(ctx, now, still) {
+  if (still) return;
+  const d = cabin.drip;
+  if (!cabin.dripAt) cabin.dripAt = now;
+  const age = now - cabin.dripAt;
+  if (age > 7000) { cabin.dripAt = now + 1000 + Math.random() * 3000; return; }
+  if (age < 0) return;
+  ctx.save(); ctx.fillStyle = '#2a1a08'; ctx.strokeStyle = cabin.colour;
+  if (age < 1800) {   // swelling at the flange
+    const r = 1 + (age / 1800) * 2.2;
+    ctx.globalAlpha = 0.9; ctx.beginPath(); ctx.ellipse(d.x, d.y + r, r * 0.8, r, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 0.5; ctx.lineWidth = 0.8; ctx.stroke();
+  } else {
+    const t = (age - 1800) / 1000, y = d.y + 3 + t * t * 0.5 * 900;   // falling
+    if (y < d.floor) { ctx.globalAlpha = 0.9; ctx.beginPath(); ctx.ellipse(d.x, y, 1.8, 3.2, 0, 0, Math.PI * 2); ctx.fill(); }
+    else {   // landed: a ring spreading and fading
+      const since = age - 1800 - Math.sqrt((d.floor - d.y - 3) / 450) * 1000, k = Math.min(1, since / 700);
+      if (k < 1) { ctx.globalAlpha = 0.5 * (1 - k); ctx.lineWidth = 1; ctx.beginPath(); ctx.ellipse(d.x, d.floor, 2 + k * 10, 1 + k * 3, 0, 0, Math.PI * 2); ctx.stroke(); }
+      else cabin.dripAt = now + 2000 + Math.random() * 4000;
+    }
+  }
+  ctx.restore();
+}
+
 /** One frame: the table as it stands, the lamp's glow, the gears turning and the piston working, the governor and chain, the gauges, clock and lamps, the course, the airship, the bell, the steam. */
 function cabinFrame(still = false) {
   const { ctx, canvas, screen } = cabin;
@@ -1356,6 +1512,7 @@ function cabinFrame(still = false) {
   glow.addColorStop(0, '#ffb347'); glow.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.globalAlpha = still ? 0.11 : 0.11 + Math.sin(now / 1900) * 0.03; ctx.fillStyle = glow; ctx.fillRect(0, 0, w, hgt);
   cabinHaze(ctx, now, still, w);
+  cabinSerpent(ctx, now, still);
   cabinCourse(ctx, now, still, w, hgt);
   if (!still) cabinAirship(ctx, now, w, hgt);
   const angles = cabin.gears.map((g) => (still ? 0 : now * g.speed) + g.phase);
@@ -1371,6 +1528,10 @@ function cabinFrame(still = false) {
   cabinBell(ctx, now, still);
   cabinBoiler(ctx, now, still);
   cabinTesla(ctx, now, still);
+  cabinEscapement(ctx, now, still);
+  cabinTelegraph(ctx, now, still, sessions);
+  cabinCounter(ctx, now, still);
+  cabinDrip(ctx, now, still);
   cabinBottle(ctx, now, still);
   cabinPennant(ctx, now, still);
   cabinLantern(ctx, now, still);
