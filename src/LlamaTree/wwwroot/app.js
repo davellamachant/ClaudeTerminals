@@ -5187,7 +5187,7 @@ function renderNotice() {
   const own = n.color?.startsWith('#');
   bar.dataset.color = own ? 'own' : n.color || 'accent';
   bar.style.setProperty('--notice', own ? n.color : '');
-  bar.replaceChildren(
+  fill(bar,
     h('span', { class: 'notice-kind' }, iconEl(kind.icon), kind.label),
     h('span', { class: 'notice-text' }, noticeText(n.text)),
     n.linkUrl && h('a', { class: 'notice-link', href: '#', title: n.linkUrl,
