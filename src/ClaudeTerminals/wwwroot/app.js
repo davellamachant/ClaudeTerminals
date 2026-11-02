@@ -454,7 +454,7 @@ function themeLook() {
   if (!themes.list.includes(t)) return t;   // the kept look
   const made = t.monochrome ? monochromeLook(accentColour(), t.base === 'light') : {};
   return {
-    id: t.id, name: t.name, base: t.base, font: t.font, glow: t.glow, grid: !!t.grid, rain: !!t.rain, monochrome: t.monochrome, cursor: t.cursor ?? null,
+    id: t.id, name: t.name, base: t.base, font: t.font, glow: t.glow, grid: !!t.grid, rain: !!t.rain, glitch: !!t.glitch, monochrome: t.monochrome, cursor: t.cursor ?? null,
     colors: { ...made.colors, ...t.colors }, terminal: { ...made.terminal, ...t.terminal }, diff: { ...made.diff, ...t.diff },
     accent: t.accent ?? made.accent ?? null,
   };
@@ -531,6 +531,134 @@ function rainFrame() {
 }
 addEventListener('resize', () => rainSize());
 
+// The glitch (a theme's "glitch": true): the window's floor is a screen, on a canvas fixed behind everything like the rain's
+// (see #glitch in app.css): a faint dot grid and corner brackets in the accent colour, columns of breach code down each side,
+// a scan line sweeping down it, and every few seconds a glitch, slices of the screen thrown sideways for a moment with red
+// and cyan fringes. The title bar, tabs, panels and terminals are see-through over it.
+const glitch = { canvas: null, ctx: null, inks: [], code: [], timer: null, colour: '#fcee0a', floor: '#0b0e12', dpr: 1, sweep: 0, until: 0, next: 0, rolled: 0, slices: [] };
+const GLITCH_MS = 50, GLITCH_RED = '#ff003c', GLITCH_CYAN = '#00f0ff';
+const GLITCH_CODE = ['1C', '55', '7A', 'BD', 'E9', 'FF'];
+const GLITCH_ROW = 18;   // the code's line height
+
+/** Puts the screen on the floor, or takes it away. */
+function glitchFloor(on) {
+  if (!on) {
+    clearInterval(glitch.timer); glitch.timer = null;
+    glitch.canvas?.remove(); glitch.canvas = glitch.ctx = null; glitch.inks = [];
+    return;
+  }
+  if (glitch.canvas) { glitchColours(); return; }
+  const canvas = h('canvas', { id: 'glitch', 'aria-hidden': 'true' });
+  document.body.prepend(canvas);
+  glitch.canvas = canvas; glitch.ctx = canvas.getContext('2d');
+  Object.assign(glitch, readGlitchColours());
+  glitchSize();
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;   // the screen, still: no scan line, no glitches
+  glitch.sweep = -40; glitch.next = performance.now() + 1500; glitch.until = 0;
+  glitch.timer = setInterval(() => { if (!document.hidden) glitchFrame(); }, GLITCH_MS);
+}
+
+/** The screen's colours, from the theme on screen: the accent for its ink, the chrome for the floor it sits on. */
+function readGlitchColours() {
+  const css = getComputedStyle(document.documentElement);
+  return { colour: css.getPropertyValue('--accent').trim() || '#fcee0a', floor: css.getPropertyValue('--chrome').trim() || '#0b0e12' };
+}
+
+/** Draws the screen again if the theme's colours changed under it. */
+function glitchColours() {
+  if (!glitch.canvas) return;
+  const { colour, floor } = readGlitchColours();
+  if (colour === glitch.colour && floor === glitch.floor) return;
+  Object.assign(glitch, { colour, floor });
+  glitchSize();
+}
+
+/** Fits the canvas to the window at the device's resolution and draws the screen in its three inks. */
+function glitchSize() {
+  const { canvas, ctx } = glitch;
+  if (!canvas) return;
+  const dpr = devicePixelRatio || 1, w = innerWidth, hgt = innerHeight;
+  canvas.width = Math.round(w * dpr); canvas.height = Math.round(hgt * dpr);
+  canvas.style.width = w + 'px'; canvas.style.height = hgt + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  glitch.dpr = dpr;
+  const rows = Math.max(0, Math.floor((hgt - 70) / GLITCH_ROW));
+  glitch.code = Array.from({ length: rows }, () => [0, 1].map(() => GLITCH_CODE[Math.floor(Math.random() * GLITCH_CODE.length)]));   // the same code in every ink
+  glitch.inks = [glitch.colour, GLITCH_RED, GLITCH_CYAN].map((ink) => glitchScreen(w, hgt, dpr, ink));   // the accent's screen, and the fringes'
+  glitch.slices = []; glitch.until = 0;
+  glitchFrame(true);
+}
+
+/** The screen itself, in one ink over nothing: the dot grid, the corner brackets, the code down each side, and scan lines. */
+function glitchScreen(w, hgt, dpr, ink) {
+  const c = document.createElement('canvas');
+  c.width = Math.round(w * dpr); c.height = Math.round(hgt * dpr);
+  const x = c.getContext('2d');
+  x.setTransform(dpr, 0, 0, dpr, 0, 0);
+  x.fillStyle = ink;
+  x.globalAlpha = 0.3;   // the dot grid
+  for (let px = 12; px < w; px += 24) for (let py = 12; py < hgt; py += 24) x.fillRect(px, py, 1.5, 1.5);
+  x.globalAlpha = 0.55;   // the corner brackets
+  for (const [cx, sx] of [[10, 1], [w - 10, -1]]) for (const [cy, sy] of [[10, 1], [hgt - 10, -1]]) {
+    x.fillRect(sx > 0 ? cx : cx - 48, cy - (sy > 0 ? 0 : 1.5), 48, 1.5);
+    x.fillRect(cx - (sx > 0 ? 0 : 1.5), sy > 0 ? cy : cy - 48, 1.5, 48);
+  }
+  x.globalAlpha = 0.3;   // the code
+  x.font = '11px "Cascadia Mono", Consolas, monospace'; x.textBaseline = 'top';
+  glitch.code.forEach(([l, r], i) => {
+    const py = 40 + i * GLITCH_ROW;
+    x.fillText(l, 14, py);
+    x.fillText(r, w - 30, py);
+  });
+  x.globalAlpha = 0.14; x.fillStyle = '#000000';   // scan lines, the fine kind
+  for (let py = 0; py < hgt; py += 3) x.fillRect(0, py, w, 1);
+  return c;
+}
+
+function glitchFrame(still = false) {
+  const { ctx, canvas, inks, dpr } = glitch;
+  if (!ctx || !inks.length) return;
+  const w = canvas.clientWidth, hgt = canvas.clientHeight, now = performance.now();
+  ctx.globalAlpha = 1; ctx.fillStyle = glitch.floor; ctx.fillRect(0, 0, w, hgt);
+  ctx.drawImage(inks[0], 0, 0, w, hgt);
+  if (still) return;
+  // The scan line, sweeping down with a soft trail above it.
+  const y = glitch.sweep;
+  const trail = ctx.createLinearGradient(0, y - 36, 0, y);
+  trail.addColorStop(0, 'rgba(0,0,0,0)'); trail.addColorStop(1, glitch.colour);
+  ctx.globalAlpha = 0.18; ctx.fillStyle = trail; ctx.fillRect(0, y - 36, w, 36);
+  ctx.globalAlpha = 0.6; ctx.fillStyle = glitch.colour; ctx.fillRect(0, y, w, 1.5);
+  glitch.sweep = y > hgt + 40 ? -40 : y + 1.6;
+  // A glitch: for a moment, slices of the screen thrown sideways, their red and cyan fringes pulled apart, and a bar or two
+  // of solid colour; the slices roll again every other frame so it jitters, then the screen settles for some seconds.
+  if (now >= glitch.next && now >= glitch.until) {
+    glitch.until = now + 120 + Math.random() * 240;
+    glitch.next = glitch.until + 2500 + Math.random() * 7000;
+    glitch.rolled = 0;
+  }
+  if (now >= glitch.until) return;
+  if (now >= glitch.rolled) {
+    glitch.rolled = now + 90;
+    glitch.slices = Array.from({ length: 2 + Math.floor(Math.random() * 4) }, () => ({
+      y: Math.random() * hgt, h: 3 + Math.random() * 26, dx: (Math.random() < 0.5 ? -1 : 1) * (6 + Math.random() * 34), f: 2 + Math.random() * 5,
+      bar: { x: Math.random() * w, w: 60 + Math.random() * 340, ink: Math.random() < 0.5 ? GLITCH_RED : GLITCH_CYAN, block: Math.random() < 0.5 },
+    }));
+  }
+  for (const s of glitch.slices) {
+    const sy = Math.round(s.y), sh = Math.ceil(s.h);
+    ctx.globalAlpha = 1; ctx.fillStyle = glitch.floor; ctx.fillRect(0, sy, w, sh);
+    ctx.globalAlpha = 0.75;
+    ctx.drawImage(inks[1], 0, sy * dpr, w * dpr, sh * dpr, s.dx - s.f, sy, w, sh);
+    ctx.drawImage(inks[2], 0, sy * dpr, w * dpr, sh * dpr, s.dx + s.f, sy, w, sh);
+    ctx.globalAlpha = 1;
+    ctx.drawImage(inks[0], 0, sy * dpr, w * dpr, sh * dpr, s.dx, sy, w, sh);
+    ctx.fillStyle = s.bar.ink;   // a bar of solid colour, or a block of it over the slice
+    if (s.bar.block) { ctx.globalAlpha = 0.16; ctx.fillRect(s.bar.x, sy, s.bar.w, sh); }
+    ctx.globalAlpha = 0.7; ctx.fillRect(s.bar.x, sy + sh / 2, s.bar.w, 2); ctx.globalAlpha = 1;
+  }
+}
+addEventListener('resize', () => glitchSize());
+
 /** Marks the page with the theme: data-theme light or dark for the stylesheet, and a theme's own colours, font and glow. */
 function markTheme(look = themeLook()) {
   const root = document.documentElement;
@@ -545,7 +673,10 @@ function markTheme(look = themeLook()) {
   else delete root.dataset.grid;
   if (look?.rain) root.dataset.rain = '';
   else delete root.dataset.rain;
+  if (look?.glitch) root.dataset.glitch = '';
+  else delete root.dataset.glitch;
   digitalRain(!!look?.rain);
+  glitchFloor(!!look?.glitch);
 }
 markTheme(themes.last?.id === theme.pref ? themes.last : null);   // the accent isn't known yet: last time's look
 
@@ -661,7 +792,7 @@ function monochromeLook(hex, light) {
 }
 
 /** The accent changed: a monochrome theme is built from it, so everything is recoloured; otherwise only the accent. */
-const accentChanged = () => { if (currentTheme()?.monochrome) applyTheme(); else applyAccent(); rainColours(); };
+const accentChanged = () => { if (currentTheme()?.monochrome) applyTheme(); else applyAccent(); rainColours(); glitchColours(); };
 
 // How the status dots move (see app.css): picked in Status dots… from the theme menu, and kept per person.
 const DOT_STYLES = [
@@ -719,7 +850,7 @@ function dressCursor(s) {
   const t = termTheme();
   const theme = { ...t };
   const look = themeLook();
-  if (look?.grid || look?.rain) theme.background = 'rgba(0, 0, 0, 0)';
+  if (look?.grid || look?.rain || look?.glitch) theme.background = 'rgba(0, 0, 0, 0)';
   if (s.cycle) { theme.cursor = t.background; theme.cursorAccent = t.background; }
   s.term.options.theme = theme;
   s.term.options.cursorStyle = s.cycle ? 'underline' : 'block';
@@ -5030,7 +5161,8 @@ function applyTheme(before = null) {
   for (const s of state.sessions) lightCycle(s, look?.cursor === 'light-cycle');   // sets the terminal's colours either way
   if (window.monaco) monaco.editor.setTheme(diffTheme(look));
   applyAccent();
-  rainColours();   // the rain takes the accent, which is only now on the page
+  rainColours();   // the rain and the glitch's screen take the accent, which is only now on the page
+  glitchColours();
   for (const f of pluginFrames.values()) postPluginTheme(f.frame);
   // A theme's window and title bar take its own background; Light and Dark keep Windows' own.
   post({ type: 'theme', light: isLight(), background: look?.colors.chrome ?? null });
@@ -5279,6 +5411,7 @@ function themeSnapshot(title) {
     ...(look?.glow ? { glow: true } : {}),
     ...(look?.grid ? { grid: true } : {}),
     ...(look?.rain ? { rain: true } : {}),
+    ...(look?.glitch ? { glitch: true } : {}),
     ...(look?.cursor ? { cursor: look.cursor } : {}),
     accent: { line: value('accent'), strong: value('accent-strong') },
     colors: Object.fromEntries(themes.names.colors.map((n) => [n, value(n)]).filter(([, v]) => v)),

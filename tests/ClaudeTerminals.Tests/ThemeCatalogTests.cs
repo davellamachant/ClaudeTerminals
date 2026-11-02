@@ -45,19 +45,25 @@ public sealed class ThemeCatalogTests : IDisposable
         Assert.Null(nerds.Cursor);
         Assert.False(nerds.Grid);
         Assert.False(nerds.Rain);
+        Assert.False(nerds.Glitch);
         var matrix = Assert.Single(themes, t => t.Id == "matrix");
         Assert.Equal(("Matrix", "dark", "Cascadia Mono", true, false, true, null, true), (matrix.Name, matrix.Base, matrix.Font, matrix.Glow, matrix.Grid, matrix.Rain, matrix.Cursor, matrix.BuiltIn));
         Assert.Equal(("#39ff6a", "#0b6b26"), (matrix.Accent!.Line, matrix.Accent.Strong));
         var ares = Assert.Single(themes, t => t.Id == "tron-ares");
         Assert.Equal(("Tron: Ares", "dark", "Bahnschrift", true, true), (ares.Name, ares.Base, ares.Font, ares.Glow, ares.BuiltIn));
         Assert.Equal(("#ff3b3b", "#c01818"), (ares.Accent!.Line, ares.Accent.Strong));
+        var cyberpunk = Assert.Single(themes, t => t.Id == "cyberpunk-2077");
+        Assert.Equal(("Cyberpunk 2077", "dark", "Bahnschrift SemiCondensed", true, false, false, true, null, true),
+            (cyberpunk.Name, cyberpunk.Base, cyberpunk.Font, cyberpunk.Glow, cyberpunk.Grid, cyberpunk.Rain, cyberpunk.Glitch, cyberpunk.Cursor, cyberpunk.BuiltIn));
+        Assert.Equal(("#fcee0a", "#7a7100"), (cyberpunk.Accent!.Line, cyberpunk.Accent.Strong));
         foreach (var t in new[] { tron, ares })
         {
             Assert.Equal("light-cycle", t.Cursor);
             Assert.True(t.Grid);
             Assert.False(t.Rain);
         }
-        foreach (var t in new[] { tron, ares, matrix })
+        Assert.False(matrix.Glitch);
+        foreach (var t in new[] { tron, ares, matrix, cyberpunk })
         {
             Assert.Equal(ThemeCatalog.ColorNames.OrderBy(n => n), t.Colors.Keys.OrderBy(n => n));
             Assert.Equal(ThemeCatalog.DiffNames.OrderBy(n => n), t.Diff.Keys.OrderBy(n => n));
