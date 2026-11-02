@@ -1041,6 +1041,8 @@ internal sealed class MainForm : Form
             case "openFolder":
                 OpenExternal(Get(msg).Info.Directory);
                 return null;
+            case "clipboard.files":
+                return ClipboardFiles();   // on the UI thread, as the clipboard needs
 
             // ---- plugins
             case "plugins.list":
@@ -1417,6 +1419,30 @@ internal sealed class MainForm : Form
             // No "edit" verb for this type (e.g. .exe, .py).
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "notepad.exe")) { ArgumentList = { path } });
         }
+    }
+
+    private static readonly string PastedImageFolder = Path.Combine(Path.GetTempPath(), "ClaudeTerminals", "pasted-images");
+
+    /// <summary>
+    /// What a paste without text puts in a terminal: the files copied in Explorer, or the image on the clipboard (a
+    /// screenshot, a copied picture) saved as a PNG in the temp folder. Saved images go after a week.
+    /// </summary>
+    private static string[] ClipboardFiles()
+    {
+        if (Clipboard.ContainsFileDropList()) return Clipboard.GetFileDropList().Cast<string>().ToArray();
+        if (!Clipboard.ContainsImage()) return [];
+
+        Directory.CreateDirectory(PastedImageFolder);
+        foreach (var old in new DirectoryInfo(PastedImageFolder).EnumerateFiles("*.png").Where(f => f.LastWriteTimeUtc < DateTime.UtcNow.AddDays(-7)))
+        {
+            try { old.Delete(); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+        }
+        var path = Path.Combine(PastedImageFolder, $"image-{DateTime.Now:yyyyMMdd-HHmmss-fff}.png");
+        // The PNG as the app that copied it wrote it (keeping transparency), else the bitmap.
+        if (Clipboard.GetData("PNG") is MemoryStream png) File.WriteAllBytes(path, png.ToArray());
+        else if (Clipboard.GetImage() is { } image) using (image) image.Save(path, System.Drawing.Imaging.ImageFormat.Png);
+        else return [];
+        return [path];
     }
 
     private static void OpenExternal(string target)

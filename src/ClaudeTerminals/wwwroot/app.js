@@ -961,6 +961,14 @@ function createSession(info) {
     e.preventDefault();
     if (state.expandedId === s.id) terminalMenu(s, e.clientX, e.clientY);
   });
+  // Ctrl+V with an image or files on the clipboard and no text: xterm would paste nothing, so paste their paths instead.
+  s.surface.addEventListener('paste', (e) => {
+    const types = e.clipboardData?.types ?? [];
+    if (types.includes('text/plain') || !types.includes('Files')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    pasteClipboardFiles(s);
+  }, true);
   return s;
 }
 
@@ -1509,10 +1517,30 @@ function terminalKey(s, e) {
     return false;
   }
   if (e.ctrlKey && e.shiftKey && (e.key === 'V' || e.key === 'v')) {
-    navigator.clipboard.readText().then((t) => t && s.term.paste(t));
+    pasteClipboard(s);
     return false;
   }
   return true;
+}
+
+/** Pastes the clipboard's text or, without text, the paths of the image or files on it (see pasteClipboardFiles). */
+async function pasteClipboard(s) {
+  const text = await navigator.clipboard.readText().catch(() => '');
+  if (text) s.term.paste(text);
+  else pasteClipboardFiles(s);
+}
+
+/**
+ * An image on the clipboard (a screenshot, a copied picture) is saved as a PNG by the host and its path pasted; files
+ * copied in Explorer paste as their paths. Claude Code and Codex attach an image whose path is pasted.
+ */
+async function pasteClipboardFiles(s) {
+  try {
+    const paths = await request('clipboard.files');
+    if (paths?.length) s.term.paste(paths.map((p) => (/\s/.test(p) ? `"${p}"` : p)).join(' '));
+  } catch (err) {
+    toast(err.message, true);
+  }
 }
 
 document.addEventListener('keydown', (e) => {
@@ -1617,7 +1645,7 @@ function terminalMenu(s, x, y) {
   const inTerminal = (fn) => async () => { await fn(); s.term.focus(); };
   showMenu(x, y, [
     { label: 'Copy', kbd: 'Ctrl+C', action: inTerminal(() => s.term.hasSelection() && navigator.clipboard.writeText(s.term.getSelection())) },
-    { label: 'Paste', kbd: 'Ctrl+V', action: inTerminal(() => navigator.clipboard.readText().then((t) => t && s.term.paste(t))) },
+    { label: 'Paste', kbd: 'Ctrl+V', action: inTerminal(() => pasteClipboard(s)) },
     { label: 'Select all', action: inTerminal(() => s.term.selectAll()) },
     { label: 'Clear scrollback', action: inTerminal(() => s.term.clear()) },
     '-',
