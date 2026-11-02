@@ -1,9 +1,9 @@
 {
   "title": "Ask",
-  "description": "A chat beside your sessions: ask what each is doing or waiting on, have a message drafted, and type it into any session",
+  "description": "A chat beside your sessions: ask what each is doing or waiting on, have a message drafted, and send it to any session",
   "entry": "index.html",
   "placement": "panel",
-  "access": ["sessions", "ask", "type"],
+  "access": ["sessions", "ask", "message"],
   "toolbar": { "icon": "ask.svg", "tooltip": "ask about your sessions", "command": "open" },
   "menu": [
     { "label": "Ask about your sessions", "command": "open", "where": ["palette"] },

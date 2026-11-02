@@ -1,11 +1,12 @@
 'use strict';
 // Ask: a chat beside your sessions. Ask what a session is doing or waiting on, which one touched a file, or for a
 // message to send one; an agent run headless by the app answers from the sessions' conversations. Each answer names
-// the sessions it drew on (click one to open it) and can be typed into any running session, for you to send or sent
-// straight away. The composer's left-hand box picks where what you type goes: to the assistant, or into a session.
+// the sessions it drew on (click one to open it) and can be sent to any session as a message from Ask, whose answer
+// comes back here. The composer's left-hand box picks where what you write goes: to the assistant, or to a session.
 //
-// It's a Claude Terminals plugin with "sessions", "ask" and "type" access (see plugin.json): the app asks you once
-// for each before the plugin gets it. The plugin keeps this chat only while its tab is open.
+// It's a Claude Terminals plugin with "sessions", "ask" and "message" access (see plugin.json): the app asks you once
+// for each before the plugin gets it. It never types into a session: a session's agent reads what Ask sends as a
+// message from a plugin, not as your prompt. The plugin keeps this chat only while its tab is open.
 
 const REFRESH_MS = 3000, MAX_HISTORY = 8;
 const NO_PROJECT = '\u0000none';   // the project key of sessions in no project
@@ -46,6 +47,8 @@ addEventListener('message', (e) => {
     if (!p) return;
     pending.delete(m.requestId);
     if ('error' in m) p.reject(new Error(m.error)); else p.resolve(m.result);
+  } else if (m.type === 'claude-terminals:message') {
+    readReplies();   // a session answered (or messaged Ask)
   } else if (m.type === 'claude-terminals:theme') {
     dress(m);
   } else if (m.type === 'claude-terminals:state') {
@@ -115,8 +118,8 @@ const st = {
   sessions: [],       // what the app says about each session
   scope: 'all',       // 'all' | 'project:<name>' | 'session:<id>': the sessions a question is about
   wanted: null,       // a scope asked for by a menu command, applied once the sessions are known
-  to: 'ask',          // where the composer's text goes: 'ask' (the assistant) or a session id (typed into it)
-  chat: [],           // { role: 'you' | 'assistant' | 'note', text, question, pending, error, sessions, writer }
+  to: 'ask',          // where the composer's text goes: 'ask' (the assistant) or a session id (messaged)
+  chat: [],           // { role: 'you' | 'assistant' | 'reply' | 'note', text, to, from, question, pending, error, sessions, writer }
   unread: 0,          // answers that arrived while the tab was hidden (shown as its badge)
   denied: null,       // why the sessions can't be read, if they can't
 };
@@ -195,13 +198,13 @@ function renderHeader() {
   const one = st.scope.startsWith('session:') ? byId(st.scope.slice(8)) : null;
   tell('title', { title: one ? `Ask: ${one.name}` : null });
 
-  // Where what you type goes: the assistant, or a running session's terminal.
+  // Where what you write goes: the assistant, or a session, as a message (a stopped one reads it when it next runs).
   const to = $('#to');
-  const running = st.sessions.filter((s) => s.status !== 'exited').sort((a, b) => a.name.localeCompare(b.name));
-  if (st.to !== 'ask' && !running.some((s) => s.id === st.to)) st.to = 'ask';
-  to.replaceChildren(h('option', { value: 'ask' }, 'Ask the assistant'), ...running.map((s) => h('option', { value: s.id }, `Type into ${s.name}`)));
+  const targets = [...st.sessions].sort((a, b) => a.name.localeCompare(b.name));
+  if (st.to !== 'ask' && !targets.some((s) => s.id === st.to)) st.to = 'ask';
+  to.replaceChildren(h('option', { value: 'ask' }, 'Ask the assistant'), ...targets.map((s) => h('option', { value: s.id }, `Message ${s.name}`)));
   to.value = st.to;
-  to.disabled = running.length === 0;
+  to.disabled = targets.length === 0;
   renderComposer();
 
   const message = $('#message');
@@ -220,13 +223,12 @@ function renderHeader() {
 
 function renderComposer() {
   const toSession = st.to !== 'ask' ? byId(st.to) : null;
-  $('#go').textContent = toSession ? 'Type' : 'Ask';
+  $('#go').textContent = toSession ? 'Send' : 'Ask';
   $('#go').title = toSession
-    ? `Type this into ${toSession.name}'s terminal, as if pasted (Enter does the same)`
+    ? `Send this to ${toSession.name} as a message from Ask; its answer comes back here (Enter does the same)`
     : 'Send the question to Claude, which answers from the sessions’ conversations (Enter does the same)';
-  $('#sendRow').hidden = !toSession;
   $('#input').placeholder = toSession
-    ? `Type into ${toSession.name}… (Enter types it, Shift+Enter for a new line)`
+    ? `Message ${toSession.name}… (Enter sends, Shift+Enter for a new line)`
     : 'Ask about your sessions… (Enter sends, Shift+Enter for a new line)';
 }
 
@@ -256,7 +258,7 @@ async function submit() {
   input.value = '';
   autosize();
   if (st.to === 'ask') await question(text);
-  else await typeInto(st.to, text, $('#send').checked);
+  else await messageTo(st.to, text);
   input.focus();
 }
 
@@ -287,14 +289,30 @@ async function answerOf(answer) {
   renderChat();
 }
 
-async function typeInto(id, text, send) {
+/** Sends text to a session as a message from Ask (the app asks you the first time); its answer comes back as a reply. */
+async function messageTo(id, text) {
   const s = byId(id);
   if (!s) { note('That session is gone.', true); return; }
   try {
-    await ask('type', { sessionId: id, text, send });
-    note(send ? `Sent to ${s.name}.` : `Typed into ${s.name}, for you to send.`);
+    const r = await ask('sendMessage', { to: id, text, replyTo: null });
+    if (r?.outcome === 'denied') { note(`Ask isn’t allowed to message ${s.name}.`, true); return; }
+    st.chat.push({ role: 'you', text, to: s.name });
+    note(s.status === 'exited' ? `Sent. ${s.name} reads it when it next runs; its answer comes back here.` : `Sent to ${s.name}. Its answer comes back here.`);
   } catch (e) {
-    note(`Couldn’t type into ${s.name}: ${e.message}`, true);
+    note(`Couldn’t message ${s.name}: ${e.message}`, true);
+  }
+}
+
+/** What sessions sent Ask: their answers, shown in the chat. */
+async function readReplies() {
+  try {
+    const got = await ask('readMessages');
+    if (!got.length) return;
+    for (const m of got) st.chat.push({ role: 'reply', text: m.text, from: m.fromName ?? m.from });
+    if (document.hidden) tell('badge', { count: st.unread += got.length });
+    renderChat();
+  } catch (e) {
+    note(`Couldn’t read the sessions’ answers: ${e.message}`, true);
   }
 }
 
@@ -312,22 +330,22 @@ function renderChat() {
 }
 
 function renderMessage(m) {
-  if (m.role === 'you') return h('div', { class: 'msg you' }, h('div', { class: 'bubble' }, m.text));
+  if (m.role === 'you') return h('div', { class: 'msg you' }, h('div', { class: 'bubble' }, m.text), m.to && h('div', { class: 'meta' }, `To ${m.to}`));
+  if (m.role === 'reply') return h('div', { class: 'msg assistant' }, markdown(m.text), h('div', { class: 'meta' }, h('span', { class: 'writer' }, `${m.from} answered`)));
   if (m.role === 'note') return h('div', { class: 'msg note' + (m.error ? ' error' : '') }, m.text);
   const bubble = m.pending ? h('div', { class: 'bubble pending' }, 'Reading the sessions…')
     : m.error ? h('div', { class: 'bubble error' }, m.error)
     : markdown(m.text);
   const chips = m.sessions.map((id) => byId(id)).filter(Boolean).map((s) =>
     h('button', { class: 'chip dot ' + s.status, title: `Open ${s.name}`, onclick: () => ask('showSession', { sessionId: s.id }).catch((e) => note(e.message, true)) }, s.name));
-  const running = st.sessions.filter((s) => s.status !== 'exited');
-  const typeTo = !m.pending && !m.error && running.length > 0 && h('select', { title: 'Type this answer into a session, for you to send', onchange: (e) => {
+  const sendTo = !m.pending && !m.error && st.sessions.length > 0 && h('select', { title: 'Send this answer to a session, as a message from Ask', onchange: (e) => {
     const id = e.target.value;
     e.target.value = '';
-    if (id) typeInto(id, m.text, false);
-  } }, h('option', { value: '' }, 'Type into…'), ...running.map((s) => h('option', { value: s.id }, s.name)));
+    if (id) messageTo(id, m.text);
+  } }, h('option', { value: '' }, 'Send to…'), ...st.sessions.map((s) => h('option', { value: s.id }, s.name)));
   const retry = m.error && h('button', { class: 'chip', onclick: () => answerOf(m) }, 'Try again');
   return h('div', { class: 'msg assistant' }, bubble,
-    h('div', { class: 'meta' }, chips, typeTo, retry, m.writer && h('span', { class: 'writer' }, `${m.writer} answered`)));
+    h('div', { class: 'meta' }, chips, sendTo, retry, m.writer && h('span', { class: 'writer' }, `${m.writer} answered`)));
 }
 
 /** The answer's light Markdown as elements: paragraphs, lists, fenced code, inline code and bold. Text is never put in as HTML. */
