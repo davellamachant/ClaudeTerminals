@@ -76,6 +76,7 @@ Releases are signed by **Llamachant Technology Ltd**. If SmartScreen still warns
 | Arrange the side panel | Drag a tab (Git Changes, Git Repository or a panel) onto another group's tab row to move it there, or onto the top or bottom half of a group to split it into a new group above or below. Drag the dividers to resize. The chevron at the left of a tab row (or double-clicking the row) folds a group down to its tabs. Right-click a tab for the same moves, *Reset layout* and *Reopen a closed panel*. The layout is remembered |
 | Light, dark or follow Windows; accent colour | The palette button at the top right |
 | Check for updates | Click the version chip (**v1.x.y ▾**) at the top right |
+| Be counted as a user, or not | Answer the question under the title bar the first time, or the version chip's menu › *Count me among the users* |
 | Terminal font size | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
 | Newline in Claude prompt | `Shift+Enter` |
 | Copy / paste | `Ctrl+C` with a selection / `Ctrl+V` (or right-click when expanded). With an image on the clipboard, such as a screenshot, `Ctrl+V` pastes the path of a PNG saved from it, which Claude Code and Codex attach; files copied in Explorer paste as their paths |
@@ -387,6 +388,12 @@ A theme is only data: the app takes the names above and checks each value, so it
 ### Updates
 
 A few seconds after starting, and every 15 minutes, the app checks this repository's latest GitHub release (an anonymous request; nothing about you or your sessions is sent). When there's a newer version, an **Update to x.y.z** button appears in the title bar, showing what's new. *Update and restart* downloads the installer, checks it against the SHA-256 GitHub publishes for it (it won't run a file that doesn't match), closes the app, installs silently and reopens it. Running sessions carry on in the conversations they were in. The version is shown at the top right and in the window title; clicking it offers *Check for updates* and turns the automatic check off.
+
+### Counting users
+
+We'd like to know how many people use Claude Terminals, and which versions. So the first time it runs, a line under the title bar asks whether it may count you; nothing is sent until you say yes, and *No thanks* is remembered as firmly as yes. The switch is in the version menu, *Count me among the users*, with *What the count sends…* beside it.
+
+When it's on, once a day the app makes one request to `https://downloads.llamachant.com/downloads/TerminalsData/ping` (always that address) that says three things: a random id made when you said yes, so a copy run every day counts once rather than thirty times; the app's version; and the Windows version. The site's log is the count. Nothing about you, your sessions, your projects or what's in them is ever sent, and nothing is read back. Turning it off throws the id away, so saying yes again later starts over as a new user. The answer and the id are kept in `telemetry.json` beside `sessions.json`.
 
 ### Tips and offers
 

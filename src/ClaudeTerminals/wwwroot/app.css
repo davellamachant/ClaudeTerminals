@@ -1304,6 +1304,9 @@ svg.sparkline circle { fill: var(--accent); }
 .notice-inline-link { color: var(--notice-ink); text-decoration: underline; text-underline-offset: 2px; }
 .notice-inline-link:hover { text-decoration-thickness: 2px; }
 .notice-close { flex: none; margin-left: auto; height: 24px; min-width: 24px; color: var(--text-dim); }
+/* The question about the count: its two answers, where a notice's close button goes. */
+.notice-actions { flex: none; margin-left: auto; display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 0; }
+.notice-actions .btn { height: 24px; padding: 0 10px; font-size: 12px; }
 
 /* ---------------------------------------------------------------- updates */
 .tb-btn.update-btn { color: var(--update-fg); background: color-mix(in srgb, var(--ok) 28%, transparent); border-radius: 4px; gap: 4px; }

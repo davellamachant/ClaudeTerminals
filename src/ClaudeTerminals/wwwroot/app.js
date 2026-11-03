@@ -5139,6 +5139,53 @@ function setThemePref(pref) {
 
 const NOTICES_EVERY_MS = 30 * 60 * 1000;
 const notices = { list: [], shown: null, waiting: false, dismissed: new Set(store.get('dismissedNotices', [])), tips: store.get('showTips', true) };
+
+// ---- Counting users -------------------------------------------------------------------------------------------------
+// Whether you've said yes to being counted (count.state and count.set in MainForm, TelemetryService behind them). The
+// host keeps the answer and makes the daily request; the page asks the question once, along the top, until it's
+// answered either way, and offers the switch in the version menu.
+
+const count = { enabled: undefined };   // undefined: not read yet; null: not asked yet; true or false: your answer
+const COUNT_SENT = "Once a day the app makes one request to downloads.llamachant.com that says three things: a random id made when you said yes (so a copy run every day counts once, not thirty times), the app's version and the Windows version. Nothing about you, your sessions, your projects or what's in them. Saying no, or turning it off later, throws the id away.";
+
+async function loadCount() {
+  try { count.enabled = (await request('count.state')).enabled; } catch { count.enabled = false; }
+  renderNotice();
+}
+
+async function setCount(on) {
+  try { count.enabled = (await request('count.set', { enabled: on })).enabled; } catch (e) { toast(String(e), true); }
+  renderNotice();
+}
+
+/** What the count is and what it sends, with the switch. */
+function showCountDialog() {
+  openModal('Counting users', [
+    h('div', {}, "We'd like to know how many people use Claude Terminals, and which versions, and we don't want to know anything else."),
+    h('div', {}, COUNT_SENT),
+  ], [
+    h('label', { class: 'check-field' }, h('input', { type: 'checkbox', checked: count.enabled === true, onchange: (e) => setCount(e.target.checked) }), 'Count me among the users'),
+    h('div', { class: 'spacer' }),
+    h('button', { class: 'btn primary', onclick: closeModal }, 'Close'),
+  ]);
+}
+
+/** The one question, along the top where tips go, until it's answered. */
+function renderCountAsk(bar) {
+  bar.hidden = false;
+  bar.dataset.kind = 'count';
+  bar.dataset.color = 'accent';
+  bar.style.setProperty('--notice', '');
+  bar.replaceChildren(
+    h('span', { class: 'notice-kind' }, iconEl('info'), 'A question'),
+    h('span', { class: 'notice-text' }, 'May we count you? Once a day the app would send one anonymous request saying it ran, its version and the Windows version, and nothing else, ever. ',
+      h('a', { class: 'notice-inline-link', href: '#', onclick: (e) => { e.preventDefault(); showCountDialog(); } }, 'What it sends')),
+    h('span', { class: 'notice-actions' },
+      h('button', { class: 'btn primary', onclick: () => setCount(true) }, 'Yes, count me'),
+      h('button', { class: 'btn', onclick: () => setCount(false) }, 'No thanks')),
+  );
+  bar.oncontextmenu = null;
+}
 const NOTICE_KINDS = { tip: { icon: 'bulb', label: 'Tip' }, offer: { icon: 'gift', label: 'Offer' }, news: { icon: 'info', label: 'News' } };
 
 async function checkNotices() {
@@ -5175,10 +5222,11 @@ function noticeText(text) {
 const noticeAllowed = (n) => !notices.dismissed.has(n.id) && (n.kind === 'news' || (notices.tips && !notices.waiting));
 
 function renderNotice() {
+  const bar = $('#noticeBar');
+  if (count.enabled === null) { renderCountAsk(bar); return; }   // the question about the count comes before any tip
   // The one showing (or asked for again) stays until it's closed or leaves the feed; otherwise the first allowed.
   const n = notices.list.find((x) => x.id === notices.shown?.id && !notices.dismissed.has(x.id)) ?? notices.list.find(noticeAllowed);
   notices.shown = n ?? null;
-  const bar = $('#noticeBar');
   bar.hidden = !n;
   if (!n) { bar.replaceChildren(); return; }
   const kind = NOTICE_KINDS[n.kind] ?? NOTICE_KINDS.tip;
@@ -5261,6 +5309,9 @@ function versionMenu(x, y) {
     } },
     { icon: 'bulb', label: 'Show tips and offers', checked: notices.tips, action: () => setShowTips(!notices.tips) },
     { icon: 'gift', label: 'Tips and offers…', action: showNoticesDialog },
+    '-',
+    { icon: 'info', label: 'Count me among the users', checked: count.enabled === true, action: () => setCount(count.enabled !== true) },
+    { label: [h('span', { class: 'menu-indent' }), 'What the count sends…'], action: showCountDialog },
     '-',
     { icon: 'info', label: `Claude Terminals ${updates.current ?? ''}`.trim() + ' · release notes',
       action: () => request('openUrl', { uri: 'https://github.com/davellamachant/ClaudeTerminals/releases' }) },
@@ -5484,6 +5535,7 @@ setTimeout(() => { if (updates.auto) checkForUpdates(); }, 15_000);
 setInterval(() => { if (updates.auto) checkForUpdates(); }, UPDATE_EVERY_MS);
 setTimeout(checkNotices, 5_000);
 setInterval(checkNotices, NOTICES_EVERY_MS);
+setTimeout(loadCount, 3_000);   // the question about the count, if it hasn't been answered, before the first tip
 
 // ------------------------------------------------------------------ scrolling tab rows
 
