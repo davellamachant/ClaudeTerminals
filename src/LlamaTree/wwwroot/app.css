@@ -208,7 +208,11 @@ svg.ic { width: 16px; height: 16px; flex: none; display: block; }
 .tb-split { display: inline-flex; flex: none; }
 .tb-split > #btnGit { border-top-right-radius: 0; border-bottom-right-radius: 0; }
 .tb-split > #btnGitMenu { min-width: 0; width: 16px; padding: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; color: var(--text-dim); }
-.tb-split > #btnGitMenu:hover { color: var(--text); }
+/* Hovering either half lights the pair: the half under the pointer strongly, the other half lightly. */
+.tb-split:hover > .tb-btn:not(:hover):not(.active) { background: var(--hover); }
+.tb-split:hover > #btnGitMenu { color: var(--text); }
+/* With the side panel showing, the ▾ joins the button's outline (its left edge is the button's right one). */
+.tb-split > #btnGit.active + #btnGitMenu { border-color: var(--border); border-left-color: transparent; }
 .tb-split > #btnGitMenu svg.ic { width: 11px; height: 11px; }
 
 .session-tabs { display: flex; gap: 2px; overflow-x: auto; min-width: 0; scrollbar-width: none; }
