@@ -32,8 +32,8 @@ internal sealed class MainForm : Form
     private bool webReady;
     private bool closingForUpdate;
     private UpdateInfo? update;
-    /// <summary>The count of users (see <see cref="TelemetryService"/>): one request a day, if you've said yes; looked at hourly.</summary>
-    private readonly System.Windows.Forms.Timer countTimer = new() { Interval = 3_600_000 };
+    /// <summary>The count of users (see <see cref="TelemetryService"/>): one request an hour, if you've said yes; looked at every ten minutes.</summary>
+    private readonly System.Windows.Forms.Timer countTimer = new() { Interval = 600_000 };
 
     /// <summary>Each session's conversation, noted just before an update restarts the app (see <see cref="TerminalSession.ResumeOnce"/>).</summary>
     private static string ResumeFile => Path.Combine(SessionStore.AppDataFolder, "resume-after-update.json");
@@ -51,7 +51,7 @@ internal sealed class MainForm : Form
 
         flushTimer.Tick += (_, _) => FlushOutput();
         flushTimer.Start();
-        countTimer.Tick += (_, _) => _ = TelemetryService.PingIfDueAsync();
+        countTimer.Tick += (_, _) => _ = TelemetryService.PingIfDueAsync(CountUsage());
 
         var tidied = false;
         foreach (var info in SessionStore.Load())
@@ -651,7 +651,7 @@ internal sealed class MainForm : Form
                 if (!countTimer.Enabled)
                 {
                     countTimer.Start();
-                    _ = CountSoonAsync();   // today's request, if you've said yes, once the start is out of the way
+                    _ = CountSoonAsync();   // this hour's request, if you've said yes, once the start is out of the way
                 }
                 return null;
 
@@ -1193,7 +1193,7 @@ internal sealed class MainForm : Form
             case "count.set":
             {
                 var state = TelemetryService.SetEnabled(Bool(msg, "enabled"));
-                if (state.Enabled == true) _ = TelemetryService.PingIfDueAsync();   // today's, now that there's a yes
+                if (state.Enabled == true) _ = TelemetryService.PingIfDueAsync(CountUsage());   // this hour's, now that there's a yes
                 return CountMessage(state);
             }
             case "update.check":
@@ -1356,13 +1356,16 @@ internal sealed class MainForm : Form
     }
 
     /// <summary>The count's state for the page: enabled is null until you've answered.</summary>
-    private static object CountMessage(CountState s) => new { enabled = s.Enabled, lastSent = s.LastSent?.ToString("yyyy-MM-dd") };
+    private static object CountMessage(CountState s) => new { enabled = s.Enabled, lastSent = s.LastSent?.ToString("yyyy-MM-dd'T'HH:00'Z'") };
 
-    /// <summary>Today's request for the count, a little after the page is up so it never competes with the start.</summary>
-    private static async Task CountSoonAsync()
+    /// <summary>What the count says about use: how many projects and sessions are open. Read on the UI thread.</summary>
+    private CountUsage CountUsage() => new(projects.Count, sessions.Count);
+
+    /// <summary>This hour's request for the count, a little after the page is up so it never competes with the start.</summary>
+    private async Task CountSoonAsync()
     {
-        await Task.Delay(TimeSpan.FromSeconds(20));
-        await TelemetryService.PingIfDueAsync();
+        await Task.Delay(TimeSpan.FromSeconds(20));   // back on the UI thread, where the counts are read
+        await TelemetryService.PingIfDueAsync(CountUsage());
     }
 
     private static string Str(JsonElement e, string name) =>

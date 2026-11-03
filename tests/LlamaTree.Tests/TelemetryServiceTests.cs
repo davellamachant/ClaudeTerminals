@@ -3,11 +3,12 @@ using LlamaTree.Updates;
 
 namespace LlamaTree.Tests;
 
-/// <summary>Counting users: off until you say yes, one request a day that says only three things, and no trace once you say no.</summary>
+/// <summary>Counting users: off until you say yes, one request an hour that says only six things, and no trace once you say no.</summary>
 public sealed class TelemetryServiceTests : IDisposable
 {
     private readonly string folder = Path.Combine(Path.GetTempPath(), "ct-count-" + Guid.NewGuid().ToString("N"));
-    private static readonly DateOnly Today = new(2026, 11, 3);
+    private static readonly DateTime Now = new(2026, 11, 3, 14, 25, 0, DateTimeKind.Utc);
+    private static readonly CountUsage Usage = new(Projects: 3, Sessions: 7);
 
     public void Dispose() { try { Directory.Delete(folder, true); } catch (IOException) { } }
 
@@ -17,7 +18,7 @@ public sealed class TelemetryServiceTests : IDisposable
         var state = TelemetryService.Load(folder);
         Assert.Null(state.Enabled);
         Assert.Null(state.Id);
-        Assert.False(TelemetryService.IsDue(state, Today));
+        Assert.False(TelemetryService.IsDue(state, Now));
     }
 
     [Fact]
@@ -28,7 +29,7 @@ public sealed class TelemetryServiceTests : IDisposable
         Assert.Matches("^[0-9a-f]{32}$", yes.Id);
         Assert.Equal(yes, TelemetryService.Load(folder));
         Assert.Equal(yes.Id, TelemetryService.SetEnabled(true, folder).Id);   // yes again changes nothing
-        Assert.True(TelemetryService.IsDue(yes, Today));
+        Assert.True(TelemetryService.IsDue(yes, Now));
     }
 
     [Fact]
@@ -39,7 +40,7 @@ public sealed class TelemetryServiceTests : IDisposable
         Assert.False(no.Enabled);
         Assert.Null(no.Id);
         Assert.Null(no.LastSent);
-        Assert.False(TelemetryService.IsDue(no, Today));
+        Assert.False(TelemetryService.IsDue(no, Now));
         Assert.Equal(no, TelemetryService.Load(folder));
 
         var again = TelemetryService.SetEnabled(true, folder);
@@ -47,27 +48,45 @@ public sealed class TelemetryServiceTests : IDisposable
     }
 
     [Fact]
-    public void One_request_a_day()
+    public void One_request_an_hour()
     {
         var state = TelemetryService.SetEnabled(true, folder);
-        Assert.True(TelemetryService.IsDue(state, Today));
-        Assert.False(TelemetryService.IsDue(state with { LastSent = Today }, Today));
-        Assert.True(TelemetryService.IsDue(state with { LastSent = Today.AddDays(-1) }, Today));
+        var hour = TelemetryService.HourOf(Now);
+        Assert.Equal(new DateTime(2026, 11, 3, 14, 0, 0, DateTimeKind.Utc), hour);
+        Assert.True(TelemetryService.IsDue(state, Now));
+        Assert.False(TelemetryService.IsDue(state with { LastSent = hour }, Now));
+        Assert.False(TelemetryService.IsDue(state with { LastSent = hour }, Now.AddMinutes(34)));   // 14:59, the same hour
+        Assert.True(TelemetryService.IsDue(state with { LastSent = hour }, Now.AddMinutes(35)));    // 15:00, the next
+        Assert.True(TelemetryService.IsDue(state with { LastSent = hour.AddDays(-1) }, Now));
     }
 
     [Fact]
-    public void The_request_says_the_id_the_version_and_the_Windows_version_and_nothing_else()
+    public void The_hour_is_kept_in_the_file()
     {
-        var uri = TelemetryService.PingUri(TelemetryService.PingUrl, "0123456789abcdef0123456789abcdef", new Version(1, 2, 3), new Version(10, 0, 26200, 1));
-        Assert.Equal("https://downloads.llamachant.com/downloads/TerminalsData/ping?id=0123456789abcdef0123456789abcdef&v=1.2.3&os=10.0.26200", uri.ToString());
+        var state = TelemetryService.SetEnabled(true, folder);
+        TelemetryService.Save(state with { LastSent = TelemetryService.HourOf(Now) }, folder);
+        Assert.Contains("\"lastSent\": \"2026-11-03T14\"", File.ReadAllText(Path.Combine(folder, TelemetryService.FileName)));
+        Assert.Equal(TelemetryService.HourOf(Now), TelemetryService.Load(folder).LastSent);
     }
 
+    [Fact]
+    public void The_request_says_the_id_the_versions_the_system_and_the_counts_and_nothing_else()
+    {
+        var uri = TelemetryService.PingUri(TelemetryService.PingUrl, "0123456789abcdef0123456789abcdef", new Version(1, 2, 3), "windows", new Version(10, 0, 26200, 1), Usage);
+        Assert.Equal("https://count.llamachant.com/ping?id=0123456789abcdef0123456789abcdef&v=1.2.3&os=windows&osv=10.0.26200&projects=3&sessions=7", uri.ToString());
+    }
+
+    [Fact]
+    public void The_system_is_named_for_the_platform_it_runs_on() =>
+        Assert.Equal(OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsMacOS() ? "macos" : "linux", TelemetryService.OsName());
+
     [Theory]
-    [InlineData("https://downloads.llamachant.com/downloads/TerminalsData/ping", true)]
-    [InlineData("http://downloads.llamachant.com/downloads/TerminalsData/ping", false)]   // not over https
+    [InlineData("https://count.llamachant.com/ping", true)]
+    [InlineData("http://count.llamachant.com/ping", false)]   // not over https
+    [InlineData("https://downloads.llamachant.com/ping", false)]   // ours, but not the count's
     [InlineData("https://example.com/ping", false)]   // not our site
     [InlineData("http://127.0.0.1:5/ping", false)]   // this machine, but only while testing (LLAMATREE_TELEMETRY_URL)
-    public void Only_our_site_is_asked(string url, bool allowed) => Assert.Equal(allowed, TelemetryService.AllowedUrl(url));
+    public void Only_our_count_service_is_asked(string url, bool allowed) => Assert.Equal(allowed, TelemetryService.AllowedUrl(url));
 
     [Fact]
     public void A_file_edited_by_hand_cant_be_on_without_an_id()
@@ -77,7 +96,7 @@ public sealed class TelemetryServiceTests : IDisposable
         var state = TelemetryService.Load(folder);
         Assert.False(state.Enabled);
         Assert.Null(state.Id);
-        Assert.False(TelemetryService.IsDue(state, Today));
+        Assert.False(TelemetryService.IsDue(state, Now));
     }
 
     [Fact]
@@ -89,25 +108,26 @@ public sealed class TelemetryServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task Nothing_is_sent_until_you_say_yes_and_once_sent_the_day_is_done()
+    public async Task Nothing_is_sent_until_you_say_yes_and_once_sent_the_hour_is_done()
     {
         using var server = new PingServer();
 
-        Assert.False(await TelemetryService.PingIfDueAsync(folder, server.Url, Today));   // not asked yet
+        Assert.False(await TelemetryService.PingIfDueAsync(Usage, folder, server.Url, Now));   // not asked yet
         TelemetryService.SetEnabled(false, folder);
-        Assert.False(await TelemetryService.PingIfDueAsync(folder, server.Url, Today));   // said no
+        Assert.False(await TelemetryService.PingIfDueAsync(Usage, folder, server.Url, Now));   // said no
         Assert.Empty(server.Requests);
 
         var yes = TelemetryService.SetEnabled(true, folder);
-        Assert.True(await TelemetryService.PingIfDueAsync(folder, server.Url, Today));
+        Assert.True(await TelemetryService.PingIfDueAsync(Usage, folder, server.Url, Now));
         var request = Assert.Single(server.Requests);
-        Assert.Equal($"id={yes.Id}&v={UpdateService.CurrentVersion}&os={Environment.OSVersion.Version.Major}.{Environment.OSVersion.Version.Minor}.{Environment.OSVersion.Version.Build}", request.Query.TrimStart('?'));
+        var os = Environment.OSVersion.Version;
+        Assert.Equal($"id={yes.Id}&v={UpdateService.CurrentVersion}&os=windows&osv={os.Major}.{os.Minor}.{os.Build}&projects=3&sessions=7", request.Query.TrimStart('?'));
         Assert.StartsWith("LlamaTree/", request.UserAgent);
-        Assert.Equal(Today, TelemetryService.Load(folder).LastSent);
+        Assert.Equal(TelemetryService.HourOf(Now), TelemetryService.Load(folder).LastSent);
 
-        Assert.False(await TelemetryService.PingIfDueAsync(folder, server.Url, Today));   // today's is done
+        Assert.False(await TelemetryService.PingIfDueAsync(Usage, folder, server.Url, Now.AddMinutes(30)));   // this hour's is done
         Assert.Single(server.Requests);
-        Assert.True(await TelemetryService.PingIfDueAsync(folder, server.Url, Today.AddDays(1)));   // tomorrow's isn't
+        Assert.True(await TelemetryService.PingIfDueAsync(Usage, folder, server.Url, Now.AddHours(1)));   // the next hour's isn't
         Assert.Equal(2, server.Requests.Count);
     }
 
@@ -116,8 +136,8 @@ public sealed class TelemetryServiceTests : IDisposable
     {
         using var server = new PingServer(HttpStatusCode.NotFound);
         TelemetryService.SetEnabled(true, folder);
-        Assert.True(await TelemetryService.PingIfDueAsync(folder, server.Url, Today));
-        Assert.Equal(Today, TelemetryService.Load(folder).LastSent);
+        Assert.True(await TelemetryService.PingIfDueAsync(Usage, folder, server.Url, Now));
+        Assert.Equal(TelemetryService.HourOf(Now), TelemetryService.Load(folder).LastSent);
     }
 
     [Fact]
@@ -125,11 +145,11 @@ public sealed class TelemetryServiceTests : IDisposable
     {
         TelemetryService.SetEnabled(true, folder);
         // A loopback port nobody listens on; the test URL rule lets it through, the connection is refused.
-        Assert.False(await TelemetryService.PingIfDueAsync(folder, "http://127.0.0.1:1/ping", Today));
+        Assert.False(await TelemetryService.PingIfDueAsync(Usage, folder, "http://127.0.0.1:1/ping", Now));
         Assert.Null(TelemetryService.Load(folder).LastSent);
     }
 
-    /// <summary>A local site that logs what it's asked, in place of the download site.</summary>
+    /// <summary>A local site that logs what it's asked, in place of the count service.</summary>
     private sealed class PingServer : IDisposable
     {
         private readonly HttpListener listener = new();

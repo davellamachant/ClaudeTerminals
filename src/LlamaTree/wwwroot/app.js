@@ -5142,11 +5142,11 @@ const notices = { list: [], shown: null, waiting: false, dismissed: new Set(stor
 
 // ---- Counting users -------------------------------------------------------------------------------------------------
 // Whether you've said yes to being counted (count.state and count.set in MainForm, TelemetryService behind them). The
-// host keeps the answer and makes the daily request; the page asks the question once, along the top, until it's
+// host keeps the answer and makes the hourly request; the page asks the question once, along the top, until it's
 // answered either way, and offers the switch in the version menu.
 
 const count = { enabled: undefined };   // undefined: not read yet; null: not asked yet; true or false: your answer
-const COUNT_SENT = "Once a day the app makes one request to downloads.llamachant.com that says three things: a random id made when you said yes (so a copy run every day counts once, not thirty times), the app's version and the Windows version. Nothing about you, your sessions, your projects or what's in them. Saying no, or turning it off later, throws the id away.";
+const COUNT_SENT = "Once an hour while it's open, the app makes one request to count.llamachant.com that says six things: a random id made when you said yes (so a copy counts once, however often it asks), the app's version, the operating system and its version, and how many projects and sessions are open. Only how many: never their names, their folders or anything in them, and nothing about you. We don't keep your IP address. Saying no, or turning it off later, throws the id away.";
 
 async function loadCount() {
   try { count.enabled = (await request('count.state')).enabled; } catch { count.enabled = false; }
@@ -5161,7 +5161,7 @@ async function setCount(on) {
 /** What the count is and what it sends, with the switch. */
 function showCountDialog() {
   openModal('Counting users', [
-    h('div', {}, "We'd like to know how many people use LlamaTree, and which versions, and we don't want to know anything else."),
+    h('div', {}, "We'd like to know how many people use LlamaTree, on which versions and systems, and how much, and we don't want to know anything else."),
     h('div', {}, COUNT_SENT),
   ], [
     h('label', { class: 'check-field' }, h('input', { type: 'checkbox', checked: count.enabled === true, onchange: (e) => setCount(e.target.checked) }), 'Count me among the users'),
@@ -5178,7 +5178,7 @@ function renderCountAsk(bar) {
   bar.style.setProperty('--notice', '');
   bar.replaceChildren(
     h('span', { class: 'notice-kind' }, iconEl('info'), 'A question'),
-    h('span', { class: 'notice-text' }, 'May we count you? Once a day the app would send one anonymous request saying it ran, its version and the Windows version, and nothing else, ever. ',
+    h('span', { class: 'notice-text' }, "May we count you? Once an hour the app would send one anonymous request with its version, your operating system and how many projects and sessions are open: just the numbers, never their names or what's in them. ",
       h('a', { class: 'notice-inline-link', href: '#', onclick: (e) => { e.preventDefault(); showCountDialog(); } }, 'What it sends')),
     h('span', { class: 'notice-actions' },
       h('button', { class: 'btn primary', onclick: () => setCount(true) }, 'Yes, count me'),

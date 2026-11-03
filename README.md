@@ -398,9 +398,9 @@ A few seconds after starting, and every 15 minutes, the app checks this reposito
 
 ### Counting users
 
-We'd like to know how many people use LlamaTree, and which versions. So the first time it runs, a line under the title bar asks whether it may count you; nothing is sent until you say yes, and *No thanks* is remembered as firmly as yes. The switch is in the version menu, *Count me among the users*, with *What the count sends…* beside it.
+We'd like to know how many people use LlamaTree, on which versions and systems, and how much. So the first time it runs, a line under the title bar asks whether it may count you; nothing is sent until you say yes, and *No thanks* is remembered as firmly as yes. The switch is in the version menu, *Count me among the users*, with *What the count sends…* beside it.
 
-When it's on, once a day the app makes one request to `https://downloads.llamachant.com/downloads/TerminalsData/ping` (always that address) that says three things: a random id made when you said yes, so a copy run every day counts once rather than thirty times; the app's version; and the Windows version. The site's log is the count. Nothing about you, your sessions, your projects or what's in them is ever sent, and nothing is read back. Turning it off throws the id away, so saying yes again later starts over as a new user. The answer and the id are kept in `telemetry.json` beside `sessions.json`.
+When it's on, once an hour while the app is open it makes one request to `https://count.llamachant.com/ping` (always that address) that says six things: a random id made when you said yes, so a copy counts once however often it asks; the app's version; the operating system's name (`windows`) and version; and how many projects and sessions are open. **Only the numbers**: never the names of projects or sessions, their folders, branches, prompts, conversations, code or anything else in them, and nothing about you; nothing is read back. The count service ([`server/`](server)) keeps only those six things, by the hour, for 400 days, and not the address the request came from. Turning it off throws the id away, so saying yes again later starts over as a new user. The answer and the id are kept in `telemetry.json` beside `sessions.json`.
 
 ### Tips and offers
 
