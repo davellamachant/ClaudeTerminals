@@ -1,4 +1,9 @@
-# LlamaTree
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/LlamaTree-Logo.svg">
+    <img alt="LlamaTree" src="docs/brand/LlamaTree-Logo-Light.svg" width="460">
+  </picture>
+</h1>
 
 *Formerly Claude Terminals.*
 

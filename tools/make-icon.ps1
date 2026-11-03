@@ -1,81 +1,72 @@
-# Generates src/LlamaTree/app.ico: a purple rounded tile with a terminal prompt.
-# Multi-resolution ICO with PNG-compressed entries (16-256 px).
-param([string]$Out = "$PSScriptRoot\..\src\LlamaTree\app.ico")
-
+# Generates src/LlamaTree/app.ico (and app.png) from docs/brand/LlamaTree-Icon.svg.
+# Microsoft Edge renders the SVG once at 1024 px; each icon size is scaled down from that. The ICO holds PNG entries
+# (16-256 px), which Windows has read since Vista.
+param(
+    [string]$Svg = "$PSScriptRoot\..\docs\brand\LlamaTree-Icon.svg",
+    [string]$Out = "$PSScriptRoot\..\src\LlamaTree\app.ico",
+    [string]$Png = "$PSScriptRoot\..\src\LlamaTree\app.png"
+)
+$ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 
-function New-RoundedRect([single]$x, [single]$y, [single]$w, [single]$h, [single]$r) {
-    $p = [System.Drawing.Drawing2D.GraphicsPath]::new()
-    $d = $r * 2
-    $p.AddArc($x, $y, $d, $d, 180, 90)
-    $p.AddArc($x + $w - $d, $y, $d, $d, 270, 90)
-    $p.AddArc($x + $w - $d, $y + $h - $d, $d, $d, 0, 90)
-    $p.AddArc($x, $y + $h - $d, $d, $d, 90, 90)
-    $p.CloseFigure()
-    $p
-}
+$edge = @(
+    "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
+    "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe"
+) | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $edge) { throw 'Microsoft Edge not found: it renders the SVG.' }
 
-function New-IconPng([int]$size) {
-    $bmp = [System.Drawing.Bitmap]::new($size, $size, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
-    $g = [System.Drawing.Graphics]::FromImage($bmp)
-    $g.SmoothingMode = 'AntiAlias'
-    $g.PixelOffsetMode = 'HighQuality'
-    $g.Clear([System.Drawing.Color]::Transparent)
+# Render: a page holding just the image, screenshotted on a transparent background.
+$work = Join-Path ([IO.Path]::GetTempPath()) ("llamatree-icon-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory $work | Out-Null
+try {
+    $data = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Resolve-Path $Svg)))
+    $page = Join-Path $work 'icon.html'
+    Set-Content $page "<html><body style=`"margin:0;background:transparent`"><img src=`"data:image/svg+xml;base64,$data`" style=`"display:block;width:1024px;height:1024px`"></body></html>"
+    $big = Join-Path $work 'icon.png'
+    & $edge --headless=new --disable-gpu --hide-scrollbars --default-background-color=00000000 `
+        --window-size=1024,1024 "--user-data-dir=$work\profile" "--screenshot=$big" ([Uri]$page).AbsoluteUri 2>$null | Out-Null
+    for ($i = 0; $i -lt 50 -and -not (Test-Path $big); $i++) { Start-Sleep -Milliseconds 200 }
+    if (-not (Test-Path $big)) { throw 'Edge did not render the icon.' }
 
-    $s = [single]$size
-    $m = [Math]::Max(0.5, $s * 0.03)
-    $tile = New-RoundedRect $m $m ($s - 2 * $m) ($s - 2 * $m) ($s * 0.2)
-    $grad = [System.Drawing.Drawing2D.LinearGradientBrush]::new(
-        [System.Drawing.PointF]::new(0, 0), [System.Drawing.PointF]::new($s, $s),
-        [System.Drawing.Color]::FromArgb(255, 0x8b, 0x7f, 0xf0), [System.Drawing.Color]::FromArgb(255, 0x4b, 0x3f, 0xb0))
-    $g.FillPath($grad, $tile)
-
-    # Terminal "screen" inset, skipped at tiny sizes where it would just be noise.
-    if ($size -ge 32) {
-        $inset = $s * 0.16
-        $screen = New-RoundedRect $inset ($inset * 1.05) ($s - 2 * $inset) ($s - 2 * $inset) ($s * 0.08)
-        $g.FillPath([System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(235, 0x18, 0x18, 0x1c)), $screen)
+    $source = [System.Drawing.Bitmap]::FromFile($big)
+    function Get-Scaled([int]$size) {
+        $bmp = [System.Drawing.Bitmap]::new($size, $size, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+        $g = [System.Drawing.Graphics]::FromImage($bmp)
+        $g.InterpolationMode = 'HighQualityBicubic'
+        $g.PixelOffsetMode = 'HighQuality'
+        $g.CompositingQuality = 'HighQuality'
+        $g.Clear([System.Drawing.Color]::Transparent)
+        $g.DrawImage($source, 0, 0, $size, $size)
+        $g.Dispose()
+        $ms = [IO.MemoryStream]::new()
+        $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+        $bmp.Dispose()
+        , $ms.ToArray()
     }
 
-    # Prompt: chevron ">" and cursor "_".
-    $stroke = [Math]::Max(1.6, $s * 0.085)
-    $pen = [System.Drawing.Pen]::new([System.Drawing.Color]::White, $stroke)
-    $pen.StartCap = 'Round'; $pen.EndCap = 'Round'; $pen.LineJoin = 'Round'
-    $cx = $s * 0.30; $cy = $s * 0.50; $ch = $s * 0.15
-    $g.DrawLines($pen, [System.Drawing.PointF[]]@(
-        [System.Drawing.PointF]::new($cx, $cy - $ch),
-        [System.Drawing.PointF]::new($cx + $ch * 1.05, $cy),
-        [System.Drawing.PointF]::new($cx, $cy + $ch)))
-    $cursor = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(255, 0xc9, 0xc2, 0xff), $stroke)
-    $cursor.StartCap = 'Round'; $cursor.EndCap = 'Round'
-    $g.DrawLine($cursor, $s * 0.53, $cy + $ch, $s * 0.72, $cy + $ch)
+    $sizes = 16, 20, 24, 32, 40, 48, 64, 128, 256
+    $images = $sizes | ForEach-Object { , (Get-Scaled $_) }
+    [IO.File]::WriteAllBytes($Png, $images[-1])
 
-    $g.Dispose()
-    $ms = [System.IO.MemoryStream]::new()
-    $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
-    $bmp.Dispose()
-    , $ms.ToArray()
+    # ICONDIR, one ICONDIRENTRY per size, then the PNGs.
+    $ico = [IO.MemoryStream]::new()
+    $w = [IO.BinaryWriter]::new($ico)
+    $w.Write([UInt16]0); $w.Write([UInt16]1); $w.Write([UInt16]$sizes.Count)
+    $offset = 6 + 16 * $sizes.Count
+    for ($i = 0; $i -lt $sizes.Count; $i++) {
+        $s = $sizes[$i]; $len = $images[$i].Length
+        $w.Write([byte]($s % 256)); $w.Write([byte]($s % 256))   # 256 is written as 0
+        $w.Write([byte]0); $w.Write([byte]0)
+        $w.Write([UInt16]1); $w.Write([UInt16]32)
+        $w.Write([UInt32]$len); $w.Write([UInt32]$offset)
+        $offset += $len
+    }
+    foreach ($img in $images) { $w.Write($img) }
+    $w.Flush()
+    [IO.File]::WriteAllBytes($Out, $ico.ToArray())
+    $source.Dispose()
+    Write-Host "Wrote $Out ($($sizes -join ', ') px) and $Png"
 }
-
-$sizes = 16, 24, 32, 48, 64, 128, 256
-$images = foreach ($sz in $sizes) { , (New-IconPng $sz) }
-
-$Out = [System.IO.Path]::GetFullPath($Out)
-$ico = [System.IO.MemoryStream]::new()
-$w = [System.IO.BinaryWriter]::new($ico)
-$w.Write([uint16]0); $w.Write([uint16]1); $w.Write([uint16]$sizes.Count)
-$offset = 6 + 16 * $sizes.Count
-for ($i = 0; $i -lt $sizes.Count; $i++) {
-    $dim = if ($sizes[$i] -ge 256) { 0 } else { $sizes[$i] }
-    $w.Write([byte]$dim); $w.Write([byte]$dim); $w.Write([byte]0); $w.Write([byte]0)
-    $w.Write([uint16]1); $w.Write([uint16]32)
-    $w.Write([uint32]$images[$i].Length); $w.Write([uint32]$offset)
-    $offset += $images[$i].Length
+finally {
+    Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
 }
-foreach ($img in $images) { $w.Write($img) }
-$w.Flush()
-[System.IO.File]::WriteAllBytes($Out, $ico.ToArray())
-
-# A 256 px PNG preview alongside, handy for checking the design.
-[System.IO.File]::WriteAllBytes([System.IO.Path]::ChangeExtension($Out, '.png'), $images[-1])
-"Wrote $Out"

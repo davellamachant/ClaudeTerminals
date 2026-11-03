@@ -1,0 +1,50 @@
+<svg xmlns='http://www.w3.org/2000/svg' width='512' height='512' viewBox='0 0 512 512' role='img' aria-labelledby='title'><title id='title'>LlamaTree app icon</title><defs>
+ <linearGradient id="orange" x2="0.3" y2="1"><stop stop-color="#ffb14c"/><stop offset="1" stop-color="#ff7900"/></linearGradient>
+ <linearGradient id="fur" x2="0.65" y2="1"><stop stop-color="#fffdf6"/><stop offset=".55" stop-color="#f5e3c9"/><stop offset="1" stop-color="#d4ab83"/></linearGradient>
+ <linearGradient id="cyan"><stop stop-color="#46e8f5"/><stop offset="1" stop-color="#8cfff4"/></linearGradient>
+ <linearGradient id="purple"><stop stop-color="#b9b2ff"/><stop offset="1" stop-color="#c767dc"/></linearGradient>
+ <linearGradient id="green"><stop stop-color="#39ed9a"/><stop offset="1" stop-color="#b1ff9b"/></linearGradient>
+ <linearGradient id="branch" x2="0" y2="1"><stop stop-color="#dfedf0"/><stop offset="1" stop-color="#8ff5db"/></linearGradient>
+</defs><rect width='512' height='512' rx='112' fill='#061018'/><rect x='10' y='10' width='492' height='492' rx='104' fill='none' stroke='url(#orange)' stroke-width='14'/><g transform='translate(-32 37) scale(.8)'><g id="llama-terminal-mark">
+<!-- Orange crescent -->
+<path fill="url(#orange)" d="M179 169 C102 198 63 277 86 355 C118 466 257 554 409 468 C290 522 164 467 119 374 C81 297 113 230 179 169Z"/>
+<!-- Three-way terminal tree -->
+<path d="M381 466 V352 Q381 343 388 336 L435 289 V199 Q435 185 451 185 M435 289 H499 M381 420 H448" fill="none" stroke="url(#branch)" stroke-width="10" stroke-linejoin="round"/>
+<!-- Llama silhouette and swept ears -->
+<path fill="url(#fur)" d="M141 259 L180 202 Q193 183 193 159 C195 108 239 58 300 45 Q307 103 250 167 L281 140 C333 120 370 99 382 65 C407 95 390 135 360 156 Q382 130 382 99 C371 130 350 146 326 151 Q359 155 387 185 L353 187 Q382 209 407 235 Q412 241 405 249 L398 262 Q414 275 405 286 L393 289 Q388 302 376 306 Q358 308 334 293 C291 312 261 299 239 279 Q254 315 303 342 C300 386 306 428 317 469 C266 444 234 392 224 343 Q223 403 247 450 L219 421 L218 452 Q196 444 189 394 L176 422 L142 375 L169 305 L128 335 L180 240Z"/>
+<!-- Inner ears -->
+<path fill="#08131a" d="M219 197 C205 138 240 89 286 69 Q278 116 246 151Z"/>
+<path fill="#b78b64" d="M240 167 Q233 122 281 82 Q271 119 246 151Z"/>
+<path fill="#fffdf7" d="M252 167 L282 141 Q342 120 382 83 Q374 119 338 139 Q302 131 277 150Z"/>
+<!-- Layered mane -->
+<path fill="#e2bf99" d="M214 226 L167 370 L190 340 L176 406 L156 392 L142 375 L169 305 L128 335 L180 240Z"/>
+<path fill="#b88e69" d="M219 313 Q214 373 218 452 Q196 444 189 394 L176 422 L160 404 L191 348 L199 402Z"/>
+<path fill="#ac7c55" d="M225 339 Q224 401 247 450 L219 421Z"/>
+<path fill="#fff8e9" d="M241 313 Q264 350 301 371 Q305 431 317 469 C280 433 254 378 241 313Z"/>
+<path fill="#c49a73" d="M239 279 Q260 317 303 342 L301 371 Q264 350 241 313Z"/>
+<!-- Face and muzzle -->
+<path fill="#fffaf0" d="M216 224 Q230 282 270 287 Q300 296 333 282 L353 294 Q375 307 392 290 Q378 294 361 286 L346 272 Q364 288 383 283 Q399 278 392 263 Q387 256 375 254 Q365 251 368 244 Q373 236 387 248 L398 259 L405 246 Q413 241 403 234 L366 211 L343 212 Q335 254 298 256 Q262 265 249 223Z"/>
+<path fill="#08131a" d="M330 272 Q338 265 347 274 Q371 295 391 283 L394 290 Q373 304 349 284Z M370 242 Q380 240 393 253 L399 260 L407 250 L402 269 L402 283 L396 282 L394 266 Q387 256 375 254 Q365 251 370 242Z"/>
+<!-- Sunglasses -->
+<path fill="#020c12" d="M197 219 L249 184 Q258 176 271 176 Q332 175 406 198 L404 222 L394 219 Q384 207 357 207 Q347 208 344 220 Q339 247 312 249 Q270 252 260 232 L251 206 L198 231Z"/>
+<path fill="#315964" d="M293 190 Q318 188 334 196 L330 222 Q319 199 293 190Z M380 197 Q396 196 403 201 L401 222 Q397 207 380 197Z"/>
+<path fill="#123440" d="M293 190 Q313 205 325 235 Q333 224 330 222 Q319 199 293 190Z"/>
+</g><g transform="translate(448 101)">
+<rect width="135" height="99" rx="13" fill="#061219" stroke="url(#cyan)" stroke-width="9"/>
+<path d="M5 26 H130 V13 Q130 5 121 5 H14 Q5 5 5 14Z" fill="url(#cyan)"/>
+<rect x="58" y="5" width="67" height="17" rx="8" fill="#092934"/>
+<g fill="#f9fff7"><circle cx="15" cy="14" r="4"/><circle cx="28" cy="14" r="4"/><circle cx="41" cy="14" r="4"/><circle cx="105" cy="14" r="4"/><circle cx="118" cy="14" r="4"/></g>
+<path d="M29 46 L49 61 L29 76 M65 77 H89" fill="none" stroke="#fffaf1" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+</g><g transform="translate(500 235)">
+<rect width="135" height="99" rx="13" fill="#061219" stroke="url(#purple)" stroke-width="9"/>
+<path d="M5 26 H130 V13 Q130 5 121 5 H14 Q5 5 5 14Z" fill="url(#purple)"/>
+<rect x="58" y="5" width="67" height="17" rx="8" fill="#092934"/>
+<g fill="#f9fff7"><circle cx="15" cy="14" r="4"/><circle cx="28" cy="14" r="4"/><circle cx="41" cy="14" r="4"/><circle cx="105" cy="14" r="4"/><circle cx="118" cy="14" r="4"/></g>
+<path d="M29 46 L49 61 L29 76 M65 77 H89" fill="none" stroke="#fffaf1" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+</g><g transform="translate(448 366)">
+<rect width="135" height="99" rx="13" fill="#061219" stroke="url(#green)" stroke-width="9"/>
+<path d="M5 26 H130 V13 Q130 5 121 5 H14 Q5 5 5 14Z" fill="url(#green)"/>
+<rect x="58" y="5" width="67" height="17" rx="8" fill="#092934"/>
+<g fill="#f9fff7"><circle cx="15" cy="14" r="4"/><circle cx="28" cy="14" r="4"/><circle cx="41" cy="14" r="4"/><circle cx="105" cy="14" r="4"/><circle cx="118" cy="14" r="4"/></g>
+<path d="M29 46 L49 61 L29 76 M65 77 H89" fill="none" stroke="#fffaf1" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+</g></g></svg>
