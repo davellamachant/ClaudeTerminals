@@ -70,7 +70,7 @@ Download the package for your distribution from the [latest release](https://git
 | Fedora, openSUSE, RHEL… | `llamatree-<version>-1.x86_64.rpm` | `sudo dnf install ./llamatree-<version>-1.x86_64.rpm` (openSUSE: `sudo zypper install …`) |
 | Anything else | `LlamaTree-<version>-linux-x64.tar.gz` | Install WebKitGTK 4.1 and libnotify, unpack it anywhere and run `LlamaTree` |
 
-Then start **LlamaTree** from your applications menu, or run `llamatree`. It's 64-bit Intel/AMD (x86-64) only for now. A new version is announced in the app, with a link to its release; it doesn't install itself on Linux. Uninstall with `sudo apt remove llamatree` (or `sudo dnf remove llamatree`); your sessions and settings stay in `~/.config/LlamaTree`.
+Then start **LlamaTree** from your applications menu, or run `llamatree`. It's 64-bit Intel/AMD (x86-64) only for now. It updates itself like the Windows app (see [Updates](#updates)): a package asks for an administrator's password to install the new version; an unpacked `.tar.gz` replaces its own folder. Uninstall with `sudo apt remove llamatree` (or `sudo dnf remove llamatree`); your sessions and settings stay in `~/.config/LlamaTree`.
 
 **macOS:** LlamaTree runs there too, built from source for now (see [macOS and Linux](#macos-and-linux)).
 
@@ -407,7 +407,7 @@ A theme is only data: the app takes the names above and checks each value, so it
 
 ### Updates
 
-A few seconds after starting, and every 15 minutes, the app checks this repository's latest GitHub release (an anonymous request; nothing about you or your sessions is sent). When there's a newer version, an **Update to x.y.z** button appears in the title bar, showing what's new. *Update and restart* downloads the installer, checks it against the SHA-256 GitHub publishes for it (it won't run a file that doesn't match), closes the app, installs silently and reopens it. Running sessions carry on in the conversations they were in. The version is shown at the top right and in the window title; clicking it offers *Check for updates* and turns the automatic check off.
+A few seconds after starting, and every 15 minutes, the app checks this repository's latest GitHub release (an anonymous request; nothing about you or your sessions is sent). When there's a newer version, an **Update to x.y.z** button appears in the title bar, showing what's new. *Update and restart* downloads the installer, checks it against the SHA-256 GitHub publishes for it (it won't run a file that doesn't match), closes the app, installs silently and reopens it. On Linux, the package you installed from (`.deb` or `.rpm`) is downloaded and checked the same way, then installed with apt, dnf or zypper behind your desktop's administrator password prompt, before the app closes and reopens; a cancelled prompt leaves things as they were. A copy unpacked from the `.tar.gz` into a folder you own is replaced by the new one. On macOS (for now), the button links the release instead. Running sessions carry on in the conversations they were in. The version is shown at the top right and in the window title; clicking it offers *Check for updates* and turns the automatic check off.
 
 ### Tips and offers
 
@@ -466,7 +466,7 @@ dotnet test
 
 ### macOS and Linux
 
-Run from source as above; [GitHub Actions](.github/workflows/build.yml) also builds and tests every push on Windows, Linux and macOS and keeps a self-contained build of each (`LlamaTree-osx-arm64`, `-osx-x64`, `-linux-x64`) on the run for two weeks. Releases carry Linux packages ([Linux](#linux)), made by [`tools/package-linux.cs`](tools/package-linux.cs) from `publish.ps1` (on Windows, with no Linux tools); there's no macOS app bundle yet. Neither updates itself: *Check for updates* says when a new version is out and links its release.
+Run from source as above; [GitHub Actions](.github/workflows/build.yml) also builds and tests every push on Windows, Linux and macOS and keeps a self-contained build of each (`LlamaTree-osx-arm64`, `-osx-x64`, `-linux-x64`) on the run for two weeks. Releases carry Linux packages ([Linux](#linux)), made by [`tools/package-linux.cs`](tools/package-linux.cs) from `publish.ps1` (on Windows, with no Linux tools); there's no macOS app bundle yet, and a macOS copy doesn't update itself: *Check for updates* says when a new version is out and links its release.
 
 - **Linux** needs WebKitGTK 4.1 and libnotify (Debian/Ubuntu: `sudo apt install libwebkit2gtk-4.1-0 libnotify4`). Pasting an image or copied files into a terminal uses `wl-paste` (Wayland) or `xclip` (X11) if they're installed.
 - **Sessions get your login shell's environment** (`$SHELL -l -i`, read again after a minute), so `claude`, `codex`, `node` and `git` are found as in a terminal even when the app is started from the Dock or a desktop menu. Commands run through `/bin/sh`, so a session's command is written the way you'd type it in a terminal.
@@ -497,7 +497,7 @@ Signed releases are built by `azure-pipelines.yml` on the Azure DevOps agent wit
 1. Bump `<Version>` in `LlamaTree.csproj` and merge to `main`.
 2. In Azure DevOps, run the pipeline on `main` (or on a tag `v<version>`) with *Create the GitHub release* ticked. Untick it for a trial run that only builds and signs, keeping the installer on the run's Artifacts.
 3. The pipeline runs `publish.ps1 -Sign`, which signs `LlamaTree.exe`/`.dll`, setup and its uninstaller as *Llamachant Technology Ltd* (picked from the certificate store by subject, as the NuGet signing does), timestamps them with Sectigo's server, and fails unless each carries a valid, timestamped signature from that publisher. It then creates a **draft** GitHub release with the installer.
-4. Write the release notes on the draft and publish it: that's what makes the in-app updater offer the new version. The updater shows everything above the notes' *Install* heading, and needs the installer named `LlamaTree-Setup-<version>.exe` on a `v<version>` tag.
+4. Write the release notes on the draft and publish it: that's what makes the in-app updater offer the new version. The updater shows everything above the notes' *Install* heading, and needs the installer named `LlamaTree-Setup-<version>.exe` on a `v<version>` tag (Linux copies update from the `.deb`, `.rpm` and `.tar.gz` under the names `publish.ps1` gives them).
 
 ## License
 

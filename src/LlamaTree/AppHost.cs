@@ -1059,16 +1059,30 @@ internal sealed class AppHost
                     name = update?.Name,
                     pageUrl = update?.PageUrl,
                     notes = update?.Notes,
-                    canInstall = update?.Sha256 != null && UpdateService.CanInstallHere,
+                    canInstall = update?.CanInstall == true,
+                    // A Linux package is installed first, after the system asks for an administrator's password.
+                    asksPassword = UpdateService.Install is InstallKind.Deb or InstallKind.Rpm,
                 };
             }
             case "update.install":
             {
                 var info = update ?? throw new InvalidOperationException("Check for updates first.");
-                if (!UpdateService.CanInstallHere) throw new InvalidOperationException("Updates install themselves on Windows only: get the new version from its release page.");
+                if (!info.CanInstall) throw new InvalidOperationException("This copy of LlamaTree can't install the update itself: get the new version from its release page.");
                 var installer = await UpdateService.DownloadAsync(info);
-                NoteConversationsForResume();
-                UpdateService.InstallAfterExit(installer);
+                if (UpdateService.Install == InstallKind.Windows)
+                {
+                    NoteConversationsForResume();
+                    UpdateService.InstallAfterExit(installer);
+                }
+                else
+                {
+                    // Installed (or unpacked) now, while a failure can still be shown; the app reopens once it has closed.
+                    string finish;
+                    try { finish = await LinuxUpdate.PrepareAsync(UpdateService.Install, installer); }
+                    finally { try { Directory.Delete(Path.GetDirectoryName(installer)!, true); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { } }
+                    NoteConversationsForResume();
+                    LinuxUpdate.FinishAfterExit(finish);
+                }
                 // Close once this reply is on its way; setup waits for the process to end.
                 RunOnUi(() => { closingForUpdate = true; window.Close(); });
                 return null;

@@ -5134,7 +5134,7 @@ function showUpdateDialog() {
     if (updates.installing) return;
     updates.installing = true;
     install.disabled = true;
-    install.textContent = 'Downloading…';
+    install.textContent = u.asksPassword ? 'Installing…' : 'Downloading…';
     status.classList.remove('error');
     status.textContent = '';
     try {
@@ -5153,8 +5153,8 @@ function showUpdateDialog() {
     h('div', { class: 'update-from dim' }, `You have ${updates.current}.`),
     h('div', { class: 'update-notes md' }, renderMarkdown(updateNotes(u.notes) || 'No release notes.')),
     h('div', { class: 'update-what' }, u.canInstall
-      ? `LlamaTree will close, install the update and reopen.${running ? ` ${running} running session${running === 1 ? '' : 's'} will restart and carry on in ${running === 1 ? 'its' : 'their'} conversation${running === 1 ? '' : 's'}.` : ''}`
-      : 'This release can’t be installed automatically (it has no checksum). Download it from the release page.'),
+      ? `${u.asksPassword ? 'LlamaTree will install the update (your system asks for an administrator’s password), then close and reopen.' : 'LlamaTree will close, install the update and reopen.'}${running ? ` ${running} running session${running === 1 ? '' : 's'} will restart and carry on in ${running === 1 ? 'its' : 'their'} conversation${running === 1 ? '' : 's'}.` : ''}`
+      : 'This copy of LlamaTree can’t install this release itself. Download it from the release page.'),
     status,
   ], [
     h('button', { class: 'btn', onclick: () => request('openUrl', { uri: u.pageUrl }) }, 'Release page'),

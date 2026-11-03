@@ -77,6 +77,42 @@ public sealed class UpdateServiceTests
     [Fact]
     public void A_prerelease_is_not_offered() => Assert.Null(UpdateService.Parse(Release(prerelease: true)));
 
+    [Theory]
+    [InlineData(InstallKind.Deb)]
+    [InlineData(InstallKind.Rpm)]
+    [InlineData(InstallKind.Tar)]
+    public void A_linux_copy_updates_from_the_package_it_was_installed_from(InstallKind kind)
+    {
+        var name = LinuxUpdate.AssetName(kind, new Version(1, 0, 8))!;
+        var json = Release(asset: name).Replace("\"name\":\"notes.txt\"", "\"name\":\"LlamaTree-Setup-1.0.8.exe\"");
+
+        var u = UpdateService.Parse(json, kind);
+
+        Assert.Equal(name, u?.AssetName);
+        Assert.True(u?.ForThisMachine);
+    }
+
+    [Theory]
+    [InlineData(InstallKind.Deb)]
+    [InlineData(InstallKind.None)]   // macOS, or a copy run from source
+    public void Without_its_package_the_release_is_still_shown_but_not_installed(InstallKind kind)
+    {
+        var u = UpdateService.Parse(Release(), kind);
+        Assert.Equal("LlamaTree-Setup-1.0.8.exe", u?.AssetName);
+        Assert.False(u?.ForThisMachine);
+    }
+
+    [Fact]
+    public void The_linux_packages_are_named_as_the_packaging_tool_names_them()
+    {
+        if (System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture != System.Runtime.InteropServices.Architecture.X64) return;
+        var v = new Version(1, 2, 3);
+        Assert.Equal("llamatree_1.2.3_amd64.deb", LinuxUpdate.AssetName(InstallKind.Deb, v));
+        Assert.Equal("llamatree-1.2.3-1.x86_64.rpm", LinuxUpdate.AssetName(InstallKind.Rpm, v));
+        Assert.Equal("LlamaTree-1.2.3-linux-x64.tar.gz", LinuxUpdate.AssetName(InstallKind.Tar, v));
+        Assert.Null(LinuxUpdate.AssetName(InstallKind.Windows, v));
+    }
+
     [Fact]
     public void The_service_initialises_and_knows_this_copys_version()
     {

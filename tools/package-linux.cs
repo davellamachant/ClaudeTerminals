@@ -75,6 +75,11 @@ File_("/usr/share/icons/hicolor/256x256/apps/llamatree.png", File.ReadAllBytes(P
 var files = items.OrderBy(i => i.Path, StringComparer.Ordinal).ToList();
 var installedSize = files.Where(f => !f.IsDir).Sum(f => (long)f.Content!.Length);
 
+// Each package says how it was installed, so the app knows how to update itself (see UpdateService.LinuxInstall).
+List<Item> As(string kind) =>
+    [.. files.Append(new Item("/opt/llamatree/package-type", Encoding.ASCII.GetBytes(kind + "\n"), 0b110_100_100, false))
+        .OrderBy(i => i.Path, StringComparer.Ordinal)];
+
 Deb();
 Rpm();
 TarGz();
@@ -86,6 +91,7 @@ string Rel(string full) => Path.GetRelativePath(publish, full).Replace('\\', '/'
 
 void Deb()
 {
+    var files = As("deb");
     var control = $"""
         Package: {Name}
         Version: {version}
@@ -130,6 +136,7 @@ void ArMember(Stream ar, string name, byte[] content)
 void TarGz()
 {
     var top = $"LlamaTree-{version}-linux-{arch}";
+    var files = As("tar");
     var entries = files.Where(f => f.Path.StartsWith("/opt/llamatree/", StringComparison.Ordinal))
         .Select(f => f with { Path = f.Path["/opt/llamatree".Length..] })
         .Append(new Item("/llamatree.desktop", files.First(f => f.Path.EndsWith(".desktop")).Content!, 0b110_100_100, false));
@@ -169,7 +176,7 @@ byte[] TarGzip(IEnumerable<Item> entries, string root, bool withRootDir)
 void Rpm()
 {
     // Only the app's own folders belong to it; /usr/bin and the like belong to the system.
-    var owned = files.Where(f => !f.IsDir || f.Path.StartsWith("/opt/llamatree", StringComparison.Ordinal)).ToList();
+    var owned = As("rpm").Where(f => !f.IsDir || f.Path.StartsWith("/opt/llamatree", StringComparison.Ordinal)).ToList();
     var payload = Cpio(owned);
     var compressed = Gzip(payload);
 
