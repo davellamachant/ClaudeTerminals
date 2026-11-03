@@ -55,6 +55,16 @@ internal sealed record WorktreeOverview(string Path, string? Branch, bool Main, 
 /// <param name="BaseBranch">What the worktrees are compared with (origin/main, say), or null if the repository has none.</param>
 internal sealed record RepoOverview(string Root, string? BaseBranch, List<WorktreeOverview> Worktrees);
 
+/// <summary>A branch for the branch picker (see <see cref="GitService.GetBranchesAsync"/>).</summary>
+/// <param name="Remote">A remote-tracking branch (origin/main, say) rather than a local one.</param>
+/// <param name="Upstream">The branch a local branch tracks, if any.</param>
+/// <param name="Gone">It tracks a branch that's no longer on the remote.</param>
+/// <param name="Worktree">The worktree a local branch is checked out in, if any (git won't check it out in a second one).</param>
+internal sealed record BranchInfo(string Name, bool Remote, string? Upstream, int Ahead, int Behind, bool Gone, string? Worktree);
+
+/// <summary>What <see cref="GitService.CreateBranchAsync"/> or <see cref="GitService.CheckoutBranchAsync"/> did; <paramref name="Stash"/> is the commit id of the stash it made, if it made one.</summary>
+internal sealed record BranchResult(bool Ok, string Message, string? Stash = null);
+
 internal sealed record DiffContent(string Original, string Modified, string OriginalLabel, string ModifiedLabel, string? Notice);
 
 /// <summary>Thin wrapper over git.exe. All calls are read-only unless the method name says otherwise.</summary>
@@ -424,23 +434,149 @@ internal static class GitService
     public static async Task<GitResult> AddWorktreeAsync(string repoDir, string path, string branch, string? startPoint)
     {
         static GitResult Fail(string message) => new(1, [], message);
-        if (branch.StartsWith('-') || !(await RunAsync(repoDir, ["check-ref-format", "--branch", branch])).Ok)
-            return Fail($"\"{branch}\" isn't a valid branch name.");
-        if ((await RunAsync(repoDir, ["rev-parse", "--verify", "--quiet", "refs/heads/" + branch])).Ok)
-            return Fail($"A branch named \"{branch}\" already exists. Pick another name.");
+        if (await CheckNewBranchAsync(repoDir, branch, startPoint) is { } problem) return Fail(problem);
         if (!Path.IsPathFullyQualified(path)) return Fail("The folder must be a full path, such as D:\\Source\\repo-feature.");
         if (Directory.Exists(path) && Directory.EnumerateFileSystemEntries(path).Any()) return Fail($"{path} already exists and isn't empty.");
         if (File.Exists(path)) return Fail($"{path} is a file.");
         // --no-track: started from a remote branch (origin/main, say), git would make that the new branch's upstream, and
         // Push would then fail on the names not matching. With none, the first Push publishes it under its own name.
         var args = new List<string> { "worktree", "add", "--no-track", "-b", branch, path };
-        if (!string.IsNullOrWhiteSpace(startPoint))
-        {
-            if (startPoint.StartsWith('-') || !(await RunAsync(repoDir, ["rev-parse", "--verify", "--quiet", startPoint + "^{commit}"])).Ok)
-                return Fail($"\"{startPoint}\" isn't a branch or commit in this repository.");
-            args.Add(startPoint);
-        }
+        if (!string.IsNullOrWhiteSpace(startPoint)) args.Add(startPoint);
         return await RunAsync(repoDir, args, timeout: TimeSpan.FromMinutes(5));   // checking out a big tree takes a while
+    }
+
+    /// <summary>
+    /// Why <paramref name="branch"/> can't be made from <paramref name="startPoint"/> (null: the current commit), or null
+    /// if it can. Neither may start with "-", so git's options can't be smuggled in through them.
+    /// </summary>
+    private static async Task<string?> CheckNewBranchAsync(string dir, string branch, string? startPoint)
+    {
+        if (branch.StartsWith('-') || !(await RunAsync(dir, ["check-ref-format", "--branch", branch])).Ok)
+            return $"\"{branch}\" isn't a valid branch name.";
+        if ((await RunAsync(dir, ["rev-parse", "--verify", "--quiet", "refs/heads/" + branch])).Ok)
+            return $"A branch named \"{branch}\" already exists. Pick another name.";
+        if (!string.IsNullOrWhiteSpace(startPoint)
+            && (startPoint.StartsWith('-') || !(await RunAsync(dir, ["rev-parse", "--verify", "--quiet", startPoint + "^{commit}"])).Ok))
+            return $"\"{startPoint}\" isn't a branch or commit in this repository.";
+        return null;
+    }
+
+    /// <summary>
+    /// The repository's local branches, then its remote-tracking ones (origin/main, say), each sorted by name; no */HEAD.
+    /// For the branch picker of the Git panels.
+    /// </summary>
+    public static async Task<List<BranchInfo>> GetBranchesAsync(string dir)
+    {
+        // A tab can't be in a ref name (check-ref-format refuses control characters), so it separates the fields.
+        var r = await RunAsync(dir, ["for-each-ref", "--sort=refname", "--format=%(refname)%09%(upstream:short)%09%(upstream:track,nobracket)%09%(worktreepath)",
+            "refs/heads", "refs/remotes"]);
+        var list = new List<BranchInfo>();
+        if (!r.Ok) return list;
+        foreach (var line in r.Text.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var f = line.TrimEnd('\r').Split('\t');
+            if (f.Length < 4) continue;
+            var remote = f[0].StartsWith("refs/remotes/");
+            if (!remote && !f[0].StartsWith("refs/heads/") || remote && f[0].EndsWith("/HEAD")) continue;
+            var name = f[0][(remote ? "refs/remotes/" : "refs/heads/").Length..];
+            int Count(string word) => f[2].Split(", ").FirstOrDefault(p => p.StartsWith(word + " ")) is { } p && int.TryParse(p[(word.Length + 1)..], out var n) ? n : 0;
+            list.Add(new BranchInfo(name, remote, f[1].Length > 0 ? f[1] : null, Count("ahead"), Count("behind"), f[2] == "gone",
+                f[3].Length > 0 ? f[3].Replace('/', '\\') : null));
+        }
+        return list;
+    }
+
+    /// <summary>
+    /// Changes the repository: creates <paramref name="branch"/> from <paramref name="startPoint"/> (the current commit
+    /// when null) and, when <paramref name="checkout"/>, switches to it, with uncommitted changes handled as in
+    /// <see cref="SwitchAsync"/>. Like a worktree's branch it tracks nothing (see <see cref="AddWorktreeAsync"/>), so the
+    /// first Push publishes it under its own name.
+    /// </summary>
+    public static async Task<BranchResult> CreateBranchAsync(string dir, string branch, string? startPoint, bool checkout, bool stashChanges)
+    {
+        startPoint = string.IsNullOrWhiteSpace(startPoint) ? null : startPoint.Trim();
+        if (await CheckNewBranchAsync(dir, branch, startPoint) is { } problem) return new(false, problem);
+        string[] from = startPoint is null ? [] : [startPoint];
+        if (!checkout)
+        {
+            var made = await RunAsync(dir, ["branch", "--no-track", branch, .. from]);
+            return made.Ok ? new(true, $"Created {branch}.") : new(false, made.Error);
+        }
+        return await SwitchAsync(dir, branch, ["switch", "--no-track", "-c", branch, .. from], stashChanges, $"Switched to the new branch {branch}.");
+    }
+
+    /// <summary>
+    /// Changes the repository: switches to the local branch <paramref name="branch"/> or, given a remote branch
+    /// (<paramref name="remote"/>; origin/feature, say), to the local branch of the same name, creating it to track the
+    /// remote one if there's none yet, as Visual Studio does. Uncommitted changes as in <see cref="SwitchAsync"/>.
+    /// </summary>
+    public static async Task<BranchResult> CheckoutBranchAsync(string dir, string branch, bool remote, bool stashChanges)
+    {
+        if (branch.StartsWith('-')) return new(false, $"\"{branch}\" isn't a branch.");
+        var exists = async (string reference) => (await RunAsync(dir, ["rev-parse", "--verify", "--quiet", reference])).Ok;
+        if (!remote)
+            return await exists("refs/heads/" + branch)
+                ? await SwitchAsync(dir, branch, ["switch", branch], stashChanges, $"Switched to {branch}.")
+                : new(false, $"There's no branch named \"{branch}\" any more.");
+
+        if (!await exists("refs/remotes/" + branch)) return new(false, $"There's no remote branch named \"{branch}\" any more. Fetch, then try again.");
+        // Remote names can hold a "/" too, so the local name is what's left after the remote that matches.
+        var remotes = (await RunAsync(dir, ["remote"])).Text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var owner = remotes.Where(r => branch.StartsWith(r + "/")).MaxBy(r => r.Length);
+        if (owner == null) return new(false, $"\"{branch}\" doesn't belong to any of this repository's remotes.");
+        var local = branch[(owner.Length + 1)..];
+        if (await exists("refs/heads/" + local))
+            return await SwitchAsync(dir, local, ["switch", local], stashChanges, $"Switched to {local} (your local branch for {branch}).");
+        return await SwitchAsync(dir, local, ["switch", "-c", local, "--track", branch], stashChanges, $"Switched to {local}, a new local branch tracking {branch}.");
+    }
+
+    /// <summary>
+    /// Runs the switch in <paramref name="args"/> to <paramref name="target"/>. Uncommitted changes come along unless
+    /// <paramref name="stashChanges"/>, which first stashes them (untracked files too) so the switch starts clean, the
+    /// two choices Visual Studio offers; if the switch then fails, the stash is put back.
+    /// </summary>
+    private static async Task<BranchResult> SwitchAsync(string dir, string target, string[] args, bool stashChanges, string done)
+    {
+        string? stash = null;
+        if (stashChanges && await CountChangesAsync(dir) > 0)
+        {
+            var label = $"LlamaTree: changes on {(await GetStatusAsync(dir)).Branch ?? "HEAD"} before switching to {target}";
+            var push = await RunAsync(dir, ["stash", "push", "--include-untracked", "-m", label]);
+            if (!push.Ok) return new(false, string.IsNullOrWhiteSpace(push.Error) ? "git couldn't stash the changes." : push.Error);
+            // The stash list is shared by every worktree of the repository: find ours by its message.
+            stash = await FindStashAsync(dir, label);
+            if (stash == null) return new(false, "The changes were stashed, but the stash couldn't be found again, so the switch wasn't made. They are in git stash list.");
+        }
+
+        var r = await RunAsync(dir, args, timeout: TimeSpan.FromMinutes(5));
+        if (r.Ok) return new(true, stash == null ? done : done + " Your changes were stashed.", stash);
+
+        var why = string.IsNullOrWhiteSpace(r.Error) ? $"git couldn't switch to {target}." : r.Error;
+        if (stash == null)
+            return new(false, why.Contains("would be overwritten")
+                ? why + $"\n\nThose changes can't be brought to {target}: stash them instead, or commit them first."
+                : why);
+        var back = await RunAsync(dir, ["stash", "apply", "--index", stash]);
+        if (back.Ok && await FindStashAsync(dir, null, stash) is { } entry) await RunAsync(dir, ["stash", "drop", entry]);
+        return new(false, back.Ok ? why : why + $"\n\nYour changes are still stashed: git stash apply {stash} brings them back.");
+    }
+
+    /// <summary>
+    /// The commit id of the stash entry with this <paramref name="message"/> or, given <paramref name="sha"/>, that
+    /// entry's current stash@{n}; null if there's none. Looked up, not assumed: other worktrees may stash meanwhile.
+    /// </summary>
+    private static async Task<string?> FindStashAsync(string dir, string? message, string? sha = null)
+    {
+        var r = await RunAsync(dir, ["stash", "list", "--format=%H %gd %gs"]);
+        if (!r.Ok) return null;
+        foreach (var line in r.Text.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = line.TrimEnd('\r').Split(' ', 3);
+            if (parts.Length < 3) continue;
+            if (sha != null && parts[0] == sha) return parts[1];
+            if (message != null && parts[2].EndsWith(": " + message)) return parts[0];
+        }
+        return null;
     }
 
     /// <summary>
