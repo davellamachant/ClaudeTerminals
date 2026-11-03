@@ -2,7 +2,7 @@
 
 Steampunk Pirate is one of the four themes that ship with Claude Terminals. It dresses the app as an airship captain's cabin: walnut, leather and brass, with a sea chart on the table and the ship's machinery at work around it. Everything on screen is drawn by the page; nothing is an image, a logo or a trademark, and the only names in it are made up.
 
-This document describes what the theme is, what each colour means, what the floor shows and how it reads the sessions, the theme keys it introduced, and how it was checked. The theme lives in [`src/ClaudeTerminals/wwwroot/themes/steampunk-pirate.json`](../src/ClaudeTerminals/wwwroot/themes/steampunk-pirate.json); its floor is the `cabin` block of [`src/ClaudeTerminals/wwwroot/app.js`](../src/ClaudeTerminals/wwwroot/app.js).
+This document describes what the theme is, what each colour means, what the floor shows and how it reads the sessions, the theme keys it introduced, and how it was checked. The theme lives in [`src/LlamaTree/wwwroot/themes/steampunk-pirate.json`](../src/LlamaTree/wwwroot/themes/steampunk-pirate.json); its floor is the `cabin` block of [`src/LlamaTree/wwwroot/app.js`](../src/LlamaTree/wwwroot/app.js).
 
 ## Choosing it
 
