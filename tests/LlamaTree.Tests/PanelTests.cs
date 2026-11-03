@@ -155,7 +155,7 @@ public class PanelTests : IDisposable
             """));
         Assert.Null(panel.Items);
         Assert.Equal(["In progress", "Backlog"], panel.Groups!.Select(g => g.Title));
-        Assert.True(panel.Groups[1].Collapsed);
+        Assert.True(panel.Groups![1].Collapsed);
         Assert.False(panel.Groups[0].Collapsed);
         Assert.Equal("LT-482", new PanelStore(StoreFile).Snapshot()[0].Groups![0].Items[0].Key);
 
@@ -185,7 +185,7 @@ public class PanelTests : IDisposable
         var todo = Assert.Single(panel.Groups!);
         Assert.Single(todo.Items);
         Assert.Equal(["High", "Low"], todo.Groups!.Select(g => g.Title));
-        Assert.Equal("LT-1", todo.Groups[0].Groups![0].Items[0].Key);
+        Assert.Equal("LT-1", todo.Groups![0].Groups![0].Items[0].Key);
         Assert.Empty(todo.Groups[0].Items);   // a group may hold only groups
         Assert.Equal(4, panel.Groups!.SelectMany(PanelSpec.Flatten).Count());
 
@@ -235,7 +235,7 @@ public class PanelTests : IDisposable
         Assert.False(item.Checked);
         Assert.Equal((3d, 8d), (item.Progress!.Value, item.Progress.Max));
         Assert.Equal(["copy", "here"], item.Buttons!.Select(b => b.Target));
-        Assert.Equal("git checkout fix/e-1", item.Buttons[0].Prompt);
+        Assert.Equal("git checkout fix/e-1", item.Buttons![0].Prompt);
         Assert.Null(panel.Groups[0].Items[1].Progress);
     }
 

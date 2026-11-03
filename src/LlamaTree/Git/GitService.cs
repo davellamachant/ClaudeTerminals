@@ -403,8 +403,7 @@ internal static class GitService
     {
         if (!Path.IsPathFullyQualified(path)) return Failed("The worktree must be given as a full path.");
         var list = await GetWorktreesAsync(repoDir);
-        var full = PathText.TrimEnd(Path.GetFullPath(path));
-        var i = list.FindIndex(w => string.Equals(PathText.TrimEnd(Path.GetFullPath(w.Path)), full, StringComparison.OrdinalIgnoreCase));
+        var i = list.FindIndex(w => PathText.SamePlace(w.Path, path));
         if (i < 0) return Failed($"{path} isn't a worktree of this repository.");
         if (i == 0) return Failed("This is the repository's main worktree; it can't be removed.");
         if (!Directory.Exists(list[i].Path)) return await RunAsync(repoDir, ["worktree", "prune"]);

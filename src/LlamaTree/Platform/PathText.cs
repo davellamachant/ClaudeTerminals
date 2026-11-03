@@ -46,6 +46,32 @@ internal static class PathText
 
     private static string? RealPath(string path) => Libc.Instance.RealPath(path);
 
+    /// <summary>
+    /// Whether two full paths name the same place, also when one reaches it through a link: git reports real paths,
+    /// and on a Mac the temporary folder /var/... is really /private/var/.... A path that's gone is compared through
+    /// the nearest folder above it that's still there.
+    /// </summary>
+    public static bool SamePlace(string a, string b)
+    {
+        var comparison = OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+        var (fullA, fullB) = (TrimEnd(Path.GetFullPath(a)), TrimEnd(Path.GetFullPath(b)));
+        return string.Equals(fullA, fullB, comparison) || string.Equals(Resolved(fullA), Resolved(fullB), comparison);
+    }
+
+    /// <summary>The path with the links in the part of it that exists resolved; the rest as it was.</summary>
+    private static string Resolved(string full)
+    {
+        var rest = new Stack<string>();
+        for (var at = full; ; )
+        {
+            if (FinalPath(at) is { } real) return TrimEnd(rest.Aggregate(real, Path.Combine));
+            var parent = Path.GetDirectoryName(at);
+            if (parent == null) return full;
+            rest.Push(Path.GetFileName(at));
+            at = parent;
+        }
+    }
+
     // ---------------------------------------------------------------- the bin
 
     /// <summary>

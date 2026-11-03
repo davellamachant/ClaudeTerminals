@@ -32,7 +32,7 @@ public class WorktreeTests : IDisposable
         Assert.True(r.Ok, r.Error);
         Assert.Equal("one", File.ReadAllText(Path.Combine(path, "a.txt")));
         var worktrees = await GitService.GetWorktreesAsync(repo.Root);
-        Assert.Contains(worktrees, w => w.Branch == "feature/thing" && string.Equals(Path.GetFullPath(w.Path), Path.GetFullPath(path), StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(worktrees, w => w.Branch == "feature/thing" && LlamaTree.Platform.PathText.SamePlace(w.Path, path));
     }
 
     [Fact]

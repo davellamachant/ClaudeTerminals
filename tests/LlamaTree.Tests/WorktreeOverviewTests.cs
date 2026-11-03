@@ -71,7 +71,7 @@ public class WorktreeOverviewTests : IDisposable
 
         var overview = await GitService.GetWorktreeOverviewAsync(ahead);   // any worktree finds the whole repository
         Assert.Equal("main", overview.BaseBranch);
-        Assert.Equal(Path.GetFullPath(repo.Root), Path.GetFullPath(overview.Root), ignoreCase: true);
+        Assert.True(LlamaTree.Platform.PathText.SamePlace(repo.Root, overview.Root), $"{overview.Root} isn't {repo.Root}");
 
         var rows = overview.Worktrees;
         Assert.True(rows[0].Main);

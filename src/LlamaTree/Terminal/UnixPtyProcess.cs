@@ -61,11 +61,12 @@ internal sealed unsafe class UnixPtyProcess : IPtyProcess
                 var name = libc.ptsname(master);
                 if (name == null) throw Failed("ptsname");
                 var slavePath = Marshal.PtrToStringUTF8((IntPtr)name)!;
-                var size = WinSize(cols, rows);
-                libc.Ioctl(master, libc.TIOCSWINSZ, &size);
                 slave = libc.open(Utf8(slavePath, owned), Libc.O_RDWR | libc.O_NOCTTY);
                 if (slave < 0) throw Failed("open " + slavePath);
                 libc.Ioctl(slave, libc.FIOCLEX, null);
+                // The size is set once the program's side is open: macOS resets it when that side is first opened.
+                var size = WinSize(cols, rows);
+                libc.Ioctl(slave, libc.TIOCSWINSZ, &size);
 
                 Check(libc.posix_spawn_file_actions_init(actions), "posix_spawn_file_actions_init");
                 actionsMade = true;
