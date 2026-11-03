@@ -1,4 +1,11 @@
-# Claude Terminals
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/LlamaTree-Logo.svg">
+    <img alt="LlamaTree" src="docs/brand/LlamaTree-Logo-Light.svg" width="460">
+  </picture>
+</h1>
+
+*Formerly Claude Terminals.*
 
 One window for many local Claude Code and Codex sessions, with a Visual Studio–style Git Changes / Git Repository view and diff viewer for each session's worktree.
 
@@ -42,7 +49,7 @@ One window for many local Claude Code and Codex sessions, with a Visual Studio�
 
 ## Install
 
-Download `ClaudeTerminals-Setup-<version>.exe` from the [latest release](https://github.com/davellamachant/ClaudeTerminals/releases/latest) and run it. It installs for your account only (no admin), and later versions install themselves from inside the app.
+Download `LlamaTree-Setup-<version>.exe` from the [latest release](https://github.com/LlamachantTechnology/LlamaTree/releases/latest) and run it. It installs for your account only (no admin), and later versions install themselves from inside the app.
 
 Releases are signed by **Llamachant Technology Ltd**. If SmartScreen still warns about a new release ("Windows protected your PC"), check that the publisher says Llamachant Technology Ltd, then choose *More info › Run anyway*.
 
@@ -121,7 +128,7 @@ With Windows' animation effects turned off the dots stay still, and in every sty
 
 **Starting when opened:** when the app starts, a Claude session it brings back waits until you first open it (its tile says *Starts when you open it*; pressing Enter in it works too). Claude's start-up context, such as hooks, the date and Git status, is then fresh when you use the session, and one you don't open runs nothing. New sessions, and sessions running any other command (a dev server, say), start straight away.
 
-Sessions are saved in `%APPDATA%\ClaudeTerminals\sessions.json`. Set `CLAUDE_TERMINALS_DATA` to use a different folder (separate profiles, testing). Only one copy runs per profile; launching again brings the existing window forward.
+Sessions are saved in `%APPDATA%\LlamaTree\sessions.json`. Set `LLAMATREE_DATA` to use a different folder (separate profiles, testing). Until 1.2 the app was called Claude Terminals: the first time 1.2 runs it moves `%APPDATA%ClaudeTerminals` and `%LOCALAPPDATA%ClaudeTerminals` to their new names, and the old `CLAUDE_TERMINALS_DATA` still works. Only one copy runs per profile; launching again brings the existing window forward.
 
 ### Claude Code and Codex
 
@@ -161,7 +168,7 @@ How Codex sessions do it:
 - **Its own conversation.** Codex can't be told which conversation id to use, so a new session learns its conversation once Codex has saved it: the latest one started in its folder since the session started, not counting `codex exec` runs. From then on it's reopened with `codex resume <id>`. A Guardian review thread Codex starts under a conversation opens that conversation.
 - **Following you.** After `/new` the session moves to the new conversation once Codex has saved it. After `/resume` it moves to the conversation you picked once you send a prompt in it, read from Codex's prompt history (`~/.codex/history.jsonl`); with `history.persistence = "none"` in Codex's config, `/resume` isn't followed.
 - **Saved conversations** are read from `~/.codex/sessions`, or `CODEX_HOME` when it's set.
-- **Panels:** the app adds its MCP server to Codex's command line (`-c mcp_servers.claude-terminals.…`), passing the session's token in an environment variable rather than on the command line. A command that sets that server itself is left alone.
+- **Panels:** the app adds its MCP server to Codex's command line (`-c mcp_servers.llamatree.…`), passing the session's token in an environment variable rather than on the command line. A command that sets that server itself is left alone.
 - **Needs your answer:** Codex reports in the terminal when it's waiting on you (an `OSC 7501` sequence with `state=blocked`), so the dot doesn't depend on reading its screen. Any program that reports its state that way gets the dot too.
 - **Suggest** runs `codex exec --ephemeral -s read-only` with low reasoning: read-only and not saved as a conversation, using a little of your Codex plan.
 - **Commands that choose for themselves:** `codex resume …` and `codex fork …` keep their own choice of conversation, and Codex's other subcommands (`codex exec`, say) run as they are.
@@ -206,7 +213,7 @@ The ticks down the right edge of the open terminal are the prompts you've sent i
 
 ### Panels
 
-Claude can put things beside the terminal for you to keep in view: your task list, an error summary, a checklist. Each panel is a tab next to Git Changes and Git Repository, holding Markdown or a list of items (a key, title, badges, a link and buttons), optionally in groups up to three levels deep. Groups and Markdown headings fold with a click, and the app remembers what you folded in each panel. When there are more tabs than fit, ◀ ▶ arrows scroll them, as in the other tab rows. Claude Terminals has no code for any tracker or service. Claude fills panels with whatever it can reach through your own MCP servers and skills, so a team can share a `/my-tasks` skill that reads their tracker and shows the result in a panel.
+Claude can put things beside the terminal for you to keep in view: your task list, an error summary, a checklist. Each panel is a tab next to Git Changes and Git Repository, holding Markdown or a list of items (a key, title, badges, a link and buttons), optionally in groups up to three levels deep. Groups and Markdown headings fold with a click, and the app remembers what you folded in each panel. When there are more tabs than fit, ◀ ▶ arrows scroll them, as in the other tab rows. LlamaTree has no code for any tracker or service. Claude fills panels with whatever it can reach through your own MCP servers and skills, so a team can share a `/my-tasks` skill that reads their tracker and shows the result in a panel.
 
 - **How Claude reaches the app:** each Claude session is started with `--mcp-config` pointing at a small MCP server inside the app, on `127.0.0.1` at a port picked when the app starts. Its tools (`show_panel`, `update_panel`, `close_panel`, `list_panels`) are allowed without asking. Every session has its own token, which ties each panel to the session that made it and keeps other programs out. Your own MCP servers still load as usual; a command that passes its own `--mcp-config` is left alone.
 - **Where a panel shows:** with the session that made it, by default. Its ⋯ menu shows it with every session of that project, or with every session, instead. The tabs follow the selected session.
@@ -228,7 +235,7 @@ Claude can put things beside the terminal for you to keep in view: your task lis
 
 ### Messages between sessions
 
-Claude and Codex sessions can message each other, through the same `claude-terminals` MCP server that shows panels, so neither needs a connection of its own. Its tools are **`list_sessions`** (the other sessions this one may message), **`send_message`** (`to`: a session's name or id, `text`, and `reply_to` when it answers a message), **`wait_for_reply`** (waits for the answer to a message it sent, up to 110 seconds, 50 by default since Codex cuts a tool call off at 60) and **`read_messages`** (this session's unread messages, each read once). Ask an agent to "ask the api session what it changed in the parser", and it sends the question and waits for the answer.
+Claude and Codex sessions can message each other, through the same `llamatree` MCP server that shows panels, so neither needs a connection of its own. Its tools are **`list_sessions`** (the other sessions this one may message), **`send_message`** (`to`: a session's name or id, `text`, and `reply_to` when it answers a message), **`wait_for_reply`** (waits for the answer to a message it sent, up to 110 seconds, 50 by default since Codex cuts a tool call off at 60) and **`read_messages`** (this session's unread messages, each read once). Ask an agent to "ask the api session what it changed in the parser", and it sends the question and waits for the answer.
 
 - **You decide who may message whom.** The first time a session messages one it has no rule for, the app asks you. Your answer can be for **this time only** (delivered or dropped, and you're asked again next time), or a rule: for that session, for any session in its project, or for any session, or for every session (the **All sessions** rules). Closing the dialog leaves the message waiting. Rules go one way, and a session can always reply to a message it was sent, for an hour.
 - **The sender is the session that called the tool**, known from its own token, never a name it gives. A message reaches the other agent through `read_messages` or `wait_for_reply`, marked as from another agent rather than from you, so it's weighed as a colleague's request, not your prompt.
@@ -239,7 +246,7 @@ Claude and Codex sessions can message each other, through the same `claude-termi
 
 ### Plugins
 
-A plugin is a web page of your own, shown in a document tab (like a diff or the Project view) or in the side panel (beside Git Changes). The palette button lists your plugins under **Plugins**, each with the menu items it adds there; pick one to open it. Plugins can add items to a project's or a session's menu too, and a button to the title bar. **Open the plugins folder** opens the folder they live in: `plugins` in the app's data folder (`%APPDATA%\ClaudeTerminals\plugins`). The folder is read each time the menu opens, so a plugin you add shows without restarting.
+A plugin is a web page of your own, shown in a document tab (like a diff or the Project view) or in the side panel (beside Git Changes). The palette button lists your plugins under **Plugins**, each with the menu items it adds there; pick one to open it. Plugins can add items to a project's or a session's menu too, and a button to the title bar. **Open the plugins folder** opens the folder they live in: `plugins` in the app's data folder (`%APPDATA%\LlamaTree\plugins`). The folder is read each time the menu opens, so a plugin you add shows without restarting.
 
 Each plugin is a folder holding a `plugin.json` and its page:
 
@@ -278,7 +285,7 @@ plugins\
 - **`inbox`:** `true` lets sessions message it first, not only answer what it sends them (it needs `"message"` access too).
 - **`toolbar`:** a button in the title bar, after New Session and Git Changes, set apart from them. **`icon`** is an image file in the plugin's folder (SVG, PNG, ICO, GIF, JPEG or WebP, up to 64 KB); the button shows only the icon, never text, so it can't pass for one of the app's own buttons. Its tooltip is the plugin's name, then **`tooltip`** if given. Clicking it opens the plugin and sends **`command`**, if given, with the open session as context. The plugin's badge shows on its button too. Right-click the button › **Hide this button** to hide it; the plugin's **Show its title bar button** in the palette menu brings it back.
 
-**Talking to the app.** A plugin and the app exchange a few messages, each `{ type: 'claude-terminals:<name>', … }`. Listen with `addEventListener('message', …)`; send with `parent.postMessage(…, '*')`.
+**Talking to the app.** A plugin and the app exchange a few messages, each `{ type: 'llamatree:<name>', … }`. Listen with `addEventListener('message', …)`; send with `parent.postMessage(…, '*')`. Plugins written before 1.2 use `'claude-terminals:<name>'`, which still works: the app answers them under that name too.
 
 | Message | Direction | What it does |
 |---|---|---|
@@ -370,7 +377,7 @@ To add your own, the quickest start is *Save as a new theme…* under the palett
 }
 ```
 
-- **`monochrome`:** `true` builds every colour from the accent colour, as [Nerds](src/ClaudeTerminals/wwwroot/themes/nerds.json) does; colours the theme sets itself still win.
+- **`monochrome`:** `true` builds every colour from the accent colour, as [Nerds](src/LlamaTree/wwwroot/themes/nerds.json) does; colours the theme sets itself still win.
 - **`base`** (`dark` or `light`) fills in every colour the theme leaves out, so a theme can set three colours or all of them. It's also what Claude and plugins are told, so Claude runs in its dark or light colours.
 - **`colors`:** the app's own: `chrome`, `chrome-2`, `chrome-3` (backgrounds, darkest last), `panel`, `panel-2`, `hover`, `hover-strong`, `border`, `border-soft`, `border-strong`, `text`, `text-dim`, `text-faint`, `text-strong`, `focus`, `select`, `select-inactive`, `terminal-bg`, `editor-bg`, the status colours `ok`, `working`, `attention`, `asking`, `danger`, `danger-fill`, Git's `st-m`, `st-a`, `st-d`, `st-r`, `st-u` (modified, added, deleted, renamed, untracked), `graph`, `ref-bg`, `ref-fg`, `ref-head-bg`, `ref-head-fg`, `ref-tag-bg`, `ref-tag-fg`, and `info-bg`, `info-border`, `error-bg`, `error-border`, `pv-warn-bg`, `pv-warn-border`, `ico-folder`, `ico-file`, `scroll-thumb`, `scroll-thumb-hover`, `tab-border-shown`, `tab-border-hover`, `tick`, `tick-active`, `tick-hot`, `card-bg`, `card-border`, `bubble`, `code-fg`, `code-bg`, `well`, `table-head`, `link`, `update-fg`. Colours are `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgb()` or `rgba()`.
 - **`terminal`:** xterm.js's names: `background`, `foreground`, `cursor`, `cursorAccent`, `selectionBackground`, `selectionForeground`, `selectionInactiveBackground`, the sixteen `black` … `white` and `brightBlack` … `brightWhite`, and `overviewRulerBorder`, `scrollbarSliderBackground`, `scrollbarSliderHoverBackground`, `scrollbarSliderActiveBackground`.
@@ -399,7 +406,7 @@ Each notice in the file:
   "id": "llamalogger-free-year",
   "kind": "offer",
   "color": "green",
-  "text": "If you want to start tracking exceptions in one place, check out LlamaLogger. Through Claude Terminals, you can get a 1 year standard subscription for free.",
+  "text": "If you want to start tracking exceptions in one place, check out LlamaLogger. Through LlamaTree, you can get a 1 year standard subscription for free.",
   "link": { "label": "Get your free year", "url": "https://example.com" },
   "from": "2026-11-01",
   "until": "2027-01-31",
@@ -427,11 +434,11 @@ Notices are judged as of when they were signed, so they keep showing after the c
 
 ```powershell
 cd web; npm ci; cd ..               # once: xterm.js + Monaco
-dotnet run --project src\ClaudeTerminals
+dotnet run --project src\LlamaTree
 dotnet test                         # tests
 ```
 
-- **Host:** .NET 10 WinForms + WebView2 (`src/ClaudeTerminals`)
+- **Host:** .NET 10 WinForms + WebView2 (`src/LlamaTree`)
 - **Terminals:** real Windows pseudo consoles (ConPTY) rendered with xterm.js; child processes live in a kill-on-close job object
 - **Diffs:** Monaco diff editor, with dark and light themes after Visual Studio's
 
@@ -439,13 +446,13 @@ dotnet test                         # tests
 
 ```powershell
 winget install JRSoftware.InnoSetup   # once
-.\publish.ps1                         # -> artifacts\ClaudeTerminals-Setup-<version>.exe
+.\publish.ps1                         # -> artifacts\LlamaTree-Setup-<version>.exe
 .\publish.ps1 -SkipInstaller          # -> artifacts\publish\ (portable folder only)
 ```
 
-- Self-contained x64 build (no .NET install needed). The version comes from `<Version>` in `ClaudeTerminals.csproj`; bump it for each release.
-- Installs per-user to `%LOCALAPPDATA%\Programs\Claude Terminals` (no admin), with a Start Menu shortcut, an optional desktop shortcut and an uninstaller. Admins can choose an all-users install.
-- Upgrading: run the newer setup. It asks to close a running copy first. Saved sessions are kept; uninstalling also keeps them in `%APPDATA%\ClaudeTerminals`.
+- Self-contained x64 build (no .NET install needed). The version comes from `<Version>` in `LlamaTree.csproj`; bump it for each release.
+- Installs per-user to `%LOCALAPPDATA%\Programs\LlamaTree` (no admin), with a Start Menu shortcut, an optional desktop shortcut and an uninstaller. Admins can choose an all-users install.
+- Upgrading: run the newer setup. It asks to close a running copy first. Saved sessions are kept; uninstalling also keeps them in `%APPDATA%\LlamaTree`.
 - Setup warns and links to the download if the WebView2 Runtime is missing (it's built into Windows 11).
 - Local builds aren't code-signed, so on other PCs SmartScreen shows "unknown publisher" (More info › Run anyway).
 - The icon is generated by `tools\make-icon.ps1`.
@@ -454,10 +461,10 @@ winget install JRSoftware.InnoSetup   # once
 
 Signed releases are built by `azure-pipelines.yml` on the Azure DevOps agent with the company's code signing token:
 
-1. Bump `<Version>` in `ClaudeTerminals.csproj` and merge to `main`.
+1. Bump `<Version>` in `LlamaTree.csproj` and merge to `main`.
 2. In Azure DevOps, run the pipeline on `main` (or on a tag `v<version>`) with *Create the GitHub release* ticked. Untick it for a trial run that only builds and signs, keeping the installer on the run's Artifacts.
-3. The pipeline runs `publish.ps1 -Sign`, which signs `ClaudeTerminals.exe`/`.dll`, setup and its uninstaller as *Llamachant Technology Ltd* (picked from the certificate store by subject, as the NuGet signing does), timestamps them with Sectigo's server, and fails unless each carries a valid, timestamped signature from that publisher. It then creates a **draft** GitHub release with the installer.
-4. Write the release notes on the draft and publish it: that's what makes the in-app updater offer the new version. The updater shows everything above the notes' *Install* heading, and needs the installer named `ClaudeTerminals-Setup-<version>.exe` on a `v<version>` tag.
+3. The pipeline runs `publish.ps1 -Sign`, which signs `LlamaTree.exe`/`.dll`, setup and its uninstaller as *Llamachant Technology Ltd* (picked from the certificate store by subject, as the NuGet signing does), timestamps them with Sectigo's server, and fails unless each carries a valid, timestamped signature from that publisher. It then creates a **draft** GitHub release with the installer.
+4. Write the release notes on the draft and publish it: that's what makes the in-app updater offer the new version. The updater shows everything above the notes' *Install* heading, and needs the installer named `LlamaTree-Setup-<version>.exe` on a `v<version>` tag.
 
 ## License
 

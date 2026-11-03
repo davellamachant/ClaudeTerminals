@@ -1,5 +1,5 @@
 # Builds a self-contained release and the Inno Setup installer.
-#   .\publish.ps1                 -> artifacts\publish\ + artifacts\ClaudeTerminals-Setup-<version>.exe
+#   .\publish.ps1                 -> artifacts\publish\ + artifacts\LlamaTree-Setup-<version>.exe
 #   .\publish.ps1 -SkipInstaller  -> artifacts\publish\ only (portable folder)
 #   .\publish.ps1 -Sign -TimestampServer <url>
 #                                 -> the same, with the app, setup and uninstaller code-signed (on the build agent with
@@ -15,12 +15,12 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
-$project = Join-Path $root 'src\ClaudeTerminals\ClaudeTerminals.csproj'
+$project = Join-Path $root 'src\LlamaTree\LlamaTree.csproj'
 $publishDir = Join-Path $root 'artifacts\publish'
 
 $version = ([xml](Get-Content $project)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
 if (-not $version) { throw "No <Version> found in $project" }
-Write-Host "Claude Terminals $version" -ForegroundColor Cyan
+Write-Host "LlamaTree $version" -ForegroundColor Cyan
 
 if ($Sign) {
     if (-not $TimestampServer) { throw '-Sign needs -TimestampServer.' }
@@ -64,7 +64,7 @@ if ($LASTEXITCODE) { throw 'dotnet publish failed' }
 
 if ($Sign) {
     # Only our own files: the .NET runtime and WebView2 files that ship alongside are already signed by Microsoft.
-    $ours = 'ClaudeTerminals.exe', 'ClaudeTerminals.dll' | ForEach-Object { Join-Path $publishDir $_ }
+    $ours = 'LlamaTree.exe', 'LlamaTree.dll' | ForEach-Object { Join-Path $publishDir $_ }
     Invoke-Sign $ours
     Assert-Signed $ours
 }
@@ -87,9 +87,9 @@ if ($Sign) {
     # Inno Setup signs setup and the uninstaller it embeds with this command ($f is the file, $q a quote).
     $isccArgs += '/DSign', "/Ssigntool=`$q$signtool`$q sign /n `$q$CertificateSubject`$q /fd sha256 /tr `$q$TimestampServer`$q /td sha256 `$f"
 }
-& $iscc @isccArgs (Join-Path $root 'installer\ClaudeTerminals.iss')
+& $iscc @isccArgs (Join-Path $root 'installer\LlamaTree.iss')
 if ($LASTEXITCODE) { throw 'Inno Setup compile failed' }
 
-$setup = Join-Path $root "artifacts\ClaudeTerminals-Setup-$version.exe"
+$setup = Join-Path $root "artifacts\LlamaTree-Setup-$version.exe"
 if ($Sign) { Assert-Signed $setup }
 Write-Host "Installer: $setup ($([math]::Round((Get-Item $setup).Length / 1MB, 1)) MB)" -ForegroundColor Green
