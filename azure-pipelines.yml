@@ -1,9 +1,9 @@
-# Release build for Claude Terminals: builds and code-signs the installer on the agent that holds the company's
+# Release build for LlamaTree: builds and code-signs the installer on the agent that holds the company's
 # SafeNet code signing token, then creates a draft GitHub release with the installer attached. Publishing the draft
 # (after checking its notes) is what makes the in-app updater offer it.
 #
 # Run by hand (Run pipeline) on main or on a version tag. On a tag, the tag must be v<Version> from
-# ClaudeTerminals.csproj; the release is created for v<Version> either way. Untick "Create the GitHub release" for a
+# LlamaTree.csproj; the release is created for v<Version> either way. Untick "Create the GitHub release" for a
 # trial run that only builds and signs, keeping the installer on the run (Artifacts).
 #
 # One-time setup in Azure DevOps:
@@ -25,8 +25,8 @@ parameters:
     default: true
 
 variables:
-  githubConnection: 'davellamachant'         # the GitHub service connection (Project settings › Service connections)
-  repository: 'davellamachant/ClaudeTerminals'
+  githubConnection: 'github.com_LlamachantTechnology'         # the GitHub service connection (Project settings › Service connections)
+  repository: 'LlamachantTechnology/LlamaTree'
 
 pool:
   name: 'SelfHostedPool'                     # the pool with the code signing agent (SafeNet token)
@@ -41,19 +41,19 @@ steps:
       pwsh: false   # Windows PowerShell: always on the agent
       targetType: inline
       script: |
-        $version = ([xml](Get-Content src/ClaudeTerminals/ClaudeTerminals.csproj)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+        $version = ([xml](Get-Content src/LlamaTree/LlamaTree.csproj)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
         $tag = '$(Build.SourceBranchName)'
         if ('$(Build.SourceBranch)' -like 'refs/tags/*' -and $tag -ne "v$version") {
           throw "Tag $tag doesn't match the project version $version."
         }
         Write-Host "##vso[task.setvariable variable=AppVersion]$version"
-        Write-Host "Building Claude Terminals $version"
+        Write-Host "Building LlamaTree $version"
 
   # Tools the build needs, set up on the agent if they're missing (signtool comes with the Windows SDK, already there).
-  - task: NodeTool@0
+  - task: UseNode@1
     displayName: 'Node.js (front-end libraries)'
     inputs:
-      versionSpec: '22.x'
+      version: '22.x'
 
   - task: UseDotNet@2
     displayName: '.NET 10 SDK'
@@ -96,10 +96,15 @@ steps:
     env:
       TIMESTAMP_SERVER: $(TimeStampServer)
 
+  # Copies from before the rename (Claude Terminals 1.1.x) only look for an installer under the old name: the same
+  # signed file goes on the release under that name too, until they have all updated.
+  - powershell: Copy-Item "artifacts/LlamaTree-Setup-$(AppVersion).exe" "artifacts/ClaudeTerminals-Setup-$(AppVersion).exe"
+    displayName: 'Copy the installer under its old name'
+
   - task: PublishPipelineArtifact@1
     displayName: 'Keep the signed installer on the run'
     inputs:
-      targetPath: 'artifacts/ClaudeTerminals-Setup-$(AppVersion).exe'
+      targetPath: 'artifacts/LlamaTree-Setup-$(AppVersion).exe'
       artifact: 'installer'
 
   # Left out of a trial run entirely, so trying the signing doesn't need the GitHub connection.
@@ -113,9 +118,11 @@ steps:
         target: '$(Build.SourceVersion)'
         tagSource: userSpecifiedTag
         tag: 'v$(AppVersion)'
-        title: 'Claude Terminals $(AppVersion)'
+        title: 'LlamaTree $(AppVersion)'
         releaseNotesSource: inline
         releaseNotesInline: 'Release notes to follow.'
-        assets: 'artifacts/ClaudeTerminals-Setup-$(AppVersion).exe'
+        assets: |
+          artifacts/LlamaTree-Setup-$(AppVersion).exe
+          artifacts/ClaudeTerminals-Setup-$(AppVersion).exe
         isDraft: true
         addChangeLog: false

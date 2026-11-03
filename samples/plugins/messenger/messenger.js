@@ -2,7 +2,7 @@
 
 // Messenger: a sample plugin with "message" access and "inbox": true. It lists the sessions it may message
 // (messageTargets), sends one a message (sendMessage) and shows what comes back (readMessages), whenever the app says
-// a message has come for it (claude-terminals:message). The first request asks you whether to let it, and which
+// a message has come for it (llamatree:message). The first request asks you whether to let it, and which
 // projects' sessions it may message.
 
 const $ = (id) => document.getElementById(id);
@@ -14,7 +14,7 @@ function request(name, args = {}) {
   const requestId = nextRequest++;
   return new Promise((resolve, reject) => {
     pending.set(requestId, { resolve, reject });
-    parent.postMessage({ type: 'claude-terminals:request', requestId, name, ...args }, '*');
+    parent.postMessage({ type: 'llamatree:request', requestId, name, ...args }, '*');
   });
 }
 
@@ -89,16 +89,16 @@ async function readAll() {
 addEventListener('message', (e) => {
   if (e.source !== parent) return;
   const m = e.data;
-  if (m?.type === 'claude-terminals:response') {
+  if (m?.type === 'llamatree:response') {
     const p = pending.get(m.requestId);
     if (!p) return;
     pending.delete(m.requestId);
     if ('error' in m) p.reject(new Error(m.error)); else p.resolve(m.result);
-  } else if (m?.type === 'claude-terminals:theme') {
+  } else if (m?.type === 'llamatree:theme') {
     document.documentElement.dataset.theme = m.theme;
-  } else if (m?.type === 'claude-terminals:message') {
+  } else if (m?.type === 'llamatree:message') {
     readAll();
-  } else if (m?.type === 'claude-terminals:command' && m.command === 'to' && m.context?.sessionId) {
+  } else if (m?.type === 'llamatree:command' && m.command === 'to' && m.context?.sessionId) {
     loadTargets(m.context.sessionId);
   }
 });

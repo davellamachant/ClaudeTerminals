@@ -1,13 +1,13 @@
 // Builds a fictional "acme-shop" project for README screenshots: a bare remote, a commit history by
 // made-up authors, four worktrees with uncommitted changes, fake saved Claude conversations and an
-// isolated Claude Terminals profile. Usage: node setup-demo.mjs <demoRoot>
+// isolated LlamaTree profile. Usage: node setup-demo.mjs <demoRoot>
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(process.argv[2] ?? 'D:\\Demos\\acme');
-const MARKER = '.claude-terminals-demo';
+const MARKER = '.llamatree-demo';
 const here = path.dirname(fileURLToPath(import.meta.url));
 
 // Only ever delete a folder this script created.
@@ -630,7 +630,7 @@ for (const [cwd, gitBranch, title, prompt, daysAgo] of conversations) {
   fs.utimesSync(file, t, t);
 }
 
-// ------------------------------------------------------------------ Claude Terminals profile
+// ------------------------------------------------------------------ LlamaTree profile
 
 const fake = path.join(here, 'fake-claude.mjs');
 // The config folder lets each fake session register itself and save its conversation (for the conversation rail).
