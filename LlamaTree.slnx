@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="notices.json" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/LlamaTree/LlamaTree.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/LlamaTree.Tests/LlamaTree.Tests.csproj" />
+  </Folder>
+</Solution>

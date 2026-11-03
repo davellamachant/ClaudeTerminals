@@ -1,4 +1,4 @@
-// Drives a running Claude Terminals instance (started with --remote-debugging-port) through each README
+// Drives a running LlamaTree instance (started with --remote-debugging-port) through each README
 // scene and saves PNGs. Usage: node capture.mjs <port> <outDir>
 import fs from 'node:fs';
 import path from 'node:path';
@@ -18,7 +18,7 @@ async function connect() {
     } catch { /* app still starting */ }
     await sleep(500);
   }
-  throw new Error(`No Claude Terminals page on port ${port}`);
+  throw new Error(`No LlamaTree page on port ${port}`);
 }
 
 const ws = new WebSocket(await connect());

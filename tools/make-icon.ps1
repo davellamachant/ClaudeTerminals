@@ -1,6 +1,6 @@
-# Generates src/ClaudeTerminals/app.ico: a purple rounded tile with a terminal prompt.
+# Generates src/LlamaTree/app.ico: a purple rounded tile with a terminal prompt.
 # Multi-resolution ICO with PNG-compressed entries (16-256 px).
-param([string]$Out = "$PSScriptRoot\..\src\ClaudeTerminals\app.ico")
+param([string]$Out = "$PSScriptRoot\..\src\LlamaTree\app.ico")
 
 Add-Type -AssemblyName System.Drawing
 
