@@ -39,13 +39,69 @@ internal static class CommandLineResolver
     }
 
     /// <summary>
+    /// macOS and Linux: the program and arguments that run <paramref name="command"/>, a shell command line, through
+    /// /bin/sh (so it's read the way it would be typed in a terminal). The program is looked up on the session's PATH
+    /// first, so a command that isn't there fails with a clear message rather than a shell's "not found".
+    /// </summary>
+    public static string[] ResolveArgv(string command, IReadOnlyDictionary<string, string> env)
+    {
+        command = command.Trim();
+        if (command.Length == 0) command = "claude";
+        var program = UnixProgramName(command);
+        var path = env.GetValueOrDefault("PATH") ?? "";
+        // Only a plain name is checked: anything else (NAME=value, a; b, $(...)) is the shell's to read.
+        var plainName = program.Length > 0 && program.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or '-' or '+' or '@');
+        if (plainName && !ShellBuiltIns.Contains(program) && FindUnixProgram(program, path) == null)
+            throw new FileNotFoundException(NotFoundMessage(program, path));
+        return ["/bin/sh", "-c", command];
+    }
+
+    /// <summary>The first word of a shell command line (its program), with any quotes around it taken off.</summary>
+    private static string UnixProgramName(string command)
+    {
+        if (command[0] is '"' or '\'' && command.IndexOf(command[0], 1) is > 0 and var end) return command[1..end];
+        var space = command.IndexOfAny([' ', '\t']);
+        return space < 0 ? command : command[..space];
+    }
+
+    /// <summary>An executable file named <paramref name="program"/> in one of PATH's (absolute) folders, or null.</summary>
+    internal static string? FindUnixProgram(string program, string path)
+    {
+        foreach (var entry in path.Split(':', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (!entry.StartsWith('/')) continue;
+            var full = Path.Combine(entry, program);
+            try
+            {
+                if (File.Exists(full) && (File.GetUnixFileMode(full) & (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) != 0)
+                    return full;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        }
+        return null;
+    }
+
+    private static readonly HashSet<string> ShellBuiltIns = new(StringComparer.Ordinal)
+    {
+        ".", ":", "cd", "command", "echo", "eval", "exec", "exit", "export", "printf", "read", "set", "test", "true", "false",
+        "type", "ulimit", "umask", "unset", "wait", "[", "if", "for", "while", "until", "case", "{", "(", "trap", "alias", "source",
+        "shift", "readonly", "local", "return", "break", "continue", "getopts", "hash", "times", "!",
+    };
+
+    /// <summary>
     /// Whether <see cref="Resolve"/> starts the command's program directly (an .exe), so its arguments reach it exactly
-    /// as written; otherwise they pass through cmd, which would expand % in them.
+    /// as written; otherwise they pass through cmd, which would expand % in them. On macOS and Linux, arguments quoted
+    /// with <see cref="QuoteArgument"/> always reach it exactly, so only the program has to be found.
     /// </summary>
     public static bool RunsDirectly(string command, IReadOnlyDictionary<string, string> env)
     {
         command = command.Trim();
         if (command.Length == 0) command = "claude";
+        if (!OperatingSystem.IsWindows())
+        {
+            var program = UnixProgramName(command);
+            return !IsBareName(program) || FindUnixProgram(program, env.GetValueOrDefault("PATH") ?? "") != null;
+        }
         var pathExt = env.GetValueOrDefault("PATHEXT") is { } ext && !string.IsNullOrWhiteSpace(ext) ? ext : DefaultPathExt;
         return FindProgram(SplitFirstToken(command).Program, env.GetValueOrDefault("PATH") ?? "", pathExt) is { } found && IsExe(found);
     }
@@ -53,11 +109,12 @@ internal static class CommandLineResolver
     /// <summary>
     /// One argument quoted for a program that splits its command line the usual way (CommandLineToArgvW): wrapped in
     /// quotes, with quotes escaped and the backslashes before them doubled. A leading '-' gets a space in front, so the
-    /// text is never read as an option.
+    /// text is never read as an option. On macOS and Linux it's quoted for the shell instead (see <see cref="ShellQuote"/>).
     /// </summary>
     public static string QuoteArgument(string text)
     {
         if (text.StartsWith('-')) text = " " + text;
+        if (!OperatingSystem.IsWindows()) return ShellQuote(text);
         var sb = new System.Text.StringBuilder("\"");
         var backslashes = 0;
         foreach (var c in text)
@@ -71,6 +128,15 @@ internal static class CommandLineResolver
         sb.Append('\\', backslashes * 2).Append('"');
         return sb.ToString();
     }
+
+    /// <summary>
+    /// Text as one word for /bin/sh: in single quotes, where nothing ($, `, \, !) is special, with each single quote
+    /// written as '\'' (end the quotes, an escaped quote, start them again).
+    /// </summary>
+    public static string ShellQuote(string text) => "'" + text.Replace("'", "'\\''") + "'";
+
+    /// <summary>A file path as one argument on a session's command line: in double quotes on Windows, for the shell elsewhere.</summary>
+    public static string QuotePath(string path) => OperatingSystem.IsWindows() ? "\"" + path + "\"" : ShellQuote(path);
 
     private static readonly HashSet<string> CmdBuiltIns = new(StringComparer.OrdinalIgnoreCase)
     {

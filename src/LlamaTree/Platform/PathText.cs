@@ -1,0 +1,100 @@
+using System.Runtime.InteropServices;
+using LlamaTree.Terminal;
+
+namespace LlamaTree.Platform;
+
+/// <summary>Path details that differ between Windows (C:\work\repo) and macOS or Linux (/Users/me/repo).</summary>
+internal static class PathText
+{
+    /// <summary>The path without a trailing separator; "/" stays "/".</summary>
+    public static string TrimEnd(string path)
+    {
+        if (OperatingSystem.IsWindows()) return path.TrimEnd('\\');
+        var trimmed = path.TrimEnd('/');
+        return trimmed.Length == 0 && path.Length > 0 ? "/" : trimmed;
+    }
+
+    /// <summary>The folder's path ending in one separator, for testing whether another path is inside it.</summary>
+    public static string WithSeparator(string folder)
+    {
+        var trimmed = TrimEnd(folder);
+        return trimmed.EndsWith(Path.DirectorySeparatorChar) ? trimmed : trimmed + Path.DirectorySeparatorChar;
+    }
+
+    /// <summary>
+    /// The path the system actually opens for an existing file or folder, with links (and on Windows junctions)
+    /// resolved, or null if there's nothing there.
+    /// </summary>
+    /// <param name="followFinalLink">
+    /// False to identify the directory entry itself when the last component is a link (folders above it are still
+    /// resolved): two different links to one file are then two different entries.
+    /// </param>
+    public static string? FinalPath(string path, bool followFinalLink = true)
+    {
+        if (OperatingSystem.IsWindows()) return Native.FinalPath(path, followFinalLink);
+        if (!followFinalLink)
+        {
+            var parent = Path.GetDirectoryName(path);
+            var name = Path.GetFileName(path);
+            if (parent == null || name.Length == 0) return RealPath(path);
+            var info = new FileInfo(path);
+            if (!info.Exists && !Directory.Exists(path) && info.LinkTarget == null) return null;
+            return RealPath(parent) is { } realParent ? Path.Combine(realParent, name) : null;
+        }
+        return RealPath(path);
+    }
+
+    private static string? RealPath(string path) => Libc.Instance.RealPath(path);
+
+    // ---------------------------------------------------------------- the bin
+
+    /// <summary>
+    /// Moves a file to the Recycle Bin (Windows), the Trash (macOS) or the desktop's trash (Linux: gio, else the
+    /// freedesktop.org trash folder), so an undo can be undone.
+    /// </summary>
+    public static void MoveToTrash(string full)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(full,
+                Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs, Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
+            return;
+        }
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (OperatingSystem.IsMacOS())
+        {
+            // Through the Finder's own API: ~/.Trash itself is off limits to apps without Full Disk Access, and a file on
+            // another volume goes to that volume's trash. Put Back works afterwards too.
+            if (Desktop.Capture("/usr/bin/osascript", ["-l", "JavaScript", "-e", MacTrashScript, full])?.Trim() != "ok")
+                throw new IOException($"Couldn't move {full} to the Trash.");
+            return;
+        }
+        if (Desktop.Capture("gio", ["trash", "--", full]) != null && !File.Exists(full)) return;
+        // https://specifications.freedesktop.org/trash-spec/: the file goes in files/, with a note of where it was in info/.
+        var trash = Path.Combine(Environment.GetEnvironmentVariable("XDG_DATA_HOME") is { Length: > 0 } data ? data : Path.Combine(home, ".local", "share"), "Trash");
+        Directory.CreateDirectory(Path.Combine(trash, "info"));
+        var moved = MoveUnique(full, Path.Combine(trash, "files"));
+        File.WriteAllText(Path.Combine(trash, "info", Path.GetFileName(moved) + ".trashinfo"),
+            $"[Trash Info]\nPath={Uri.EscapeDataString(full).Replace("%2F", "/")}\nDeletionDate={DateTime.Now:yyyy-MM-ddTHH:mm:ss}\n");
+    }
+
+    private const string MacTrashScript = """
+        ObjC.import('Foundation');
+        function run(argv) {
+          const url = $.NSURL.fileURLWithPath(argv[0]);
+          return $.NSFileManager.defaultManager.trashItemAtURLResultingItemURLError(url, null, null) ? 'ok' : 'failed';
+        }
+        """;
+
+    /// <summary>Moves the file into <paramref name="folder"/>, under a new name if one of that name is already there. Returns where it went.</summary>
+    private static string MoveUnique(string file, string folder)
+    {
+        Directory.CreateDirectory(folder);
+        var name = Path.GetFileNameWithoutExtension(file);
+        var ext = Path.GetExtension(file);
+        var target = Path.Combine(folder, name + ext);
+        for (var n = 2; File.Exists(target) || Directory.Exists(target); n++) target = Path.Combine(folder, $"{name} {n}{ext}");
+        File.Move(file, target);
+        return target;
+    }
+}

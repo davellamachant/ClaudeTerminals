@@ -30,6 +30,9 @@ internal static partial class UpdateService
 
     private static readonly HttpClient Http = CreateClient();
 
+    /// <summary>Whether an update can install itself: releases carry a Windows installer only, so elsewhere the page links the release.</summary>
+    public static bool CanInstallHere => OperatingSystem.IsWindows();
+
     private static HttpClient CreateClient()
     {
         var http = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };

@@ -126,7 +126,7 @@ public sealed class UpdateServiceTests
     public void Continue_is_dropped_only_when_the_folder_has_no_conversation(string command, bool has, string expected) =>
         Assert.Equal(expected, ClaudeAgent.PrepareCommand(command, null, () => has));
 
-    [Theory]
+    [WindowsTheory]
     [InlineData("claude", "claude --settings \"T.json\"")]
     [InlineData("claude --continue", "claude --continue --settings \"T.json\"")]
     [InlineData("claude --resume abc", "claude --resume abc --settings \"T.json\"")]   // a resumed session gets the theme too
@@ -137,7 +137,7 @@ public sealed class UpdateServiceTests
     public void Claude_is_started_in_the_theme_of_its_terminal(string command, string expected) =>
         Assert.Equal(expected, ClaudeAgent.PrepareCommand(command, null, () => true, "T.json"));
 
-    [Fact]
+    [WindowsFact]
     public void A_theme_restart_resumes_the_conversation_and_sets_the_theme()
     {
         Assert.Equal("claude --resume abc-123 --settings \"T.json\"", ClaudeAgent.PrepareCommand("claude --continue", "abc-123", () => true, "T.json"));

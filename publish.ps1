@@ -58,7 +58,8 @@ if (-not (Test-Path (Join-Path $root 'web\node_modules\monaco-editor'))) {
 }
 
 if (Test-Path $publishDir) { Remove-Item $publishDir -Recurse -Force }
-dotnet publish $project -c Release -r win-x64 --self-contained true `
+# The Windows build (WinForms + WebView2); the project also builds net10.0 for macOS and Linux.
+dotnet publish $project -f net10.0-windows -c Release -r win-x64 --self-contained true `
     -p:PublishReadyToRun=true -p:DebugType=None -p:DebugSymbols=false -o $publishDir
 if ($LASTEXITCODE) { throw 'dotnet publish failed' }
 

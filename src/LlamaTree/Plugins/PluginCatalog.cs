@@ -1,3 +1,4 @@
+using LlamaTree.Platform;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -227,7 +228,7 @@ internal static partial class PluginCatalog
     {
         if (relative.Length == 0 || Path.IsPathRooted(relative) || relative.Split('/').Any(p => p is ".." or ".")) return false;
         var full = Path.GetFullPath(Path.Combine(dir, relative.Split('?', '#')[0]));
-        return full.StartsWith(Path.GetFullPath(dir).TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase) && File.Exists(full);
+        return full.StartsWith(PathText.WithSeparator(Path.GetFullPath(dir)),StringComparison.OrdinalIgnoreCase) && File.Exists(full);
     }
 
     private static string? Str(JsonElement e, string name) =>

@@ -60,6 +60,8 @@ Releases are signed by **Llamachant Technology Ltd**. If SmartScreen still warns
 - WebView2 Runtime (built into Windows 11; setup offers the download if it's missing)
 - To build it yourself: .NET 10 SDK and Node.js (for the bundled xterm.js / Monaco packages)
 
+**macOS and Linux:** LlamaTree runs there too, built from source for now (see [macOS and Linux](#macos-and-linux)).
+
 ## Using it
 
 | Action | How |
@@ -433,14 +435,33 @@ Notices are judged as of when they were signed, so they keep showing after the c
 ## Building
 
 ```powershell
-cd web; npm ci; cd ..               # once: xterm.js + Monaco
-dotnet run --project src\LlamaTree
-dotnet test                         # tests
+cd web; npm ci; cd ..                                   # once: xterm.js + Monaco
+dotnet run --project src\LlamaTree -f net10.0-windows   # the Windows app
+dotnet test                                             # tests
 ```
 
-- **Host:** .NET 10 WinForms + WebView2 (`src/LlamaTree`)
-- **Terminals:** real Windows pseudo consoles (ConPTY) rendered with xterm.js; child processes live in a kill-on-close job object
+On macOS and Linux:
+
+```bash
+(cd web && npm ci)                  # once: xterm.js + Monaco
+dotnet run --project src/LlamaTree
+dotnet test
+```
+
+- **Host:** one app with two windows (`src/LlamaTree`). `net10.0-windows` is the Windows app: WinForms + WebView2 (`Hosting/WinForms`). `net10.0` is the macOS and Linux app: a [Photino](https://www.tryphotino.io/) window, which hosts WKWebView on macOS and WebKitGTK on Linux (`Hosting/Photino`); it also runs on Windows (`-f net10.0`, on WebView2) for trying it out. Everything else is shared: `AppHost` holds the sessions, git, panels and plugins, and talks to the same page through either window.
+- **Terminals:** real pseudo terminals rendered with xterm.js: ConPTY on Windows, where child processes live in a kill-on-close job object; a Unix pty on macOS and Linux (`UnixPtyProcess`, started with posix_spawn in a session of its own), where closing a session hangs up its terminal.
 - **Diffs:** Monaco diff editor, with dark and light themes after Visual Studio's
+
+### macOS and Linux
+
+Run from source as above; [GitHub Actions](.github/workflows/build.yml) also builds and tests every push on Windows, Linux and macOS and keeps a self-contained build of each (`LlamaTree-osx-arm64`, `-osx-x64`, `-linux-x64`) on the run for two weeks. There's no installer, app bundle or self-update for them yet: *Check for updates* says when a new version is out and links its release.
+
+- **Linux** needs WebKitGTK 4.1 and libnotify (Debian/Ubuntu: `sudo apt install libwebkit2gtk-4.1-0 libnotify4`). Pasting an image or copied files into a terminal uses `wl-paste` (Wayland) or `xclip` (X11) if they're installed.
+- **Sessions get your login shell's environment** (`$SHELL -l -i`, read again after a minute), so `claude`, `codex`, `node` and `git` are found as in a terminal even when the app is started from the Dock or a desktop menu. Commands run through `/bin/sh`, so a session's command is written the way you'd type it in a terminal.
+- **Keys:** on a Mac, ⌘ does what Ctrl does on Windows (⌘1…⌘9, ⌘⇧G, ⌘⇧N, ⌘W, ⌘C/⌘V in the terminal); Ctrl+C and the other Ctrl keys go to the terminal as themselves.
+- **Data** lives in `~/Library/Application Support/LlamaTree` (macOS) or `~/.config/LlamaTree` (Linux); `LLAMATREE_DATA` picks another folder, as on Windows.
+- **The page and plugins** are served from `http://127.0.0.1:<port>/` for this run only (WebView2's virtual hosts don't exist elsewhere). The window's message bridge is reachable from every frame, so the host only acts on messages carrying a token it gives the top-level page; each plugin's files are under a random path made for the run, so one plugin can't load another's page.
+- **Undo Changes** moves files to the Trash (Linux: `gio trash`, else the freedesktop.org trash folder).
 
 ### Installer
 

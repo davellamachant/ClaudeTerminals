@@ -96,7 +96,7 @@ internal static partial class ConversationReader
             if (Str(e, "sessionId") is not { } sessionId) continue;
             // Process ids are reused: the file must belong to this process, not an earlier one with the same id.
             var procStart = Int64(e, "procStart");
-            if (procStart != 0 && !StartedAt(pid, procStart)) continue;
+            if (!StartedAt(pid, procStart, file)) continue;
             var interactive = Str(e, "kind") is null or "interactive";
             var candidate = (sessionId, Str(e, "cwd"), procStart, interactive);
             if (best == null || (interactive && !best.Value.Interactive) ||
@@ -118,13 +118,20 @@ internal static partial class ConversationReader
         };
     }
 
-    /// <summary>procStart is the process creation time as a FILETIME.</summary>
-    private static bool StartedAt(int pid, long procStart)
+    /// <summary>
+    /// Whether the file was written by this process rather than an earlier one with the same id. procStart is the
+    /// process creation time as a FILETIME on Windows; where it isn't one (or is missing), the file must at least have
+    /// been written since the process started.
+    /// </summary>
+    private static bool StartedAt(int pid, long procStart, string file)
     {
         try
         {
             using var p = System.Diagnostics.Process.GetProcessById(pid);
-            return Math.Abs(p.StartTime.ToUniversalTime().ToFileTimeUtc() - procStart) < TimeSpan.TicksPerSecond;
+            var started = p.StartTime.ToUniversalTime();
+            const long year2000 = 125911584000000000;   // as a FILETIME
+            if (procStart > year2000) return Math.Abs(started.ToFileTimeUtc() - procStart) < TimeSpan.TicksPerSecond;
+            return procStart == 0 && OperatingSystem.IsWindows() || File.GetLastWriteTimeUtc(file) >= started - TimeSpan.FromSeconds(2);
         }
         catch (Exception)
         {

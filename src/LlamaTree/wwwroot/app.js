@@ -114,7 +114,60 @@ function toast(message, isError = false) {
 
 // ------------------------------------------------------------------ host bridge
 
-const host = window.chrome.webview;
+// Windows: WebView2's bridge. macOS and Linux: Photino's (window.external), which every frame can reach, so the host only
+// trusts messages that carry the token it wrote into this page as it served it (taken out of the page straight away).
+const PHOTINO = typeof window.external?.sendMessage === 'function';
+const host = PHOTINO ? photinoBridge() : window.chrome.webview;
+
+function photinoBridge() {
+  const listeners = [];
+  const meta = document.querySelector('meta[name="llamatree-bridge"]');
+  const token = meta?.content ?? '';
+  meta?.remove();
+  window.external.receiveMessage((text) => {
+    const data = JSON.parse(text);
+    for (const fn of listeners) fn({ data });
+  });
+  // A file dropped on the window would otherwise replace the page; the page's own drop targets still get theirs.
+  for (const type of ['dragover', 'drop']) window.addEventListener(type, (e) => e.preventDefault());
+  return {
+    postMessage: (m) => window.external.sendMessage(JSON.stringify({ ...m, bridgeToken: token })),
+    addEventListener: (type, fn) => { if (type === 'message') listeners.push(fn); },
+  };
+}
+
+/** macOS: ⌘ does what Ctrl does elsewhere (app shortcuts, copy and paste); Ctrl still goes to the terminal as itself. */
+const IS_MAC = /Mac/i.test(navigator.platform || navigator.userAgent);
+const IS_LINUX = !IS_MAC && /Linux/i.test(navigator.platform || navigator.userAgent);
+const FILE_MANAGER = IS_MAC ? 'Finder' : IS_LINUX ? 'Files' : 'File Explorer';
+
+// A Mac app gets ⌘C, ⌘V, ⌘X, ⌘A and ⌘Z in text fields from its Edit menu, which a Photino window may not have, so
+// the page does them itself (the terminal has its own, see terminalKey).
+if (IS_MAC && PHOTINO) {
+  document.addEventListener('keydown', (e) => {
+    const field = e.target;
+    if (!e.metaKey || e.ctrlKey || e.altKey || !(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement)) return;
+    if (field.closest('.xterm, .monaco-editor')) return;   // they handle their own
+    const key = e.key.toLowerCase();
+    if (key === 'v') {
+      e.preventDefault();
+      readClipboardText().then((text) => {
+        if (!text) return;
+        field.setRangeText(text, field.selectionStart ?? field.value.length, field.selectionEnd ?? field.value.length, 'end');
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+      }, () => {});
+    } else if (key === 'c' || key === 'x') {
+      e.preventDefault();
+      document.execCommand(key === 'c' ? 'copy' : 'cut');
+    } else if (key === 'a') {
+      e.preventDefault();
+      field.select();
+    } else if (key === 'z') {
+      e.preventDefault();
+      document.execCommand(e.shiftKey ? 'redo' : 'undo');
+    }
+  }, true);
+}
 let reqSeq = 0;
 const pending = new Map();
 const post = (msg) => host.postMessage(msg);
@@ -125,6 +178,11 @@ function request(type, payload = {}) {
     pending.set(reqId, { resolve, reject });
     post({ type, reqId, ...payload });
   });
+}
+
+/** The clipboard's text. On macOS and Linux the app reads it: WebKit asks first (macOS) or refuses (Linux) when a page does. */
+function readClipboardText() {
+  return PHOTINO ? request('clipboard.text').then((text) => text ?? '') : navigator.clipboard.readText();
 }
 
 host.addEventListener('message', (e) => {
@@ -531,7 +589,7 @@ function rainFrame() {
   if (!ctx) return;
   const w = canvas.clientWidth, hgt = canvas.clientHeight;
   ctx.fillStyle = rain.floor; ctx.globalAlpha = 0.16; ctx.fillRect(0, 0, w, hgt); ctx.globalAlpha = 1;   // the tails fade
-  ctx.font = `${RAIN_CELL - 2}px "MS Gothic", "Cascadia Mono", Consolas, monospace`;
+  ctx.font = `${RAIN_CELL - 2}px "MS Gothic", "Cascadia Mono", Consolas, Menlo, "DejaVu Sans Mono", monospace`;
   ctx.textBaseline = 'top';
   for (let i = 0; i < rain.cols.length; i++) {
     const c = rain.cols[i];
@@ -904,7 +962,7 @@ function createSession(info) {
   s.tile = h('div', { class: 'tile', 'data-id': s.id }, s.header, h('div', { class: 'tile-body' }, s.surface, s.rail, s.cover, s.exitedBadge));
 
   const term = new Terminal({
-    fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace',
+    fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, Menlo, "DejaVu Sans Mono", "Courier New", monospace',
     fontSize: state.fontSize,
     lineHeight: 1.0,
     cursorBlink: true,
@@ -1463,11 +1521,14 @@ function setFontSize(size) {
 
 // ------------------------------------------------------------------ keyboard
 
+/** The app's shortcut modifier: ⌘ on a Mac, Ctrl elsewhere. */
+const mod = (e) => (IS_MAC ? e.metaKey : e.ctrlKey);
+
 /** Returns true for app-level shortcuts that should not reach the terminal. */
 function handleShortcut(e) {
   if (e.type !== 'keydown') return false;
   const k = e.key;
-  if (k === 'Escape' && e.shiftKey && !e.ctrlKey && !e.altKey) {
+  if (k === 'Escape' && e.shiftKey && !mod(e) && !e.altKey) {
     if (!$('#modalHost').hidden) closeModal();
     else if (activeTab()) showTerminalDoc();
     else collapse();
@@ -1475,21 +1536,21 @@ function handleShortcut(e) {
   }
   // The physical key, not the character: with some keyboard layouts Ctrl plus a number key doesn't produce "1"…"9".
   const digit = /^(?:Digit|Numpad)([1-9])$/.exec(e.code)?.[1] ?? (/^[1-9]$/.test(k) ? k : null);
-  if (e.ctrlKey && !e.altKey && !e.shiftKey && digit) {
+  if (mod(e) && !e.altKey && !e.shiftKey && digit) {
     const s = visibleSessions()[+digit - 1];   // matches the Ctrl+N hints on the visible tabs
     if (s) expand(s.id);
     return true;
   }
-  if (e.ctrlKey && !e.shiftKey && (k === 'PageUp' || k === 'PageDown')) { cycleDoc(k === 'PageUp' ? -1 : 1); return true; }
-  if (e.ctrlKey && k === 'F4') { if (activeTab()) closeDoc(docs.active); return true; }
+  if (mod(e) && !e.shiftKey && (k === 'PageUp' || k === 'PageDown')) { cycleDoc(k === 'PageUp' ? -1 : 1); return true; }
+  if (mod(e) && k === 'F4') { if (activeTab()) closeDoc(docs.active); return true; }
   // Ctrl+W closes a diff or Conversation tab. On the terminal it isn't taken: it deletes a word in Claude's prompt.
-  if (e.ctrlKey && !e.shiftKey && !e.altKey && (k === 'w' || k === 'W') && activeTab()) { closeDoc(docs.active); return true; }
+  if (mod(e) && !e.shiftKey && !e.altKey && (k === 'w' || k === 'W') && activeTab()) { closeDoc(docs.active); return true; }
   if (e.ctrlKey && k === 'Tab') { cycle(e.shiftKey ? -1 : 1); return true; }
-  if (e.ctrlKey && e.shiftKey && (k === 'G' || k === 'g')) { toggleGit(); return true; }
-  if (e.ctrlKey && e.shiftKey && (k === 'N' || k === 'n')) { showAddDialog(); return true; }
-  if (e.ctrlKey && !e.shiftKey && (k === '=' || k === '+')) { setFontSize(state.fontSize + 1); return true; }
-  if (e.ctrlKey && !e.shiftKey && k === '-') { setFontSize(state.fontSize - 1); return true; }
-  if (e.ctrlKey && !e.shiftKey && k === '0') { setFontSize(14); return true; }
+  if (mod(e) && e.shiftKey && (k === 'G' || k === 'g')) { toggleGit(); return true; }
+  if (mod(e) && e.shiftKey && (k === 'N' || k === 'n')) { showAddDialog(); return true; }
+  if (mod(e) && !e.shiftKey && (k === '=' || k === '+')) { setFontSize(state.fontSize + 1); return true; }
+  if (mod(e) && !e.shiftKey && k === '-') { setFontSize(state.fontSize - 1); return true; }
+  if (mod(e) && !e.shiftKey && k === '0') { setFontSize(14); return true; }
   return false;
 }
 
@@ -1503,6 +1564,17 @@ function terminalKey(s, e) {
     return false;
   }
   if (e.type !== 'keydown') return true;
+  // On a Mac ⌘C, ⌘V and ⌘A copy, paste and select all, and Ctrl+C and Ctrl+V go to the program as themselves.
+  if (IS_MAC) {
+    if (!e.metaKey || e.ctrlKey || e.altKey) return true;
+    const key = e.key.toLowerCase();
+    if (key === 'c') { if (s.term.hasSelection()) navigator.clipboard.writeText(s.term.getSelection()); }
+    else if (key === 'v') pasteClipboard(s);
+    else if (key === 'a') s.term.selectAll();
+    else return true;
+    e.preventDefault();
+    return false;
+  }
   // Ctrl+V pastes. Left to xterm it becomes ^V and the event is cancelled, so the browser's paste never happens; returning
   // false without cancelling lets the native paste reach xterm's paste handler (bracketed paste included).
   if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && (e.key === 'v' || e.key === 'V')) return false;
@@ -1517,6 +1589,7 @@ function terminalKey(s, e) {
     return false;
   }
   if (e.ctrlKey && e.shiftKey && (e.key === 'V' || e.key === 'v')) {
+    e.preventDefault();   // WebKitGTK pastes on Ctrl+Shift+V by itself too, which would paste twice
     pasteClipboard(s);
     return false;
   }
@@ -1525,7 +1598,7 @@ function terminalKey(s, e) {
 
 /** Pastes the clipboard's text or, without text, the paths of the image or files on it (see pasteClipboardFiles). */
 async function pasteClipboard(s) {
-  const text = await navigator.clipboard.readText().catch(() => '');
+  const text = await readClipboardText().catch(() => '');
   if (text) s.term.paste(text);
   else pasteClipboardFiles(s);
 }
@@ -1630,7 +1703,7 @@ function sessionMenu(s, x, y, from = 'session') {
     { label: 'Move to project…', action: () => showEditDialog(s, 'project') },
     { label: s.running ? 'Restart session' : 'Start session', action: () => (s.running ? confirmRestart(s) : restartSession(s)) },
     s.running && { label: 'Stop session', action: () => confirmStop(s) },
-    { label: 'Open folder in Explorer', action: () => request('openFolder', { id: s.id }) },
+    { label: `Open folder in ${IS_MAC || IS_LINUX ? FILE_MANAGER : 'Explorer'}`, action: () => request('openFolder', { id: s.id }) },
     '-',
     { label: 'Move left', action: () => moveSession(s, -1) },
     { label: 'Move right', action: () => moveSession(s, 1) },
@@ -3007,7 +3080,7 @@ function fileSection(s, kind, title, files) {
           : { label: 'Stage', action: () => gitOp(s, 'git.stage', folderFiles.map((f) => f.path)) },
         undoableInFolder.length && { label: 'Undo Changes…', danger: true, action: () => confirmUndo(s, kind, undoableInFolder, folder) },
         '-',
-        { label: 'Open in File Explorer', action: () => request('git.openFolder', { id: s.id, path: folder }) },
+        { label: `Open in ${FILE_MANAGER}`, action: () => request('git.openFolder', { id: s.id, path: folder }) },
       ]);
     })];
 }
@@ -3751,7 +3824,7 @@ function loadMonaco() {
         renderOverviewRuler: true,
         enableSplitViewResizing: true,
         useInlineViewWhenSpaceIsLimited: false,
-        fontFamily: '"Cascadia Mono", Consolas, monospace',
+        fontFamily: '"Cascadia Mono", Consolas, Menlo, "DejaVu Sans Mono", monospace',
         fontSize: 13,
         scrollBeyondLastLine: false,
         minimap: { enabled: false },

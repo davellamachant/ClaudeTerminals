@@ -49,7 +49,7 @@ public sealed class CommandLineTests : IDisposable
         return await exited.Task.WaitAsync(TimeSpan.FromSeconds(30));
     }
 
-    [Fact]
+    [WindowsFact]
     public async Task A_shim_on_PATH_runs_and_same_named_scripts_in_the_repository_do_not()
     {
         Script(Path.Combine(onPath, "claude.cmd"), "real");
@@ -67,7 +67,7 @@ public sealed class CommandLineTests : IDisposable
         Assert.False(File.Exists(Path.Combine(session, "decoy.ran")));
     }
 
-    [Fact]
+    [WindowsFact]
     public void A_name_found_nowhere_on_PATH_is_refused_rather_than_searched_for_in_the_repository()
     {
         File.WriteAllText(Path.Combine(session, "claude.bat"), "@echo decoy> \"%~dp0decoy.ran\"\r\n");
@@ -76,7 +76,7 @@ public sealed class CommandLineTests : IDisposable
         Assert.False(File.Exists(Path.Combine(session, "decoy.ran")));
     }
 
-    [Fact]
+    [WindowsFact]
     public async Task Quoted_script_paths_and_arguments_arrive_intact()
     {
         var script = Path.Combine(onPath, "args.cmd");
@@ -88,7 +88,7 @@ public sealed class CommandLineTests : IDisposable
         Assert.Equal("args|two words||ünï & co", File.ReadAllText(Path.Combine(onPath, "args.ran")).TrimEnd());
     }
 
-    [Fact]
+    [WindowsFact]
     public async Task Quoted_executable_paths_with_spaces_and_quoted_arguments_arrive_intact()
     {
         var git = CommandLineResolver.FindProgram("git", Environment.GetEnvironmentVariable("PATH") ?? "", ".EXE");
@@ -103,7 +103,7 @@ public sealed class CommandLineTests : IDisposable
         Assert.True(Directory.Exists(Path.Combine(target, ".git")));
     }
 
-    [Fact]
+    [WindowsFact]
     public void Drive_relative_PATH_entries_are_not_searched()
     {
         // "C:tools" means "tools under whatever the current folder on C: is", which can differ between this app and the session.
@@ -126,7 +126,7 @@ public sealed class CommandLineTests : IDisposable
         }
     }
 
-    [Fact]
+    [WindowsFact]
     public void A_found_script_whose_path_cmd_would_expand_is_refused()
     {
         var odd = Path.Combine(top, "tools %USERNAME% dir");
@@ -136,7 +136,7 @@ public sealed class CommandLineTests : IDisposable
         Assert.Throws<InvalidOperationException>(() => CommandLineResolver.Resolve("claude", Env(odd)));
     }
 
-    [Fact]
+    [WindowsFact]
     public void A_dotted_name_still_gets_PATHEXT_extensions()
     {
         File.WriteAllText(Path.Combine(onPath, "tool.v2.cmd"), "@echo ok\r\n");
@@ -144,7 +144,7 @@ public sealed class CommandLineTests : IDisposable
         Assert.Equal(Path.Combine(onPath, "tool.v2.CMD"), CommandLineResolver.FindProgram("tool.v2", onPath, ".COM;.EXE;.BAT;.CMD"), ignoreCase: true);
     }
 
-    [Fact]
+    [WindowsFact]
     public void A_blank_PATHEXT_falls_back_to_the_default_extensions()
     {
         File.WriteAllText(Path.Combine(onPath, "claude.exe"), "");
@@ -154,7 +154,7 @@ public sealed class CommandLineTests : IDisposable
         Assert.Contains(Path.Combine(onPath, "claude.exe"), CommandLineResolver.Resolve("claude", env), StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact]
+    [WindowsFact]
     public void Not_found_names_the_PATH_entries_that_were_skipped()
     {
         var env = Env(onPath, @"%USERPROFILE%\.local\bin", @"tools\bin");
@@ -167,12 +167,12 @@ public sealed class CommandLineTests : IDisposable
         Assert.DoesNotContain(onPath, error.Message);   // fully qualified entries were searched, so aren't listed
     }
 
-    [Fact]
+    [WindowsFact]
     public void Not_found_with_a_clean_PATH_keeps_the_short_message() =>
         Assert.Equal("'no-such-tool' was not found on PATH.",
             Assert.Throws<FileNotFoundException>(() => CommandLineResolver.Resolve("no-such-tool", Env(onPath))).Message);
 
-    [Fact]
+    [WindowsFact]
     public void Cmd_built_ins_still_run_through_cmd() =>
         Assert.Contains("/d /v:off /s /c \"echo hi\"", CommandLineResolver.Resolve("echo hi", Env(onPath)));
 }

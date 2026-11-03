@@ -20,13 +20,18 @@ static class Program
         using var mutex = new Mutex(true, name, out var isFirst);
         if (!isFirst)
         {
-            ActivateExistingInstance();
+            if (OperatingSystem.IsWindows()) ActivateExistingInstance();
+            else Console.Error.WriteLine("LlamaTree is already running.");
             return;
         }
 
         AppProfile.MoveFromOldName();
+#if WINFORMS
         ApplicationConfiguration.Initialize();
         Application.Run(new MainForm());
+#else
+        Hosting.PhotinoHost.Run();
+#endif
     }
 
     private static void ActivateExistingInstance()

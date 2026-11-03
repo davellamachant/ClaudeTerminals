@@ -12,7 +12,7 @@ internal sealed record PanelLink(string? ConfigFile, string Url, string Token);
 /// <summary>Runtime state for one configured session: its pseudo console process and its git watcher.</summary>
 internal sealed partial class TerminalSession : IDisposable
 {
-    private PseudoConsoleProcess? process;
+    private IPtyProcess? process;
     private GitWatcher? watcher;
     private readonly object gitLock = new();
     private int gitGeneration;
@@ -63,7 +63,7 @@ internal sealed partial class TerminalSession : IDisposable
     {
         if (process != null) return;
         var generation = ++Generation;
-        var p = new PseudoConsoleProcess();
+        var p = PtyProcess.Create();
         p.Output += text => Output?.Invoke(this, text);
         p.Exited += code =>
         {
@@ -90,7 +90,7 @@ internal sealed partial class TerminalSession : IDisposable
             FirstPromptOnce = null;
             PromptToType = onCommandLine ? null : firstPrompt;
             StartedUtc = DateTime.UtcNow;
-            p.Start(CommandLineResolver.Resolve(command, env), Info.Directory, SessionEnvironment.ToBlock(env), cols, rows);
+            p.Start(command, Info.Directory, env, cols, rows);
         }
         catch
         {

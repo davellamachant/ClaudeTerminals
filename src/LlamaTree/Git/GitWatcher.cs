@@ -56,9 +56,9 @@ internal sealed class GitWatcher : IDisposable
     private void OnFsEvent(object sender, FileSystemEventArgs e)
     {
         // Object-store and log writes happen constantly during git operations and never change status by themselves.
-        var p = e.FullPath;
-        if (p.Contains(@"\.git\objects", StringComparison.OrdinalIgnoreCase) ||
-            p.Contains(@"\.git\logs", StringComparison.OrdinalIgnoreCase) ||
+        var p = e.FullPath.Replace('\\', '/');
+        if (p.Contains("/.git/objects", StringComparison.OrdinalIgnoreCase) ||
+            p.Contains("/.git/logs", StringComparison.OrdinalIgnoreCase) ||
             p.EndsWith(".lock", StringComparison.OrdinalIgnoreCase))
             return;
         Kick();

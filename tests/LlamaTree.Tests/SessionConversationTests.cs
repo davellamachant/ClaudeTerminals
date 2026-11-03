@@ -26,7 +26,7 @@ public class SessionConversationTests
         Assert.Equal("claude --resume " + Id, ClaudeAgent.PrepareCommand("claude --continue", other, () => true, conversation: Id, isSaved: _ => true));
     }
 
-    [Fact]
+    [WindowsFact]
     public void A_session_started_from_a_panel_starts_its_conversation_with_the_prompt() =>
         Assert.Equal($"claude \"Fix it\" --session-id {Id} --mcp-config \"M.json\" --allowedTools mcp__llamatree",
             ClaudeAgent.PrepareCommand("claude", null, () => true, mcpConfig: "M.json", newConversation: true, firstPrompt: "Fix it", conversation: Id, isSaved: _ => false));
@@ -76,7 +76,7 @@ public class SessionConversationTests
     public void A_session_saved_before_it_had_its_own_conversation_gets_a_new_one_and_keeps_it()
     {
         using var s = new TerminalSession(new SessionInfo { Name = "s", Directory = ".", Command = "claude" });
-        Assert.True(MainForm.GiveOwnConversation(s));   // new: the one it was in isn't known
+        Assert.True(AppHost.GiveOwnConversation(s));   // new: the one it was in isn't known
         Assert.True(TerminalSession.IsConversationId(s.Info.Conversation));
         Assert.False(TerminalSession.NeedsOwnConversation(s.Info));
         Assert.Equal("claude --session-id " + s.Info.Conversation,   // not a plain claude, so the next start reopens it
@@ -87,7 +87,7 @@ public class SessionConversationTests
     public void A_session_an_update_noted_keeps_the_conversation_it_was_in()
     {
         using var s = new TerminalSession(new SessionInfo { Name = "s", Directory = ".", Command = "claude" }) { ResumeOnce = Id };
-        Assert.False(MainForm.GiveOwnConversation(s));
+        Assert.False(AppHost.GiveOwnConversation(s));
         Assert.Equal(Id, s.Info.Conversation);
     }
 

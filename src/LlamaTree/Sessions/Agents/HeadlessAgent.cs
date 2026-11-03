@@ -22,17 +22,7 @@ internal static class HeadlessAgent
     public static async Task<string> RunAsync(AgentProfile agent, string dir, string prompt, string task, CancellationToken ct)
     {
         var env = SessionEnvironment.Build();
-        string line;
-        try
-        {
-            line = CommandLineResolver.Resolve(agent.HeadlessCommand!, env);
-        }
-        catch (FileNotFoundException)
-        {
-            throw new InvalidOperationException($"{agent.Name} ({agent.Programs[0]}) wasn't found on PATH, so it can't {task}.");
-        }
-        var (program, arguments) = SplitProgram(line);
-        var psi = new ProcessStartInfo(program, arguments)
+        var psi = new ProcessStartInfo
         {
             WorkingDirectory = Directory.Exists(dir) ? dir : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             RedirectStandardInput = true,
@@ -44,6 +34,21 @@ internal static class HeadlessAgent
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8,
         };
+        try
+        {
+            if (OperatingSystem.IsWindows())
+                (psi.FileName, psi.Arguments) = SplitProgram(CommandLineResolver.Resolve(agent.HeadlessCommand!, env));
+            else
+            {
+                var argv = CommandLineResolver.ResolveArgv(agent.HeadlessCommand!, env);   // /bin/sh -c "<command>"
+                psi.FileName = argv[0];
+                foreach (var a in argv[1..]) psi.ArgumentList.Add(a);
+            }
+        }
+        catch (FileNotFoundException)
+        {
+            throw new InvalidOperationException($"{agent.Name} ({agent.Programs[0]}) wasn't found on PATH, so it can't {task}.");
+        }
         // The same clean environment sessions get, not this app's (which may have been started from a Claude session).
         psi.Environment.Clear();
         foreach (var (name, value) in env) psi.Environment[name] = value;

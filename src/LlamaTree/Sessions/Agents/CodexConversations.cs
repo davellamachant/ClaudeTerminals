@@ -1,3 +1,4 @@
+using LlamaTree.Platform;
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
@@ -278,12 +279,12 @@ internal static class CodexConversations
     private static string? NormalizeDir(string? directory)
     {
         if (string.IsNullOrWhiteSpace(directory)) return null;
-        try { return Path.GetFullPath(directory).TrimEnd('\\'); }
+        try { return PathText.TrimEnd(Path.GetFullPath(directory)); }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { return null; }
     }
 
     private static bool SameDir(string? cwd, string normalizedDir) =>
-        cwd != null && string.Equals(cwd.TrimEnd('\\'), normalizedDir, StringComparison.OrdinalIgnoreCase);
+        cwd != null && string.Equals(PathText.TrimEnd(cwd), normalizedDir, StringComparison.OrdinalIgnoreCase);
 
     private static bool TryParse(string line, out JsonElement element)
     {
