@@ -14,8 +14,9 @@ namespace LlamaTree;
 
 /// <summary>
 /// The app behind the page (xterm.js terminals + Monaco diffs): its sessions in pseudo terminals, git, panels and
-/// plugins, bridged to the page through JSON messages. The window that shows the page is <see cref="IHostWindow"/>:
-/// WinForms + WebView2 on Windows, Photino on macOS and Linux. Everything here runs on that window's UI thread.
+/// plugins, bridged to the page through JSON messages. It runs in the session host (see <see cref="SessionHost"/>),
+/// so sessions carry on while no window is open; the window that shows the page attaches to it (<see cref="IHostWindow"/>).
+/// Everything here runs on the host's app thread.
 /// </summary>
 internal sealed class AppHost
 {
@@ -26,17 +27,27 @@ internal sealed class AppHost
     private readonly List<string> order = [];
     private readonly List<ProjectInfo> projects = ProjectStore.Load();
     private readonly Dictionary<string, StringBuilder> pendingOutput = [];
+    /// <summary>Each session's recent output, shown by a window that attaches while it runs.</summary>
+    private readonly Dictionary<string, OutputTail> tails = [];
+    /// <summary>Sessions to redraw at their next resize: a window has just attached, and its terminals start empty.</summary>
+    private readonly HashSet<string> repaint = [];
     private readonly System.Threading.Timer flushTimer;
     private int flushQueued;
-    private bool webReady;
-    private bool closingForUpdate;
+    private volatile bool webReady;   // read by sessions' output threads too
+    private bool shutDown;
     private UpdateInfo? update;
 
     /// <summary>The window title: shown in the taskbar, Alt+Tab and the Dock.</summary>
     public static string Title => $"LlamaTree {UpdateService.CurrentVersion}";
 
-    /// <summary>Whether the page has said it's ready (messages before then are dropped).</summary>
-    public bool WebReady => webReady;
+    /// <summary>Whether any session's program is running.</summary>
+    public bool AnyRunning => sessions.Values.Any(s => s.IsRunning);
+
+    /// <summary>A session started or ended (on the app thread).</summary>
+    public event Action? RunningChanged;
+
+    /// <summary>The app should end: the sessions were stopped on the way out, or an update is about to install.</summary>
+    public event Action? QuitRequested;
 
     /// <summary>Each session's conversation, noted just before an update restarts the app (see <see cref="TerminalSession.ResumeOnce"/>).</summary>
     private static string ResumeFile => Path.Combine(SessionStore.AppDataFolder, "resume-after-update.json");
@@ -326,19 +337,32 @@ internal sealed class AppHost
         }
     }
 
-    /// <summary>The accent colour and app mode (Windows reports both; elsewhere the page follows the system's light or dark).</summary>
-    public void PostAccent() => Post(new { type = "accent", palette = AccentColors.Read(), lightApps = AccentColors.AppsUseLightTheme() });
+    /// <summary>
+    /// The accent colour and app mode, as a message for the page (Windows reports both; elsewhere the page follows the
+    /// system's light or dark). The window sends it too, when Windows says they've changed.
+    /// </summary>
+    public static string AccentMessage() =>
+        JsonSerializer.Serialize(new { type = "accent", palette = AccentColors.Read(), lightApps = AccentColors.AppsUseLightTheme() }, JsonOptions);
 
-    /// <summary>What to ask before the window closes (sessions are running), or null to just close.</summary>
-    public string? CloseQuestion()
+    /// <summary>A window has attached: it serves the plugins again, and shows the sessions once its page says it's ready.</summary>
+    public void Attached()
     {
-        var running = sessions.Values.Where(s => s.IsRunning).ToList();
-        return running.Count > 0 && !closingForUpdate ? CloseMessage(running) : null;
+        webReady = false;
+        foreach (var p in plugins.Values) window.ServePlugin(p);
     }
 
-    /// <summary>The window is closing: stop the sessions, each noting the conversation it's in so it reopens there.</summary>
+    /// <summary>The window has gone: sessions run on, their output kept in <see cref="tails"/> for the next one.</summary>
+    public void Detached()
+    {
+        webReady = false;
+        lock (pendingOutput) pendingOutput.Clear();
+    }
+
+    /// <summary>The app is ending: stop the sessions, each noting the conversation it's in so it reopens there. Once only.</summary>
     public void Shutdown()
     {
+        if (shutDown) return;
+        shutDown = true;
         flushTimer.Dispose();
         conversationTimer.Dispose();
         foreach (var s in sessions.Values) CatchUpConversation(s);   // so each reopens where it was
@@ -348,9 +372,10 @@ internal sealed class AppHost
     }
 
     /// <summary>
-    /// Closing only stops the sessions: Claude keeps every conversation and the sessions come back with the app (a Claude
-    /// session starts when it's first opened), so say that (and which of them carry on their conversation) rather than
-    /// that they'll be "terminated".
+    /// What closing the window asks when sessions are running: keep them running without the window, or stop them. Stopping
+    /// loses nothing: Claude keeps every conversation and the sessions come back with the app (a Claude session starts
+    /// when it's first opened), so say that (and which of them carry on their conversation) rather than that they'll be
+    /// "terminated".
     /// </summary>
     internal static string CloseMessage(IReadOnlyCollection<TerminalSession> running)
     {
@@ -369,8 +394,9 @@ internal sealed class AppHost
             _ => $"They come back the next time you open LlamaTree: {carryOn} pick{(carryOn == 1 ? "s" : "")} up where {(carryOn == 1 ? "it" : "they")} left off, " +
                  $"{fresh} start{(fresh == 1 ? "s" : "")} a new conversation (the current one can be reopened with \"Resume a different conversation…\").",
         };
-        return $"{sessionsAre} running. Closing stops {(n == 1 ? "it" : "them")}, but nothing is lost: Claude keeps every conversation.\n\n" +
-               $"{restart}\n\nAnything Claude is in the middle of will be interrupted.\n\nClose LlamaTree?";
+        return $"{sessionsAre} running.\n\n" +
+               $"Kept running, {(n == 1 ? "it carries" : "they carry")} on without the window and {(n == 1 ? "is" : "are")} here when you open LlamaTree again.\n\n" +
+               $"Stopping {(n == 1 ? "it" : "them")} loses nothing: Claude keeps every conversation. {restart} Anything Claude is in the middle of will be interrupted.";
     }
 
     // ---------------------------------------------------------------- sessions
@@ -378,10 +404,13 @@ internal sealed class AppHost
     private TerminalSession AddSessionRuntime(SessionInfo info)
     {
         var s = new TerminalSession(info);
+        var tail = tails[info.Id] = new OutputTail();
         s.Output += (session, text) =>
         {
+            tail.Append(text);
             lock (pendingOutput)
             {
+                if (!webReady) return;   // no page to send it to: the tail keeps it for the next window
                 if (!pendingOutput.TryGetValue(session.Id, out var sb)) pendingOutput[session.Id] = sb = new StringBuilder();
                 sb.Append(text);
             }
@@ -393,6 +422,7 @@ internal sealed class AppHost
             if (generation != session.Generation) return;
             FlushOutput();
             Post(new { type = "exited", id = session.Id, code });
+            RunningChanged?.Invoke();
         });
         s.StatusChanged += (session, status) => RunOnUi(() => Post(StatusMessage(session, status)));
         sessions[info.Id] = s;
@@ -503,9 +533,15 @@ internal sealed class AppHost
         switch (type)
         {
             case "ready":
-                webReady = true;
-                PostAccent();   // first: with Windows' app mode the page knows its theme before sessions start
+                window.PostJson(AccentMessage());   // first: with Windows' app mode the page knows its theme before sessions start
                 Post(SessionList());
+                // Sessions that ran on while no window was open: what they showed, and a redraw at the page's size.
+                foreach (var s in order.Select(id => sessions[id]).Where(s => s.IsRunning))
+                {
+                    if (tails[s.Id].ToString() is { Length: > 0 } shown) Post(new { type = "replay", id = s.Id, data = shown });
+                    repaint.Add(s.Id);
+                }
+                webReady = true;   // after the replay, so live output follows it
                 Post(PanelsMessage());
                 if (newConversations.Count > 0)
                 {
@@ -518,7 +554,9 @@ internal sealed class AppHost
             case "start":
             {
                 var s = Get(msg);
+                tails[s.Id].Clear();
                 s.Start(Int(msg, "cols"), Int(msg, "rows"), OptStr(msg, "theme"), PanelLinkFor(s));
+                RunningChanged?.Invoke();
                 return null;
             }
             case "input":
@@ -526,8 +564,19 @@ internal sealed class AppHost
                 return null;
 
             case "resize":
-                Get(msg).Resize(Int(msg, "cols"), Int(msg, "rows"));
+            {
+                var s = Get(msg);
+                int cols = Int(msg, "cols"), rows = Int(msg, "rows");
+                if (repaint.Remove(s.Id) && rows > 2)
+                {
+                    // A terminal told the size it already has hears nothing, so a program that ran on without a window
+                    // is shrunk by a row and given its size back: it redraws its whole screen in the new terminal.
+                    s.Resize(cols, rows - 1);
+                    await Task.Delay(80);
+                }
+                s.Resize(cols, rows);
                 return null;
+            }
 
             case "restart":
             {
@@ -537,12 +586,28 @@ internal sealed class AppHost
                 if (Bool(msg, "resume") && s.IsRunning && LiveConversation(s) is { } live)
                     s.ResumeOnce = live;
                 s.Stop();
+                tails[s.Id].Clear();
                 s.Start(Int(msg, "cols"), Int(msg, "rows"), OptStr(msg, "theme"), PanelLinkFor(s));
+                RunningChanged?.Invoke();
                 return null;
             }
-            case "theme":
-                window.ApplyTheme(Bool(msg, "light"), OptStr(msg, "background"));
+            case "app.closeInfo":
+            {
+                // Asked by the page when the window is closing, before it asks you whether to keep sessions running.
+                var running = sessions.Values.Where(s => s.IsRunning).ToList();
+                return new { running = running.Count, message = running.Count > 0 ? CloseMessage(running) : null };
+            }
+            case "app.close":
+            {
+                // Your answer: the window closes either way; stopping the sessions also ends the app.
+                var stop = Bool(msg, "stop");
+                RunOnUi(() =>
+                {
+                    window.Close();
+                    if (stop) QuitRequested?.Invoke();
+                });
                 return null;
+            }
             case "stop":
             {
                 // Stopping disposes the process without raising Exited, so tell the page itself (code null = stopped).
@@ -552,6 +617,7 @@ internal sealed class AppHost
                 {
                     FlushOutput();
                     Post(new { type = "exited", id = s.Id, code = (int?)null });
+                    RunningChanged?.Invoke();
                 }
                 return null;
             }
@@ -675,6 +741,9 @@ internal sealed class AppHost
                 s.Dispose();
                 sessions.Remove(s.Id);
                 order.Remove(s.Id);
+                tails.Remove(s.Id);
+                repaint.Remove(s.Id);
+                RunningChanged?.Invoke();
                 SaveSessions();
                 ForgetPanels(s.Id);   // its panels go with it
                 Post(SessionList());
@@ -801,11 +870,6 @@ internal sealed class AppHost
                 }
                 return null;
             }
-            case "pickFolder":
-            {
-                var initial = Str(msg, "initial");
-                return window.PickFolder("Choose the folder (worktree) for the session", Directory.Exists(initial) ? initial : null);
-            }
             case "worktree.add":
             {
                 // A new worktree of the session's repository, on a new branch; the page then adds a session there.
@@ -930,10 +994,6 @@ internal sealed class AppHost
                 });
                 return null;
             }
-            case "clipboard.files":
-                return window.ClipboardFiles();   // on the UI thread, as the clipboard needs
-            case "clipboard.text":
-                return window.ClipboardText();
 
             // ---- plugins
             case "plugins.list":
@@ -1091,10 +1151,12 @@ internal sealed class AppHost
                 var info = update ?? throw new InvalidOperationException("Check for updates first.");
                 if (!info.CanInstall) throw new InvalidOperationException("This copy of LlamaTree can't install the update itself: get the new version from its release page.");
                 var installer = await UpdateService.DownloadAsync(info);
+                // The update waits for both the window and this host to end: the installer can't replace files either has open.
+                int[] processes = window.ProcessId is { } w ? [Environment.ProcessId, w] : [Environment.ProcessId];
                 if (UpdateService.Install == InstallKind.Windows)
                 {
                     NoteConversationsForResume();
-                    UpdateService.InstallAfterExit(installer);
+                    UpdateService.InstallAfterExit(installer, processes);
                 }
                 else
                 {
@@ -1103,10 +1165,10 @@ internal sealed class AppHost
                     try { finish = await LinuxUpdate.PrepareAsync(UpdateService.Install, installer); }
                     finally { try { Directory.Delete(Path.GetDirectoryName(installer)!, true); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { } }
                     NoteConversationsForResume();
-                    LinuxUpdate.FinishAfterExit(finish);
+                    LinuxUpdate.FinishAfterExit(finish, processes);
                 }
-                // Close once this reply is on its way; setup waits for the process to end.
-                RunOnUi(() => { closingForUpdate = true; window.Close(); });
+                // Close once this reply is on its way, and end the host: setup waits for both.
+                RunOnUi(() => { window.Close(); QuitRequested?.Invoke(); });
                 return null;
             }
             case "git.suggestMessage":

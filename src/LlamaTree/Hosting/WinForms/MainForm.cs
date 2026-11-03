@@ -9,16 +9,17 @@ using Microsoft.Web.WebView2.WinForms;
 namespace LlamaTree;
 
 /// <summary>
-/// The Windows window: the app page in a WebView2, its messages handed to <see cref="AppHost"/>. The page and plugins
-/// are served from folders as virtual hosts (https://app.local/, https://&lt;id&gt;.plugin.local/).
+/// The Windows window: the app page in a WebView2, its messages passed to the session host (see <see cref="HostLink"/>).
+/// The page and plugins are served from folders as virtual hosts (https://app.local/, https://&lt;id&gt;.plugin.local/).
 /// </summary>
-internal sealed class MainForm : Form, IHostWindow
+internal sealed class MainForm : Form, HostLink.IWindow
 {
-    /// <summary>The only document allowed in the WebView, and the only one whose messages the host acts on.</summary>
+    /// <summary>The only document allowed in the WebView, and the only one whose messages are passed on.</summary>
     private const string AppPage = "https://app.local/index.html";
 
     private readonly WebView2 webView = new() { Dock = DockStyle.Fill, DefaultBackgroundColor = Color.FromArgb(0x1f, 0x1f, 0x1f) };
-    private readonly AppHost app;
+    private readonly HostLink link;
+    private bool pageUp;
 
     public MainForm()
     {
@@ -31,16 +32,22 @@ internal sealed class MainForm : Form, IHostWindow
         if (icon != null) Icon = icon;
         Controls.Add(webView);
         CreateHandle();   // so RunOnUi can marshal to this thread from the start
-        app = new AppHost(this);
+        link = new HostLink(this);
     }
 
-    // ---------------------------------------------------------------- IHostWindow
+    // ---------------------------------------------------------------- HostLink.IWindow
 
     public void PostJson(string json)
     {
         if (webView.CoreWebView2 is not { } core || !IsAppUri(core.Source)) return;
         core.PostWebMessageAsJson(json);
     }
+
+    public Hosting.Link.PluginAddressing Plugins => Hosting.Link.PluginAddressing.VirtualHosts;
+
+    public void CloseNow() => Close();
+
+    public void ReloadPage() => webView.CoreWebView2?.Navigate(AppPage);
 
     public void RunOnUi(Action action)
     {
@@ -90,14 +97,24 @@ internal sealed class MainForm : Form, IHostWindow
         BackColor = color;
     }
 
-    /// <summary>https://&lt;id&gt;.plugin.local/: every plugin has an origin of its own, apart from the app's and each other's.</summary>
-    public string PluginBase(string pluginId) => $"https://{PluginCatalog.HostFor(pluginId)}/";
+    /// <summary>
+    /// At https://&lt;id&gt;.plugin.local/: every plugin has an origin of its own, apart from the app's and each other's.
+    /// Reads from other origins are refused (DenyCors), so neither another plugin nor a page elsewhere can fetch its files.
+    /// Asked before the WebView is up (a host already running), it's done once the WebView is.
+    /// </summary>
+    public void ServePlugin(string id, string folder)
+    {
+        servedPlugins[id] = folder;
+        webView.CoreWebView2?.SetVirtualHostNameToFolderMapping(PluginCatalog.HostFor(id), folder, CoreWebView2HostResourceAccessKind.DenyCors);
+    }
 
-    /// <summary>Reads from other origins are refused (DenyCors), so neither another plugin nor a page elsewhere can fetch its files.</summary>
-    public void ServePlugin(PluginInfo plugin) =>
-        webView.CoreWebView2?.SetVirtualHostNameToFolderMapping(plugin.Host, plugin.Folder, CoreWebView2HostResourceAccessKind.DenyCors);
+    public void StopServingPlugin(string id)
+    {
+        servedPlugins.Remove(id);
+        webView.CoreWebView2?.ClearVirtualHostNameToFolderMapping(PluginCatalog.HostFor(id));
+    }
 
-    public void StopServingPlugin(string pluginId) => webView.CoreWebView2?.ClearVirtualHostNameToFolderMapping(PluginCatalog.HostFor(pluginId));
+    private readonly Dictionary<string, string> servedPlugins = [];
 
     // ---------------------------------------------------------------- window
 
@@ -115,12 +132,12 @@ internal sealed class MainForm : Form, IHostWindow
         var accentChanged = m.Msg == WM_DWMCOLORIZATIONCOLORCHANGED ||
             (m.Msg == WM_SETTINGCHANGE && m.LParam != IntPtr.Zero &&
              System.Runtime.InteropServices.Marshal.PtrToStringUni(m.LParam) == "ImmersiveColorSet");
-        if (!accentChanged || app is not { WebReady: true }) return;
+        if (!accentChanged || !pageUp) return;
         // Windows sends several of these, and may write the new shades just after: read once things settle.
         if (accentTimer == null)
         {
             accentTimer = new System.Windows.Forms.Timer { Interval = 400 };
-            accentTimer.Tick += (_, _) => { accentTimer.Stop(); app.PostAccent(); };
+            accentTimer.Tick += (_, _) => { accentTimer.Stop(); PostJson(AppHost.AccentMessage()); };
         }
         accentTimer.Stop();
         accentTimer.Start();
@@ -159,7 +176,14 @@ internal sealed class MainForm : Form, IHostWindow
             core.NavigationStarting += (_, args) => { if (!IsAppUri(args.Uri)) args.Cancel = true; };
             var root = Path.Combine(AppContext.BaseDirectory, "wwwroot");
             core.SetVirtualHostNameToFolderMapping("app.local", root, CoreWebView2HostResourceAccessKind.Allow);
-            core.WebMessageReceived += (_, args) => { if (IsAppUri(args.Source)) app.Receive(args.WebMessageAsJson); };
+            core.WebMessageReceived += (_, args) =>
+            {
+                if (!IsAppUri(args.Source)) return;
+                pageUp = true;
+                link.Receive(args.WebMessageAsJson);
+            };
+            foreach (var (id, folder) in servedPlugins)
+                core.SetVirtualHostNameToFolderMapping(PluginCatalog.HostFor(id), folder, CoreWebView2HostResourceAccessKind.DenyCors);
             core.NewWindowRequested += (_, args) => args.Handled = true;
             // Plugins are pages in frames of their own (see PluginCatalog): a plugin's frame stays on plugin addresses.
             core.FrameNavigationStarting += (_, args) => { if (!PluginCatalog.IsPluginUri(args.Uri) && args.Uri != "about:blank") args.Cancel = true; };
@@ -201,15 +225,18 @@ internal sealed class MainForm : Form, IHostWindow
         }
     }
 
+    /// <summary>
+    /// Closing asks the page, which asks you about running sessions (see <see cref="HostLink.AskToClose"/>); its answer
+    /// closes the window. Logging off or shutting down closes it straight away, leaving the sessions to the host.
+    /// </summary>
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
-        if (e.CloseReason == CloseReason.UserClosing && app.CloseQuestion() is { } question &&
-            MessageBox.Show(this, question, Text, MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK)
+        if (e.CloseReason == CloseReason.UserClosing && !link.AskToClose())
         {
             e.Cancel = true;
             return;
         }
-        app.Shutdown();
+        link.Detach();
         base.OnFormClosing(e);
     }
 }

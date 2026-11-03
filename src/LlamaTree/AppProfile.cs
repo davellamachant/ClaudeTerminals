@@ -12,6 +12,13 @@ internal static class AppProfile
     /// <summary>A separate profile's folder (LLAMATREE_DATA, or CLAUDE_TERMINALS_DATA from before the rename), or null.</summary>
     public static string? CustomFolder { get; } = Variable("LLAMATREE_DATA", "CLAUDE_TERMINALS_DATA");
 
+    /// <summary>
+    /// "" for the default profile; for a separate one, "." and a short hash of its folder, so its single-instance locks
+    /// and the window's connection to its session host are its own.
+    /// </summary>
+    public static string InstanceSuffix { get; } = string.IsNullOrEmpty(CustomFolder) ? ""
+        : "." + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(CustomFolder.ToUpperInvariant())))[..12];
+
     /// <summary>An environment variable, or the one it was called before the rename; null when neither is set.</summary>
     public static string? Variable(string name, string oldName) =>
         Environment.GetEnvironmentVariable(name) is { Length: > 0 } value ? value

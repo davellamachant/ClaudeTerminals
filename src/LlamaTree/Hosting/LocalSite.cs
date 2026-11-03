@@ -27,8 +27,11 @@ internal sealed class LocalSite : IDisposable
     private readonly string host;
     private readonly string appPrefix = "/" + Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant() + "/";
     private readonly string bridgeToken;
-    private readonly ConcurrentDictionary<string, string> pluginFolders = new();   // random path segment → folder
-    private readonly ConcurrentDictionary<string, string> pluginSegments = new();  // plugin id → random path segment
+    private readonly ConcurrentDictionary<string, string> pluginFolders = new();   // path segment → folder
+    private readonly ConcurrentDictionary<string, string> pluginSegments = new();  // plugin id → path segment
+
+    /// <summary>This run's key for plugins' paths, which the session host is given to work out the same addresses.</summary>
+    public string PluginKey { get; } = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
 
     private LocalSite(HttpListener listener, int port, string root, string bridgeToken)
     {
@@ -68,9 +71,12 @@ internal sealed class LocalSite : IDisposable
         }
     }
 
-    /// <summary>The plugin's address: its own random path for this run, which only the app page (that frames it) knows.</summary>
+    /// <summary>
+    /// The plugin's address: a path made from this run's key, which only the app page (that frames it) and the session
+    /// host know (see <see cref="Link.PluginAddressing"/>).
+    /// </summary>
     public string PluginBase(string id) =>
-        $"{Origin}/plugin/{pluginSegments.GetOrAdd(id, _ => Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant())}/";
+        $"{Origin}/plugin/{pluginSegments.GetOrAdd(id, _ => Link.PluginAddressing.Segment(PluginKey, id))}/";
 
     public void ServePlugin(string id, string folder)
     {

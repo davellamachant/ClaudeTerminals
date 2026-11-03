@@ -139,7 +139,7 @@ With Windows' animation effects turned off the dots stay still, and in every sty
 
 **Codex sessions** work the same way, with a few differences: see [Claude Code and Codex](#claude-code-and-codex).
 
-**Closing the app** stops the sessions but loses nothing: Claude keeps every conversation, and the sessions come back with the app. The closing prompt says which pick up where they left off (those that continue or resume) and which start a new conversation.
+**Closing the window** with sessions running asks what to do with them. **Keep running** closes only the window: the sessions carry on in the background, and opening LlamaTree again shows them as they are, with what they printed meanwhile. **Stop sessions** stops them but loses nothing: Claude keeps every conversation, and the sessions come back with the app; the question says which pick up where they left off (those that continue or resume) and which start a new conversation. Tick *Don't ask again* to always do one or the other; the version menu (top right) changes it, and has *Quit and stop all sessions*. With no session running, closing the window ends LlamaTree.
 
 **Starting when opened:** when the app starts, a Claude session it brings back waits until you first open it (its tile says *Starts when you open it*; pressing Enter in it works too). Claude's start-up context, such as hooks, the date and Git status, is then fresh when you use the session, and one you don't open runs nothing. New sessions, and sessions running any other command (a dev server, say), start straight away.
 
@@ -161,7 +161,7 @@ A session's command decides what it runs: `claude` for [Claude Code](https://doc
 | Reopens it when the app or the session restarts | ✓ `--resume <id>` | ✓ `codex resume <id>` | — |
 | Follows you to another conversation | ✓ `/clear`, `/resume` | ✓ `/new`; `/resume` once you send a prompt in it | — |
 | Resume picker | ✓ | ✓ tagged *Codex* | — |
-| Conversation title on hover, and in the closing prompt | ✓ | ✓ | — |
+| Conversation title on hover, and in the closing question | ✓ | ✓ | — |
 | **Conversation rail and tab** | | | |
 | Rail of prompts and the Conversation tab | ✓ | ✓ | — |
 | Works in full-screen mode | ✓ | ✓ | — |
@@ -462,6 +462,7 @@ dotnet test
 ```
 
 - **Host:** one app with two windows (`src/LlamaTree`). `net10.0-windows` is the Windows app: WinForms + WebView2 (`Hosting/WinForms`). `net10.0` is the macOS and Linux app: a [Photino](https://www.tryphotino.io/) window, which hosts WKWebView on macOS and WebKitGTK on Linux (`Hosting/Photino`); it also runs on Windows (`-f net10.0`, on WebView2) for trying it out. Everything else is shared: `AppHost` holds the sessions, git, panels and plugins, and talks to the same page through either window.
+- **Session host:** `AppHost` runs in a process of its own, the same program started with `--host` (`Hosting/SessionHost.cs`), so sessions can outlive the window. The window starts it if it isn't running and connects through a named pipe (Windows) or a Unix socket (macOS, Linux; in `$XDG_RUNTIME_DIR` or the per-user temp folder) that only the same user can open, one per profile (`Hosting/Link`). The page's messages pass through unchanged; the folder picker, clipboard, title bar colours and plugins' pages stay with the window (`Hosting/HostLink.cs`). The host keeps the end of each session's output for a window that attaches later, and ends once no window is attached and no session is running. An update waits for both processes to end; the installer checks for either (`AppMutex`).
 - **Terminals:** real pseudo terminals rendered with xterm.js: ConPTY on Windows, where child processes live in a kill-on-close job object; a Unix pty on macOS and Linux (`UnixPtyProcess`, started with posix_spawn in a session of its own), where closing a session hangs up its terminal.
 - **Diffs:** Monaco diff editor, with dark and light themes after Visual Studio's
 

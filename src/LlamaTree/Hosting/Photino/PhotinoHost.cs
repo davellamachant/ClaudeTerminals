@@ -21,11 +21,11 @@ namespace LlamaTree.Hosting;
 /// ever handed the token by asking.
 /// </para>
 /// </summary>
-internal sealed class PhotinoHost : IHostWindow
+internal sealed class PhotinoHost : HostLink.IWindow
 {
     private readonly PhotinoWindow window;
     private readonly LocalSite site;
-    private readonly AppHost app;
+    private readonly HostLink link;
     private readonly string bridgeToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
     private readonly ConcurrentQueue<Action> queue = new();
     private readonly UiContext context;
@@ -79,16 +79,16 @@ internal sealed class PhotinoHost : IHostWindow
         });
         window.RegisterWebMessageReceivedHandler((_, message) => OnMessage(message));
         window.RegisterWindowClosingHandler((_, _) => OnClosing());
-        app = new AppHost(this);
+        link = new HostLink(this);
 
-        // Logging out, shutting down or a kill ends the app without closing the window: the sessions still note the
-        // conversations they're in (as closing does), so they reopen there.
+        // Logging out, shutting down or a kill closes the window without asking; the sessions are the host's, which
+        // ends them properly itself when it's told to.
         if (!OperatingSystem.IsWindows())
             foreach (var signal in new[] { PosixSignal.SIGTERM, PosixSignal.SIGHUP })
                 signals.Add(PosixSignalRegistration.Create(signal, e =>
                 {
                     e.Cancel = true;   // close the window first, then exit as usual
-                    try { window.Invoke(Close); }
+                    try { window.Invoke(CloseNow); }
                     catch (Exception) { ShutDownOnce(); Environment.Exit(0); }
                 }));
         AppDomain.CurrentDomain.ProcessExit += (_, _) => ShutDownOnce();   // e.g. Quit from the Dock or menu bar
@@ -114,29 +114,27 @@ internal sealed class PhotinoHost : IHostWindow
         }
         if (token == null || !CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(token), Encoding.ASCII.GetBytes(bridgeToken))) return;
         pageUp = true;
-        app.Receive(message);
+        link.Receive(message);
     }
 
-    /// <summary>True to keep the window open.</summary>
+    /// <summary>True to keep the window open: the page is asking about running sessions (see <see cref="HostLink.AskToClose"/>).</summary>
     private bool OnClosing()
     {
-        if (!closed && app.CloseQuestion() is { } question &&
-            window.ShowMessage(AppHost.Title, question, PhotinoDialogButtons.OkCancel, PhotinoDialogIcon.Question) != PhotinoDialogResult.Ok)
-            return true;
+        if (!closed && !link.AskToClose()) return true;
         ShutDownOnce();
         return false;
     }
 
-    /// <summary>Stops the sessions once, whichever way the app ends (on the window's thread, except at process exit).</summary>
+    /// <summary>Lets the host know the window has gone, once, whichever way the window ends.</summary>
     private void ShutDownOnce()
     {
         if (Interlocked.Exchange(ref shutDown, 1) != 0) return;
         closed = true;
-        app.Shutdown();
+        link.Detach();
         foreach (var s in signals) s.Dispose();
     }
 
-    // ---------------------------------------------------------------- IHostWindow
+    // ---------------------------------------------------------------- HostLink.IWindow
 
     public void PostJson(string json)
     {
@@ -190,17 +188,24 @@ internal sealed class PhotinoHost : IHostWindow
     /// <summary>The page paints the whole window, and Photino leaves the title bar to the system's light or dark.</summary>
     public void ApplyTheme(bool light, string? background) { }
 
-    public void Close()
+    public void CloseNow()
     {
         ShutDownOnce();
         window.Close();
     }
 
-    public string PluginBase(string pluginId) => site.PluginBase(pluginId);
+    /// <summary>The page again, from the top (it gets the bridge token anew).</summary>
+    public void ReloadPage()
+    {
+        pageUp = false;
+        window.Load(site.AppPage);
+    }
 
-    public void ServePlugin(PluginInfo plugin) => site.ServePlugin(plugin.Id, plugin.Folder);
+    public Link.PluginAddressing Plugins => new(site.Origin, site.PluginKey);
 
-    public void StopServingPlugin(string pluginId) => site.StopServingPlugin(pluginId);
+    public void ServePlugin(string id, string folder) => site.ServePlugin(id, folder);
+
+    public void StopServingPlugin(string id) => site.StopServingPlugin(id);
 
     /// <summary>Continuations of the app's awaits run back on the window's thread, as they do in WinForms.</summary>
     private sealed class UiContext(PhotinoHost host) : SynchronizationContext
