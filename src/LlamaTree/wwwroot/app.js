@@ -55,6 +55,7 @@ const PATHS = {
   more: 'M3.5 8h.01M8 8h.01M12.5 8h.01',
   collapse: 'M6 2v4H2M10 2v4h4M6 14v-4H2M10 14v-4h4',
   sideBySide: 'M2 3h12v10H2zM8 3v10',
+  panel: 'M2 3h12v10H2zM10 3v10',   // the side panel, with the Git tabs off
   inline: 'M2 3h12v10H2zM2 8h12',
   whitespace: 'M3 12h10M3 9v3M13 9v3M6 4h4M8 4v5',
   openFile: 'M9 2H4v12h8V5zM9 2v3h3',
@@ -175,6 +176,7 @@ const state = {
   projectViewOf: null,       // the project whose Project view is showing: a place of its own, with no session open
   currentId: store.get('currentId', null),   // session shown in the Git panel
   gitVisible: store.get('gitVisible', true),
+  hiddenGitTabs: new Set(store.get('hiddenGitTabs', [])),   // 'changes' and/or 'repo', turned off in the side panel's ▾
   gitWidth: store.get('gitWidth', 400),
   panels: [],                // shown by Claude through the app's MCP server (their tabs live in the dock)
   panelsLoaded: false,       // until the host sends them, saved panel tabs keep their place
@@ -1232,9 +1234,9 @@ function renderTileHeader(s) {
     projectTag(s),
     relayTileMark(s),
     h('span', { class: 'tile-title', title: s.title }, s.title),
-    gs && h('button', {
-      class: 'chip', title: `${gs.count} changed file(s) on ${gs.branch} — show in Git Changes`,
-      onclick: () => showGit(s.id),
+    gs && h(gitTabOn('changes') ? 'button' : 'span', {
+      class: 'chip', title: `${gs.count} changed file(s) on ${gs.branch}${gitTabOn('changes') ? ' — show in Git Changes' : ''}`,
+      onclick: gitTabOn('changes') && (() => showGit(s.id)),
     }, iconEl('branch'), gs.branch, gs.ahead ? ` ↑${gs.ahead}` : '', gs.count ? h('span', { class: 'mod' }, ` ●${gs.count}`) : ''),
     h('button', { class: 'icon-btn', title: 'Session options', onclick: (e) => { const r = e.currentTarget.getBoundingClientRect(); sessionMenu(s, r.left, r.bottom + 2); } }, iconEl('more')),
     expanded && h('button', { class: 'icon-btn', title: 'Back to all sessions (Shift+Esc)', onclick: collapse }, iconEl('collapse')),
@@ -1620,7 +1622,7 @@ function menuKey(e) {
 function sessionMenu(s, x, y, from = 'session') {
   showMenu(x, y, [
     state.expandedId === s.id ? { label: 'Back to all sessions', kbd: 'Shift+Esc', action: collapse } : { label: 'Expand', action: () => expand(s.id) },
-    { label: 'Show Git changes', action: () => showGit(s.id) },
+    gitTabOn('changes') && { label: 'Show Git changes', action: () => showGit(s.id) },
     { label: 'Show conversation', action: () => openConversation(s) },
     { label: 'Permissions…', action: () => openPermissions('session', s.id) },
     { label: `Project view: ${projectName(groupOf(s))}${projectName(groupOf(s)).endsWith('s') ? '’' : '’s'} worktrees side by side`, action: () => openProjectView(groupOf(s)) },
@@ -2174,10 +2176,71 @@ function showNewConversations(ids) {
 function applyGitVisibility() {
   document.body.classList.toggle('git-hidden', !state.gitVisible);
   $('#gitPanel').style.width = state.gitWidth + 'px';
-  $('#btnGit').classList.toggle('active', state.gitVisible);
+  applySideEmpty();
+}
+
+/** Anything in the side panel for the selected session: the Git tabs, or (with those off) a panel or plugin. */
+const sideHasTabs = () => dock.groups.some((g) => groupTabs(g).length > 0);
+
+/**
+ * With the Git tabs off, the side panel shows only while it has a panel or plugin to show, and its title bar button
+ * stands for the side panel rather than Git. The button stays, so its ▾ can always bring the Git tabs back.
+ */
+function applySideEmpty() {
+  const empty = !sideHasTabs();
+  document.body.classList.toggle('side-empty', empty);
+  const btn = $('#btnGit');
+  btn.classList.toggle('active', state.gitVisible && !empty);
+  const git = anyGitTab();
+  btn.innerHTML = icon(git ? 'git' : 'panel');
+  btn.title = git ? 'Git and the side panel (Ctrl+Shift+G)'
+    : empty ? 'Side panel: nothing open (click for its options)' : 'Side panel: panels and plugins (Ctrl+Shift+G)';
+  $('#gitRefresh').hidden = !git;
+}
+
+/** Whether a Git tab ('changes' or 'repo') is turned on in the side panel's ▾. */
+const gitTabOn = (t) => !state.hiddenGitTabs.has(t);
+const anyGitTab = () => Object.keys(GIT_TABS).some(gitTabOn);
+
+/** Shows or hides Git Changes or Git Repository; where it sat in the side panel is kept for when it's back. */
+function setGitTab(t, on) {
+  if (on) state.hiddenGitTabs.delete(t); else state.hiddenGitTabs.add(t);
+  store.set('hiddenGitTabs', [...state.hiddenGitTabs]);
+  for (const s of state.sessions) renderTileHeader(s);   // the branch chip opens Git Changes only while it's on
+  if (on) { openDockTab(t); return; }   // turned on: open it, showing the side panel if need be
+  applyGitVisibility();
+  renderGit();
+  toast(`${GIT_TABS[t]} is hidden. Bring it back from the ▾ beside the side panel button.`);
+}
+
+/** Opens a side panel tab (a panel or plugin), showing the side panel if it's hidden. */
+function openDockTab(t) {
+  if (!state.gitVisible) { state.gitVisible = true; store.set('gitVisible', true); applyGitVisibility(); }
+  activateTab(groupOfTab(t), t);
+}
+
+/** The side panel button's ▾: the Git tabs on or off, what's open in the panel to jump to, and the layout. */
+function sidePanelMenu() {
+  const r = $('#btnGitMenu').getBoundingClientRect();
+  const open = dock.groups.flatMap(groupTabs).filter((t) => isPanelTab(t) || isPluginDockTab(t));
+  const empty = !sideHasTabs();
+  showMenu(r.right - 280, r.bottom + 2, [
+    { header: 'Side panel' },
+    !empty && { icon: 'panel', label: state.gitVisible ? 'Hide the side panel' : 'Show the side panel', kbd: 'Ctrl+Shift+G', action: toggleGit },
+    ...Object.entries(GIT_TABS).map(([t, label]) => ({ icon: 'git', label, checked: gitTabOn(t), action: () => setGitTab(t, !gitTabOn(t)) })),
+    open.length > 0 && '-',
+    open.length > 0 && { header: 'Open in the side panel' },
+    ...open.map((t) => isPluginDockTab(t)
+      ? { icon: pluginIcon(pluginOfTab(t)), label: pluginCaption(pluginOfTab(t)), action: () => openDockTab(t) }
+      : { icon: 'list', label: panelByTab(t).title, action: () => openDockTab(t) }),
+    ...reopenItems(),
+    '-',
+    { label: 'Reset layout', action: resetDock },
+  ]);
 }
 
 function toggleGit() {
+  if (!sideHasTabs()) { sidePanelMenu(); return; }   // nothing to show: offer the way to turn the Git tabs back on
   state.gitVisible = !state.gitVisible;
   store.set('gitVisible', state.gitVisible);
   applyGitVisibility();
@@ -2302,8 +2365,10 @@ function placePanels() {
   if (changed) saveDock();
 }
 
-/** The tabs a group shows for the selected session: the Git ones always, panels when they show with it. */
-const groupTabs = (g) => g.tabs.filter((t) => isPluginDockTab(t) ? !!pluginById(pluginOfTab(t)) : !isPanelTab(t) || (panelByTab(t) && panelVisibleFor(panelByTab(t), currentSession())));
+/** The tabs a group shows for the selected session: the Git ones unless they're turned off, panels when they show with it. */
+const groupTabs = (g) => g.tabs.filter((t) => isPluginDockTab(t) ? !!pluginById(pluginOfTab(t))
+  : isPanelTab(t) ? !!panelByTab(t) && panelVisibleFor(panelByTab(t), currentSession())
+  : gitTabOn(t));
 
 /**
  * The tab a group has open: its chosen one, or its first while the chosen one isn't shown for this session. The choice
@@ -2321,6 +2386,7 @@ const markSeen = (t) => { const p = panelByTab(t); if (p) panelSeen.set(t, p.upd
 const isUnseen = (p) => panelSeen.get(panelTab(p)) !== p.updated;
 
 function renderGit() {
+  applySideEmpty();   // with the Git tabs off, the side panel comes and goes with its panels
   if (!state.gitVisible) return;
   placePanels();
   buildDock();
@@ -2681,6 +2747,7 @@ function makeDivider(g) {
       isPluginDockTab(t) && { label: 'Close plugin', action: () => closeDockPlugin(t) },
       ...reopenItems(),
       '-',
+      t in GIT_TABS && { label: `Hide ${GIT_TABS[t]}`, action: () => setGitTab(t, false) },
       { label: 'Example panel skill…', action: showExampleSkill },
       { label: 'Reset layout', action: resetDock },
     ].filter(Boolean);
@@ -6805,6 +6872,7 @@ loadThemes();
 
 $('#btnGrid').innerHTML = icon('grid');
 $('#btnGit').innerHTML = icon('git');
+$('#btnGitMenu').innerHTML = icon('chevD');
 $('#btnAdd').innerHTML = icon('plus') + '<span>New Session</span>';
 $('#gitRefresh').innerHTML = icon('refresh');
 $('#gitHide').innerHTML = icon('close');
@@ -6815,6 +6883,7 @@ $('#diffOpenFile').innerHTML = icon('openFile');
 
 $('#btnGrid').addEventListener('click', () => { showTerminalDoc(); collapse(); });
 $('#btnGit').addEventListener('click', toggleGit);
+$('#btnGitMenu').addEventListener('click', sidePanelMenu);
 // Not addEventListener('click', showAddDialog): the click event would arrive as its `mode` argument.
 $('#btnAdd').addEventListener('click', () => showAddDialog());
 $('#btnAddEmpty').addEventListener('click', () => showAddDialog());

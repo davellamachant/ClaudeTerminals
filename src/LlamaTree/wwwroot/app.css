@@ -204,6 +204,16 @@ svg.ic { width: 16px; height: 16px; flex: none; display: block; }
 .tb-btn:hover { background: var(--hover-strong); }
 .tb-btn.active { background: var(--hover-strong); border-color: var(--border); }
 .tb-btn.text { padding: 0 10px; }
+/* The side panel button and its ▾ (the side panel's options), as one button split in two. */
+.tb-split { display: inline-flex; flex: none; }
+.tb-split > #btnGit { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.tb-split > #btnGitMenu { min-width: 0; width: 16px; padding: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; color: var(--text-dim); }
+/* Hovering either half lights the pair: the half under the pointer strongly, the other half lightly. */
+.tb-split:hover > .tb-btn:not(:hover):not(.active) { background: var(--hover); }
+.tb-split:hover > #btnGitMenu { color: var(--text); }
+/* With the side panel showing, the ▾ joins the button's outline (its left edge is the button's right one). */
+.tb-split > #btnGit.active + #btnGitMenu { border-color: var(--border); border-left-color: transparent; }
+.tb-split > #btnGitMenu svg.ic { width: 11px; height: 11px; }
 
 .session-tabs { display: flex; gap: 2px; overflow-x: auto; min-width: 0; scrollbar-width: none; }
 .session-tab {
@@ -452,7 +462,8 @@ svg.ic { width: 16px; height: 16px; flex: none; display: block; }
 #grid { position: absolute; inset: 0; }
 #splitter { width: 5px; flex: none; cursor: col-resize; background: var(--chrome); border-left: 1px solid var(--border-soft); }
 #splitter:hover, #splitter.dragging { background: var(--accent-strong); }
-body.git-hidden #splitter, body.git-hidden #gitPanel { display: none; }
+body.git-hidden #splitter, body.git-hidden #gitPanel,
+body.side-empty #splitter, body.side-empty #gitPanel { display: none; }   /* side-empty: the Git tabs are off and no panel is open */
 
 #empty {
   position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
@@ -486,6 +497,7 @@ body.no-anim .tile, body.no-anim .surface { transition: none !important; }
   background: var(--panel-2); color: var(--text-dim); white-space: nowrap; font-size: 11px; border: 1px solid transparent;
 }
 button.chip { cursor: pointer; }
+span.chip { cursor: default; }   /* the branch chip, with the Git tabs off */
 button.chip:hover { border-color: var(--border); color: var(--text); }
 .chip svg.ic { width: 12px; height: 12px; }
 .chip .add { color: var(--st-a); }
