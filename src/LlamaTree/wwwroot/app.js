@@ -979,6 +979,7 @@ function createSession(info) {
   term.loadAddon(new Unicode11Addon.Unicode11Addon());
   term.unicode.activeVersion = '11';
   term.loadAddon(new WebLinksAddon.WebLinksAddon((ev, uri) => request('openUrl', { uri })));
+  term.registerLinkProvider(pathLinkProvider(s));
   term.open(s.surface);
   if (state.byId.size < MAX_WEBGL) {
     try {
@@ -1017,7 +1018,16 @@ function createSession(info) {
   }
   s.surface.addEventListener('contextmenu', (e) => {
     e.preventDefault();
-    if (state.expandedId === s.id) terminalMenu(s, e.clientX, e.clientY);
+    const link = s.hoverPath;   // right-clicked on a path link: its own items first
+    if (link) {
+      const shown = state.expandedId === s.id;
+      showMenu(e.clientX, e.clientY, [
+        { label: link.folder ? 'Open folder' : 'Open', action: () => openTermPath(s, link) },
+        { label: 'Open containing folder', action: () => openTermPath(s, link, true) },
+        { label: 'Copy path', action: () => navigator.clipboard.writeText(link.path) },
+        ...(shown ? ['-', ...terminalMenuItems(s)] : []),
+      ]);
+    } else if (state.expandedId === s.id) terminalMenu(s, e.clientX, e.clientY);
   });
   // Ctrl+V with an image or files on the clipboard and no text: xterm would paste nothing, so paste their paths instead.
   s.surface.addEventListener('paste', (e) => {
@@ -1714,9 +1724,13 @@ function sessionMenu(s, x, y, from = 'session') {
 }
 
 function terminalMenu(s, x, y) {
+  showMenu(x, y, terminalMenuItems(s));
+}
+
+function terminalMenuItems(s) {
   // These leave you in the terminal, ready to type (Enter after Paste, say).
   const inTerminal = (fn) => async () => { await fn(); s.term.focus(); };
-  showMenu(x, y, [
+  return [
     { label: 'Copy', kbd: 'Ctrl+C', action: inTerminal(() => s.term.hasSelection() && navigator.clipboard.writeText(s.term.getSelection())) },
     { label: 'Paste', kbd: 'Ctrl+V', action: inTerminal(() => pasteClipboard(s)) },
     { label: 'Select all', action: inTerminal(() => s.term.selectAll()) },
@@ -1724,7 +1738,99 @@ function terminalMenu(s, x, y) {
     '-',
     { label: 'Show conversation', action: () => openConversation(s) },
     { label: 'Back to all sessions', kbd: 'Shift+Esc', action: collapse },
-  ]);
+  ];
+}
+
+// ---------------------------------------------------------------- file paths in a terminal
+
+// A word that may be a path (no spaces), and a quoted one (which may have spaces): "C:\My Files\a.txt", 'a b/c.md'.
+// Both are looked for, as apostrophes in prose can look like quotes around a path.
+const PATH_WORD = /[^\s"'`<>|,;()[\]{}]+/g;
+const QUOTED_PATH = /"([^"\n]{2,})"|'([^'\n]{2,})'|`([^`\n]{2,})`/g;
+
+/**
+ * The path in a word of terminal output, or null if it can't be one: unless it was quoted, it needs a folder
+ * separator, a file extension or to be ~. Sentence punctuation after it and a :line or :line:column (as compilers and
+ * Claude write them) aren't part of it. Links (anything://), options (-x) and user@host:path aren't paths.
+ */
+function termPathText(word, quoted = false) {
+  if (word === '~') return word;
+  let t = word.replace(/[.,;:!?]+$/, '').replace(/:\d+(?::\d+)?$/, '');
+  if (t.length < 2 || t.length > 1024 || t.includes('://') || t.startsWith('-') || /^[\d.]+$/.test(t)) return null;
+  if (/^[a-z][\w+.@-]*:/i.test(t) && !/^[a-z]:[\\/]/i.test(t)) return null;
+  return quoted || /[\\/]/.test(t) || /\.[A-Za-z][A-Za-z0-9]{0,7}$/.test(t) ? t : null;
+}
+
+/**
+ * Makes the file and folder paths in a terminal's output links, once the host has said they're there (relative ones
+ * are from the session's folder). Click opens one (a file is opened for viewing or editing, never run); its right-click
+ * menu also opens the folder it's in. Paths wrapped onto the next row are found whole.
+ */
+function pathLinkProvider(s) {
+  const cache = new Map();   // path text -> { found, at }: what the host said, rechecked after a while
+  const fresh = (c) => c && performance.now() - c.at < (c.found ? 30000 : 3000);
+  return {
+    provideLinks(y, callback) {
+      const buf = s.term.buffer.active;
+      // The whole logical line this row is part of, with where each character is on screen.
+      let first = y - 1;
+      while (first > 0 && buf.getLine(first)?.isWrapped && y - 1 - first < 8) first--;
+      let text = '';
+      const at = [];
+      for (let row = first; row < first + 16; row++) {
+        const line = buf.getLine(row);
+        if (!line || (row > first && !line.isWrapped)) break;
+        for (let x = 0; x < line.length; x++) {
+          const cell = line.getCell(x);
+          if (!cell || cell.getWidth() === 0) continue;
+          const chars = cell.getChars() || ' ';
+          for (let i = 0; i < chars.length; i++) at.push({ x: x + 1, y: row + 1 });
+          text += chars;
+        }
+      }
+      const words = [];
+      const add = (word, start, quoted = false) => {
+        const path = termPathText(word, quoted);
+        if (!path) return;
+        const end = start + path.length - 1;
+        if (at[start]?.y > y || at[end]?.y < y) return;   // not on this row
+        words.push({ path, start, end });
+      };
+      for (const m of text.matchAll(QUOTED_PATH)) add(m[1] ?? m[2] ?? m[3], m.index + 1, true);
+      for (const m of text.matchAll(PATH_WORD)) add(m[0], m.index);
+      if (!words.length) return callback(undefined);
+      const ask = [...new Set(words.map((w) => w.path).filter((p) => !fresh(cache.get(p))))];
+      const lookup = ask.length ? request('terminal.paths', { id: s.id, paths: ask }) : Promise.resolve([]);
+      lookup.then((found) => {
+        ask.forEach((p, i) => cache.set(p, { found: found?.[i] ?? null, at: performance.now() }));
+        if (cache.size > 500) cache.clear();
+        const real = words.filter((w) => cache.get(w.path)?.found);
+        // Where a quoted path and a word inside it are both there, the longer (the quoted one) is the link.
+        const kept = real.filter((w) => !real.some((o) => o !== w && o.start <= w.start && o.end >= w.end && o.end - o.start > w.end - w.start));
+        callback(kept.map((w) => {
+          const link = cache.get(w.path).found;
+          return {
+            range: { start: at[w.start], end: at[w.end] },
+            text: w.path,
+            decorations: { underline: true, pointerCursor: true },
+            activate: (e) => { if (e.button === 0) openTermPath(s, link); },
+            hover: () => {
+              s.hoverPath = link;
+              s.surface.title = `${link.path}\nClick to open · right-click to open the folder it's in`;
+            },
+            leave: () => {
+              if (s.hoverPath === link) s.hoverPath = null;
+              s.surface.removeAttribute('title');
+            },
+          };
+        }));
+      }, () => callback(undefined));
+    },
+  };
+}
+
+function openTermPath(s, link, inFolder = false) {
+  request('terminal.openPath', { id: s.id, path: link.path, inFolder }).catch((e) => toast(e.message, true));
 }
 
 function moveSession(s, delta) {

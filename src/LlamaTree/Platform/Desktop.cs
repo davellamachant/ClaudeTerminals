@@ -77,6 +77,30 @@ internal static class Desktop
         }
     }
 
+    /// <summary>Opens the folder a file or folder is in, with it selected (Explorer, Finder, or the Linux file manager).</summary>
+    public static void ShowInFolder(string path)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            // Explorer reads its own command line: /select, then the path, quoted (a Windows path can't hold a quote).
+            try { Process.Start(new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe"), $"/select,\"{path}\"") { UseShellExecute = false })?.Dispose(); }
+            catch (System.ComponentModel.Win32Exception) { }
+            return;
+        }
+        if (OperatingSystem.IsMacOS())
+        {
+            Run("/usr/bin/open", "-R", path);
+            return;
+        }
+        // The freedesktop file manager interface (Nautilus, Dolphin, Nemo, Caja, Thunar...) selects it; failing that,
+        // the folder is opened. A comma would split dbus-send's array, so it's escaped like the rest of the URI.
+        var uri = new Uri(path).AbsoluteUri.Replace(",", "%2C");
+        if (Capture("dbus-send", ["--session", "--print-reply", "--dest=org.freedesktop.FileManager1", "--type=method_call",
+                "/org/freedesktop/FileManager1", "org.freedesktop.FileManager1.ShowItems", $"array:string:{uri}", "string:"]) != null)
+            return;
+        OpenExternal(Path.GetDirectoryName(PathText.TrimEnd(path)) ?? path);
+    }
+
     // Script and interpreter types that Windows' own unsafe-type list (AssocIsDangerous) may not cover.
     private static readonly HashSet<string> ScriptExtensions = new(StringComparer.OrdinalIgnoreCase)
     {

@@ -908,6 +908,28 @@ internal sealed class AppHost
             case "openFolder":
                 Desktop.OpenExternal(Get(msg).Info.Directory);
                 return null;
+            case "terminal.paths":
+            {
+                // Which of the paths in a terminal's output are there (relative ones from the session's folder), to
+                // underline as links. Off the UI thread: a mapped drive can be slow to answer.
+                var dir = Get(msg).Info.Directory;
+                var texts = msg.GetProperty("paths").EnumerateArray().Select(p => p.GetString() ?? "").Take(200).ToArray();
+                return await Task.Run(() => texts.Select(t => TerminalPaths.Resolve(t, dir) is { } f ? new { path = f.Path, folder = f.IsFolder } : null).ToArray());
+            }
+            case "terminal.openPath":
+            {
+                // A path link: open it (a file never runs: see OpenFileForViewing), or show it in its folder.
+                var found = TerminalPaths.Resolve(Str(msg, "path"), Get(msg).Info.Directory)
+                    ?? throw new InvalidOperationException("That file or folder isn't there any more.");
+                var inFolder = msg.TryGetProperty("inFolder", out var f) && f.ValueKind == JsonValueKind.True;
+                await Task.Run(() =>
+                {
+                    if (inFolder) Desktop.ShowInFolder(found.Path);
+                    else if (found.IsFolder) Desktop.OpenExternal(found.Path);
+                    else Desktop.OpenFileForViewing(found.Path);
+                });
+                return null;
+            }
             case "clipboard.files":
                 return window.ClipboardFiles();   // on the UI thread, as the clipboard needs
             case "clipboard.text":
