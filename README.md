@@ -67,7 +67,7 @@ Releases are signed by **Llamachant Technology Ltd**. If SmartScreen still warns
 | Expand a session | Click its tile, its tab in the title bar, or press `Ctrl+1`…`Ctrl+9` |
 | Back to all sessions | Click the open session's tab again, `Shift+Esc`, the collapse button in the tile header, or the mouse Back button |
 | Next / previous session | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
-| Toggle Git panel | `Ctrl+Shift+G` (the side panel, with the Git tabs turned off) |
+| Toggle Git panel | `Ctrl+Shift+G` (the side panel, with the Git tabs turned off; with nothing in it, opens its options) |
 | New session | `Ctrl+Shift+N`: start a new conversation (optionally one session per worktree) or **resume an existing conversation** |
 | Another session in a project | The **+** at the end of the project's group on the session tab row (at the end of the row when there are no projects). It works from that project's current session (or its first): *In the same folder* adds a session there in one click, with a conversation of its own; *In a new worktree…* (only in a Git repository) creates a worktree of it on a new branch (next to the repository by default) and opens a session there, unless you untick *Start a session in it*; *A different folder…* opens New session with the project chosen |
 | Switch a session to another conversation | Session menu (⋯) › *Resume a different conversation…* |
@@ -199,7 +199,7 @@ The view follows the sessions as they work and re-reads the repositories every h
 
 ### Git
 
-**Not using Git?** Untick **Git Changes and Git Repository** in the palette menu, under *Side panel* (or right-click either tab › *Hide the Git tabs*). The side panel then holds only Claude's panels and side-panel plugins, and stays out of the way until one opens. The branch chip on each tile still shows the branch and its changes. Tick it again to bring the tabs back where they were.
+**Not using Git?** Untick **Git Changes and Git Repository** in the ▾ beside the side panel button in the title bar (it's also in the palette menu, under *Side panel*, and on either Git tab's right-click menu as *Hide the Git tabs*). The side panel then holds only Claude's panels and side-panel plugins, and stays out of the way until one opens. The branch chip on each tile still shows the branch and its changes. Tick it again to bring the tabs back where they were. The same ▾ lists what's open in the side panel, reopens a closed panel and resets the layout.
 
 **Git panel:** shows the selected session's repository. *Git Changes* has staged/unstaged trees, stage/unstage, commit, and VS-style **Undo Changes** (right-click a file or folder, or the ↶ on a section header; new files go to the Recycle Bin; it refuses rather than guesses if the files changed after you confirmed, or if restoring would overwrite a file that now exists at a deleted or renamed file's old name). Right-click a folder for **Open in File Explorer**. *Git Repository* has outgoing commits and history, plus each commit's files. Click any file to open a diff. Open diffs refresh as the session edits the file.
 

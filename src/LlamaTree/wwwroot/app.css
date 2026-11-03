@@ -204,6 +204,12 @@ svg.ic { width: 16px; height: 16px; flex: none; display: block; }
 .tb-btn:hover { background: var(--hover-strong); }
 .tb-btn.active { background: var(--hover-strong); border-color: var(--border); }
 .tb-btn.text { padding: 0 10px; }
+/* The side panel button and its ▾ (the side panel's options), as one button split in two. */
+.tb-split { display: inline-flex; flex: none; }
+.tb-split > #btnGit { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.tb-split > #btnGitMenu { min-width: 0; width: 16px; padding: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; color: var(--text-dim); }
+.tb-split > #btnGitMenu:hover { color: var(--text); }
+.tb-split > #btnGitMenu svg.ic { width: 11px; height: 11px; }
 
 .session-tabs { display: flex; gap: 2px; overflow-x: auto; min-width: 0; scrollbar-width: none; }
 .session-tab {

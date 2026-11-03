@@ -19,7 +19,10 @@
       <div class="spacer"></div>
       <button id="btnUpdate" class="tb-btn text update-btn" hidden></button>
       <button id="btnAdd" class="tb-btn text" title="New session (Ctrl+Shift+N)"></button>
-      <button id="btnGit" class="tb-btn" title="Git Changes (Ctrl+Shift+G)"></button>
+      <!-- Shows or hides the side panel; its ▾ has the side panel's options (see sidePanelMenu). -->
+      <span class="tb-split">
+        <button id="btnGit" class="tb-btn" title="Git Changes (Ctrl+Shift+G)"></button><button id="btnGitMenu" class="tb-btn" title="Side panel options: the Git tabs, panels and layout" aria-haspopup="menu"></button>
+      </span>
       <!-- Permissions, once anything is allowed or waiting (see renderPermsButton). -->
       <button id="btnPerms" class="tb-btn plugin-btn" hidden></button>
       <!-- Plugins' buttons (see renderPluginButtons). -->
