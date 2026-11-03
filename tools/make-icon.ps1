@@ -1,11 +1,9 @@
-# Generates src/LlamaTree/app.ico (and app.png) from docs/brand/LlamaTree-Icon.svg, with the plainer
-# LlamaTree-Terminal-Icon.svg for the small sizes (title bar, small taskbar, lists), where the llama would blur.
-# Microsoft Edge renders each SVG once at 1024 px; each icon size is scaled down from that. The ICO holds PNG entries
+# Generates src/LlamaTree/app.ico (and app.png) from docs/brand/LlamaTree-Terminal-Icon.svg, the orange framed
+# prompt, which stays clear at every size (the full llama icon, LlamaTree-Icon.svg, blurs when small).
+# Microsoft Edge renders the SVG once at 1024 px; each icon size is scaled down from that. The ICO holds PNG entries
 # (16-256 px), which Windows has read since Vista.
 param(
-    [string]$Svg = "$PSScriptRoot\..\docs\brand\LlamaTree-Icon.svg",
-    [string]$SmallSvg = "$PSScriptRoot\..\docs\brand\LlamaTree-Terminal-Icon.svg",
-    [int]$SmallUpTo = 24,
+    [string]$Svg = "$PSScriptRoot\..\docs\brand\LlamaTree-Terminal-Icon.svg",
     [string]$Out = "$PSScriptRoot\..\src\LlamaTree\app.ico",
     [string]$Png = "$PSScriptRoot\..\src\LlamaTree\app.png"
 )
@@ -22,22 +20,17 @@ if (-not $edge) { throw 'Microsoft Edge not found: it renders the SVG.' }
 $work = Join-Path ([IO.Path]::GetTempPath()) ("llamatree-icon-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory $work | Out-Null
 try {
-    function Get-Rendered([string]$svgPath, [string]$name) {
-        $data = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Resolve-Path $svgPath)))
-        $page = Join-Path $work "$name.html"
-        Set-Content $page "<html><body style=`"margin:0;background:transparent`"><img src=`"data:image/svg+xml;base64,$data`" style=`"display:block;width:1024px;height:1024px`"></body></html>"
-        $big = Join-Path $work "$name.png"
-        & $edge --headless=new --disable-gpu --hide-scrollbars --default-background-color=00000000 `
-            --window-size=1024,1024 "--user-data-dir=$work\profile-$name" "--screenshot=$big" ([Uri]$page).AbsoluteUri 2>$null | Out-Null
-        for ($i = 0; $i -lt 50 -and -not (Test-Path $big); $i++) { Start-Sleep -Milliseconds 200 }
-        if (-not (Test-Path $big)) { throw "Edge did not render $svgPath." }
-        [System.Drawing.Bitmap]::FromFile($big)
-    }
-    $large = Get-Rendered $Svg 'icon'
-    $small = Get-Rendered $SmallSvg 'small'
+    $data = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Resolve-Path $Svg)))
+    $page = Join-Path $work 'icon.html'
+    Set-Content $page "<html><body style=`"margin:0;background:transparent`"><img src=`"data:image/svg+xml;base64,$data`" style=`"display:block;width:1024px;height:1024px`"></body></html>"
+    $big = Join-Path $work 'icon.png'
+    & $edge --headless=new --disable-gpu --hide-scrollbars --default-background-color=00000000 `
+        --window-size=1024,1024 "--user-data-dir=$work\profile" "--screenshot=$big" ([Uri]$page).AbsoluteUri 2>$null | Out-Null
+    for ($i = 0; $i -lt 50 -and -not (Test-Path $big); $i++) { Start-Sleep -Milliseconds 200 }
+    if (-not (Test-Path $big)) { throw "Edge did not render $Svg." }
+    $source = [System.Drawing.Bitmap]::FromFile($big)
 
     function Get-Scaled([int]$size) {
-        $source = if ($size -le $SmallUpTo) { $small } else { $large }
         $bmp = [System.Drawing.Bitmap]::new($size, $size, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
         $g = [System.Drawing.Graphics]::FromImage($bmp)
         $g.InterpolationMode = 'HighQualityBicubic'
@@ -72,7 +65,7 @@ try {
     foreach ($img in $images) { $w.Write($img) }
     $w.Flush()
     [IO.File]::WriteAllBytes($Out, $ico.ToArray())
-    $large.Dispose(); $small.Dispose()
+    $source.Dispose()
     Write-Host "Wrote $Out ($($sizes -join ', ') px) and $Png"
 }
 finally {
