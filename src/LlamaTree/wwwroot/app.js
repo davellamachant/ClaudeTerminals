@@ -5146,7 +5146,7 @@ const notices = { list: [], shown: null, waiting: false, dismissed: new Set(stor
 // answered either way, and offers the switch in the version menu.
 
 const count = { enabled: undefined };   // undefined: not read yet; null: not asked yet; true or false: your answer
-const COUNT_SENT = "Once an hour while it's open, the app makes one request to count.llamachant.com that says six things: a random id made when you said yes (so a copy counts once, however often it asks), the app's version, the operating system and its version, and how many projects and sessions are open. Only how many: never their names, their folders or anything in them, and nothing about you. We don't keep your IP address. Saying no, or turning it off later, throws the id away.";
+const COUNT_SENT = "Everything it sends is anonymous: nothing in it says who you are, and nothing can be traced back to you. Once an hour while it's open, the app makes one request to count.llamachant.com that says six things: a random id made when you said yes (so a copy counts once, however often it asks), the app's version, the operating system and its version, and how many projects and sessions are open. Only how many: never their names, their folders or anything in them, and nothing about you. We don't keep your IP address, your user agent or anything else about the request. Saying no, or turning it off later, throws the id away.";
 
 async function loadCount() {
   try { count.enabled = (await request('count.state')).enabled; } catch { count.enabled = false; }
@@ -5178,7 +5178,7 @@ function renderCountAsk(bar) {
   bar.style.setProperty('--notice', '');
   bar.replaceChildren(
     h('span', { class: 'notice-kind' }, iconEl('info'), 'A question'),
-    h('span', { class: 'notice-text' }, "May we count you? Once an hour the app would send one anonymous request with its version, your operating system and how many projects and sessions are open: just the numbers, never their names or what's in them. ",
+    h('span', { class: 'notice-text' }, "May we count you? Everything it would send is anonymous: once an hour, one request with the app's version, your operating system and how many projects and sessions are open. Just the numbers, never their names or what's in them, and nothing that says who you are. ",
       h('a', { class: 'notice-inline-link', href: '#', onclick: (e) => { e.preventDefault(); showCountDialog(); } }, 'What it sends')),
     h('span', { class: 'notice-actions' },
       h('button', { class: 'btn primary', onclick: () => setCount(true) }, 'Yes, count me'),
