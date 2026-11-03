@@ -10,27 +10,30 @@ internal sealed class Functions(CountStore store, TimeProvider clock, ILogger<Fu
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
-    private DateOnly Today => DateOnly.FromDateTime(clock.GetUtcNow().UtcDateTime);
+    private DateTime Now => clock.GetUtcNow().UtcDateTime;
+
+    private DateOnly Today => DateOnly.FromDateTime(Now);
 
     /// <summary>
-    /// GET /ping?id=…&amp;v=…&amp;os=…: a copy of the app that has been allowed to count itself, once a day. Records the
-    /// id, version and Windows version for today and answers 204; anything else is a 400 and records nothing. The
-    /// caller's address and headers aren't read, logged or kept.
+    /// GET /ping?id=…&amp;v=…&amp;os=…&amp;osv=…&amp;projects=…&amp;sessions=…: a copy of the app that has been allowed to
+    /// count itself, once an hour. Records them for this hour and answers 204; anything else is a 400 and records
+    /// nothing. The caller's address and headers aren't read, logged or kept.
     /// </summary>
     [Function("ping")]
     public async Task<HttpResponseData> PingAsync(
         [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "ping")] HttpRequestData request, CancellationToken ct)
     {
         var q = System.Web.HttpUtility.ParseQueryString(request.Url.Query);
-        if (Ping.Parse(q["id"], q["v"], q["os"]) is not { } ping)
+        if (Ping.Parse(q["id"], q["v"], q["os"], q["osv"], q["projects"], q["sessions"]) is not { } ping)
             return request.CreateResponse(HttpStatusCode.BadRequest);
-        await store.RecordAsync(ping, Today, ct);
+        await store.RecordAsync(ping, Now, ct);
         return request.CreateResponse(HttpStatusCode.NoContent);
     }
 
     /// <summary>
-    /// GET /stats?days=30 (with the function key): users per day and in the whole period, by version and Windows
-    /// version, as JSON. Up to <see cref="CountStore.KeepDays"/> days, ending today.
+    /// GET /stats?days=30 (with the function key), as JSON: users in the whole period and per day (and per hour for a
+    /// week or less), the projects and sessions they had open, and their versions and systems. Up to
+    /// <see cref="CountStore.KeepDays"/> days, ending today.
     /// </summary>
     [Function("stats")]
     public async Task<HttpResponseData> StatsAsync(

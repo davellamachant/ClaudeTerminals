@@ -1,29 +1,35 @@
 # User count service
 
-Copies of the app whose users said yes to *May we count you?* send one request a day:
+Copies of the app whose users said yes to *May we count you?* send one request an hour while they are open:
 
 ```
-GET https://<count address>/ping?id=<32 hex>&v=<app version>&os=<Windows version>
+GET https://count.llamachant.com/ping?id=<32 hex>&v=<app version>&os=windows&osv=<system version>&projects=<n>&sessions=<n>
 ```
 
 This Azure Function app ([`Count`](Count)) records it, and adds the numbers up for us.
 
 ## What it keeps
 
-One row per copy per UTC day in the `pings` table: the day, the id, the app's version and the Windows version. A copy
-that pings twice in a day is still one row. **Nothing else is kept**: not the IP address, the user agent or any other
-header, and there's no Application Insights or request log. Anything that isn't exactly an id and two version numbers
+One row per copy per UTC hour in the `pings` table: the hour, the id, the app's version, the operating system's name
+and version, and how many projects and sessions were open. A copy that pings twice in an hour is still one row.
+Projects and sessions are **only counts**: the app never sends their names, folders or anything in them.
+
+**Nothing else is kept**: not the IP address, the user agent or any other header, and there's no Application Insights
+or request log. Anything that isn't exactly an id, two version numbers, a system name and two counts (up to 10,000)
 gets a `400` and isn't stored. Rows are deleted after 400 days (the `forget` function, daily at 03:30 UTC).
 
 The id is random, made when the user said yes and forgotten when they say no, so nothing links a row to a person.
 
 ## Reading the numbers
 
-`GET https://<count address>/stats?days=30&code=<function key>` returns JSON:
+`GET https://count.llamachant.com/stats?days=30&code=<function key>` returns JSON:
 
-- `users`: different copies in the period, each counted once under the version it ran last.
-- `days`: users per day (a day with nobody is `0`), by version.
-- `versions`, `windows`: the period's users by app version and by Windows version.
+- `users`: different copies in the period, each counted once as last seen.
+- `days`: per day, `users`; `userHours` (a copy open three hours is three); `averageProjects` and `averageSessions`
+  (the most each user had open at once that day, averaged); and users by version. A day with nobody is `0`.
+- `hours` (for 7 days or fewer): per hour, the users and the projects and sessions open between them.
+- `versions`, `systems`, `systemVersions`: the period's users by app version, by system (`windows`) and by system
+  and version (`windows 10.0.26300`).
 
 `days` goes up to 400. The key is the function app's default host key:
 `az functionapp keys list -g <resource group> -n <app> --query functionKeys.default -o tsv`.
