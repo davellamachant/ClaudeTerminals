@@ -163,7 +163,7 @@
 :root:is([data-rain], [data-cabin]) { background: var(--chrome); }
 :root:is([data-rain], [data-cabin]) body { background: transparent; }   /* the body's own background would paint over the canvas; the root's paints under it */
 :root[data-rain] .tile { background: color-mix(in srgb, var(--terminal-bg) 42%, transparent); }
-:root[data-cabin] .tile { background: color-mix(in srgb, var(--terminal-bg) 55%, transparent); }
+:root[data-cabin] .tile { background: color-mix(in srgb, var(--terminal-bg) 70%, transparent); }
 :root:is([data-rain], [data-cabin]) .xterm .xterm-viewport { background-color: transparent !important; }
 /* The terminal itself: its canvas is see-through under a Grid theme (dressCursor in app.js), and the tile paints the same
    lines over the terminal's own background, fixed to the window so they run on from the floor around it. */
