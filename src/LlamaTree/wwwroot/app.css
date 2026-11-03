@@ -1107,7 +1107,6 @@ body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; user-selec
 .perms-radios-sub { margin-top: 6px; }
 .relay-tile { flex: none; }
 button.chip.relay-tile { color: var(--attention); }
-#btnPerms { position: relative; }
 .log-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .log-bar .dim { font-size: 12px; }
 .log-filter { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; }

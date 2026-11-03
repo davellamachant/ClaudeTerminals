@@ -5390,7 +5390,9 @@ function themeMenu(x, y) {
       p.toolbar && hiddenPluginButtons.has(p.id) && { label: [h('span', { class: 'menu-indent' }), 'Show its title bar button'], action: () => setPluginButton(p.id, true) },
     ]),
     plugins.list.length > 0 && '~',   // the plugins, then what's done about them (as under Theme)
-    { icon: 'shield', label: 'Permissions', kbd: 'Plugins and sessions', action: () => openPermissions() },
+    relayWaiting() > 0
+      ? { icon: 'shield', label: 'Permissions', kbd: `${relayWaiting()} waiting for your answer`, action: () => openPermissions('session') }
+      : { icon: 'shield', label: 'Permissions', kbd: 'Plugins and sessions', action: () => openPermissions() },
     plugins.problems.length > 0 && { icon: 'warn', label: `${plugins.problems.length} couldn't be loaded`, kbd: 'Why?', action: () => toast(plugins.problems.join('\n'), true) },
     { icon: 'folder', label: plugins.list.length ? 'Open the plugins folder' : 'Add a plugin: open the plugins folder', action: () => request('plugins.openFolder') },
   ]);
@@ -6059,7 +6061,6 @@ function applyGrants(grants) {
     if (g.hidden?.length) pluginHidden[id] = g.hidden;
     if (g.changed) pluginChanged.add(id);
   }
-  renderPermsButton();
   checkPluginSight();
   permissionsChanged();
 }
@@ -6318,17 +6319,8 @@ function relayTileMark(s) {
   return h('button', { class: 'icon-btn relay-tile', title: 'It may message other sessions by rules of its own: show them', onclick: () => openPermissions('session', s.id) }, iconEl('link'));
 }
 
-/** The title bar's Permissions button: shown once anything is allowed, or a message waits for your answer (counted on it). */
-function renderPermsButton() {
-  const b = $('#btnPerms');
-  if (!b) return;
-  const waiting = relay.waiting.reduce((n, w) => n + w.count, 0);
-  const any = waiting > 0 || relay.rules.some((r) => r.decision === 'allow') || Object.keys(pluginAccess).length > 0;
-  b.hidden = !any;
-  b.title = waiting ? `Permissions: ${waiting} message${waiting === 1 ? '' : 's'} waiting for your answer` : 'Permissions: what plugins and sessions may do';
-  fill(b, iconEl('shield'), waiting ? h('span', { class: 'plugin-btn-count' }, String(Math.min(waiting, 99))) : null);
-}
-$('#btnPerms')?.addEventListener('click', () => openPermissions(relay.waiting.length ? 'session' : null));
+/** Messages between sessions waiting for your answer (counted on Permissions in the palette menu). */
+const relayWaiting = () => relay.waiting.reduce((n, w) => n + w.count, 0);
 
 function setPermsBy(by) {
   permsView.by = by;
@@ -6643,7 +6635,6 @@ function relayChanged(st) {
   Object.assign(relay, st);
   if (relay.asking && !relay.waiting.some((w) => w.from === relay.asking.from && w.to === relay.asking.to)) closeModal();
   renderPermsPause();
-  renderPermsButton();
   for (const s of state.sessions) renderTileHeader(s);   // their marks
   permissionsChanged();
   for (const s of state.sessions) relayNotify(s);
