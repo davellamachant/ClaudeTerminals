@@ -60,7 +60,19 @@ Releases are signed by **Llamachant Technology Ltd**. If SmartScreen still warns
 - WebView2 Runtime (built into Windows 11; setup offers the download if it's missing)
 - To build it yourself: .NET 10 SDK and Node.js (for the bundled xterm.js / Monaco packages)
 
-**macOS and Linux:** LlamaTree runs there too, built from source for now (see [macOS and Linux](#macos-and-linux)).
+### Linux
+
+Download the package for your distribution from the [latest release](https://github.com/LlamachantTechnology/LlamaTree/releases/latest) and install it; the package manager installs what it needs (WebKitGTK, libnotify) with it. Nothing else is needed: no .NET, no Node.js.
+
+| Distribution | Package | Install |
+|---|---|---|
+| Ubuntu, Debian, Mint, Pop!_OS… | `llamatree_<version>_amd64.deb` | Open it in your software centre, or `sudo apt install ./llamatree_<version>_amd64.deb` |
+| Fedora, openSUSE, RHEL… | `llamatree-<version>-1.x86_64.rpm` | `sudo dnf install ./llamatree-<version>-1.x86_64.rpm` (openSUSE: `sudo zypper install …`) |
+| Anything else | `LlamaTree-<version>-linux-x64.tar.gz` | Install WebKitGTK 4.1 and libnotify, unpack it anywhere and run `LlamaTree` |
+
+Then start **LlamaTree** from your applications menu, or run `llamatree`. It's 64-bit Intel/AMD (x86-64) only for now. A new version is announced in the app, with a link to its release; it doesn't install itself on Linux. Uninstall with `sudo apt remove llamatree` (or `sudo dnf remove llamatree`); your sessions and settings stay in `~/.config/LlamaTree`.
+
+**macOS:** LlamaTree runs there too, built from source for now (see [macOS and Linux](#macos-and-linux)).
 
 ## Using it
 
@@ -454,7 +466,7 @@ dotnet test
 
 ### macOS and Linux
 
-Run from source as above; [GitHub Actions](.github/workflows/build.yml) also builds and tests every push on Windows, Linux and macOS and keeps a self-contained build of each (`LlamaTree-osx-arm64`, `-osx-x64`, `-linux-x64`) on the run for two weeks. There's no installer, app bundle or self-update for them yet: *Check for updates* says when a new version is out and links its release.
+Run from source as above; [GitHub Actions](.github/workflows/build.yml) also builds and tests every push on Windows, Linux and macOS and keeps a self-contained build of each (`LlamaTree-osx-arm64`, `-osx-x64`, `-linux-x64`) on the run for two weeks. Releases carry Linux packages ([Linux](#linux)), made by [`tools/package-linux.cs`](tools/package-linux.cs) from `publish.ps1` (on Windows, with no Linux tools); there's no macOS app bundle yet. Neither updates itself: *Check for updates* says when a new version is out and links its release.
 
 - **Linux** needs WebKitGTK 4.1 and libnotify (Debian/Ubuntu: `sudo apt install libwebkit2gtk-4.1-0 libnotify4`). Pasting an image or copied files into a terminal uses `wl-paste` (Wayland) or `xclip` (X11) if they're installed.
 - **Sessions get your login shell's environment** (`$SHELL -l -i`, read again after a minute), so `claude`, `codex`, `node` and `git` are found as in a terminal even when the app is started from the Dock or a desktop menu. Commands run through `/bin/sh`, so a session's command is written the way you'd type it in a terminal.
