@@ -73,7 +73,7 @@ internal static class CommandLineResolver
             var full = Path.Combine(entry, program);
             try
             {
-                if (File.Exists(full) && (File.GetUnixFileMode(full) & (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) != 0)
+                if (!OperatingSystem.IsWindows() && File.Exists(full) && (File.GetUnixFileMode(full) & (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) != 0)
                     return full;
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
