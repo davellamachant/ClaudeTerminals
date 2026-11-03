@@ -65,7 +65,7 @@ public sealed class UnixCommandLineTests : IDisposable
     [UnixFact]
     public async Task The_program_runs_in_the_session_folder_in_a_terminal_of_its_own()
     {
-        var (output, code) = await Run("pwd; tty; stty size; sid=$( (ps -o sid= -p $$ 2>/dev/null || cut -d' ' -f6 /proc/$$/stat) | tr -d ' '); [ \"$sid\" = \"$$\" ] && echo own-session; exit 4", top);
+        var (output, code) = await Run("pwd; tty; stty size; pg=$(ps -o pgid= -p $$ | tr -d ' '); [ \"$pg\" = \"$$\" ] && echo own-session; exit 4", top);
         Assert.Equal(4, code);
         Assert.Contains(PathText.FinalPath(top)!, output);
         Assert.Contains("/dev/", output);

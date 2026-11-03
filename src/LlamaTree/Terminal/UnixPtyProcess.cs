@@ -118,10 +118,12 @@ internal sealed unsafe class UnixPtyProcess : IPtyProcess
             foreach (var p in owned) NativeMemory.Free((void*)p);
         }
 
+        // The writer first: a program that ends at once ends the reader, which then waits for the writer, and waiting
+        // for a thread that hasn't started yet throws (on a thread of its own, taking the app down).
         reader = new Thread(ReadLoop) { IsBackground = true, Name = $"pty-read-{ProcessId}" };
-        reader.Start();
         writer = new Thread(WriteLoop) { IsBackground = true, Name = $"pty-write-{ProcessId}" };
         writer.Start();
+        reader.Start();
         new Thread(WaitForExit) { IsBackground = true, Name = $"pty-exit-{ProcessId}" }.Start();
     }
 
