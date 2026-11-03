@@ -25,7 +25,7 @@ parameters:
     default: true
 
 variables:
-  githubConnection: 'davellamachant'         # the GitHub service connection (Project settings › Service connections)
+  githubConnection: 'github.com_LlamachantTechnology'         # the GitHub service connection (Project settings › Service connections)
   repository: 'LlamachantTechnology/LlamaTree'
 
 pool:
