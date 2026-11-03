@@ -5,6 +5,10 @@
   <Folder Name="/src/">
     <Project Path="src/LlamaTree/LlamaTree.csproj" />
   </Folder>
+  <Folder Name="/server/">
+    <Project Path="server/Count/Count.csproj" />
+    <Project Path="server/Count.Tests/Count.Tests.csproj" />
+  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/LlamaTree.Tests/LlamaTree.Tests.csproj" />
   </Folder>
