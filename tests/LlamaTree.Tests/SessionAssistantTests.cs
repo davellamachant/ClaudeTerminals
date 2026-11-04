@@ -107,6 +107,69 @@ public sealed class SessionAssistantTests
         Assert.Equal(clean, SessionAssistant.Clean(raw));
 
     [Fact]
+    public void Older_turns_that_speak_of_what_the_question_asks_about_are_kept_with_the_newest()
+    {
+        // Forty turns of other work, with the themes made at turns 6 and 13: the question brings those back, in order, with the gaps said.
+        var turns = Enumerable.Range(0, 40).Select(i => Turn(i, $"prompt {i} " + new string('x', 700), Now.AddMinutes(i - 60), ("text", $"answer {i} " + new string('y', 200), null))).ToArray();
+        turns[5] = Turn(5, "Make a Cyberpunk 2077 theme like the other themes", Now.AddMinutes(-55),
+            ("tool", "Write: cyberpunk-2077.json", "Write"), ("text", "The theme file sets every colour; a glitching screen is drawn on the floor.", null));
+        turns[12] = Turn(12, "Something else " + new string('x', 700), Now.AddMinutes(-48), ("text", "Done. The themes' tests pass, and the theme's README paragraph is in.", null));
+
+        var text = SessionAssistant.Transcript(Conv(turns), 6000, "How were the themes made?").Replace("\r\n", "\n");
+
+        Assert.StartsWith("(5 older turns left out)\n--- turn 6 ", text);
+        Assert.Contains("Person: Make a Cyberpunk 2077 theme like the other themes\n[tool Write] Write: cyberpunk-2077.json\nAgent: The theme file sets every colour", text);
+        Assert.Contains("(6 turns left out)\n--- turn 13 ", text);
+        Assert.Contains("answer 39 ", text);
+        Assert.True(text.IndexOf("--- turn 13 ") < text.IndexOf("--- turn 38 "), "oldest kept turn first");
+        Assert.DoesNotContain("prompt 20 ", text);
+        Assert.True(text.Length <= 6100, $"{text.Length} chars");
+    }
+
+    [Fact]
+    public void Without_a_question_or_with_nothing_to_match_only_the_newest_turns_are_kept()
+    {
+        var turns = Enumerable.Range(0, 10).Select(i => Turn(i, $"prompt {i} " + new string('x', 900), Now.AddMinutes(i - 60), ("text", i == 2 ? "the themes" : $"answer {i}", null))).ToArray();
+        var plain = SessionAssistant.Transcript(Conv(turns), 2500).Replace("\r\n", "\n");
+        var small = SessionAssistant.Transcript(Conv(turns), 2500, "what is it doing?").Replace("\r\n", "\n");   // only small words: nothing to match
+        Assert.StartsWith("(8 older turns left out)\n--- turn 9 ", plain);
+        Assert.Equal(plain, small);
+    }
+
+    [Fact]
+    public void A_relevant_turn_too_big_for_the_room_left_is_passed_over_for_a_smaller_one()
+    {
+        var turns = new[]
+        {
+            Turn(0, "themes: the big one " + new string('x', 3000), Now.AddMinutes(-60), ("text", "themes themes themes", null)),
+            Turn(1, "themes: the small one", Now.AddMinutes(-50), ("text", "a theme", null)),
+            Turn(2, "newest " + new string('x', 400), Now.AddMinutes(-40), ("text", "answer", null)),
+        };
+        var text = SessionAssistant.Transcript(Conv(turns), 1600, "how were the themes made?").Replace("\r\n", "\n");
+        Assert.Contains("--- turn 2 ", text);
+        Assert.Contains("--- turn 3 ", text);
+        Assert.StartsWith("(1 older turn left out)\n", text);
+    }
+
+    [Theory]
+    [InlineData("How were the themes made?", "them")]   // the stem, the same on both sides
+    [InlineData("which session is glitching the floor and the glitches", "glitch floor")]
+    [InlineData("what did you decide about the accent colours?", "decid accent colour")]
+    [InlineData("what is it doing?", "")]
+    public void A_questions_words_are_the_ones_worth_matching_as_stems(string question, string expected) =>
+        Assert.Equal(expected, string.Join(' ', SessionAssistant.QuestionWords(question)));
+
+    [Fact]
+    public void A_turn_scores_by_the_questions_words_in_its_prompt_and_answer()
+    {
+        var words = SessionAssistant.QuestionWords("how were the themes made?");
+        Assert.Equal(0, SessionAssistant.Relevance(Turn(0, "fix the tests", Now, ("text", "done", null)), words));
+        Assert.Equal(1, SessionAssistant.Relevance(Turn(0, "fix the tests", Now, ("text", "the theme loads", null)), words));
+        Assert.Equal(2, SessionAssistant.Relevance(Turn(0, "fix the tests", Now, ("text", "theme, themes, themed", null)), words));
+        Assert.Equal(3, SessionAssistant.Relevance(Turn(0, "make a theme", Now, ("text", "the theme loads", null)), words));
+    }
+
+    [Fact]
     public async Task Asking_nothing_or_about_no_sessions_fails_before_any_agent_runs()
     {
         await Assert.ThrowsAsync<InvalidOperationException>(() => SessionAssistant.AskAsync(" ", [], [Brief("Checkout", null)], Now));
