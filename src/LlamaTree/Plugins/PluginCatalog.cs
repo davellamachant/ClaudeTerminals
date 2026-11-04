@@ -60,6 +60,9 @@ internal static partial class PluginCatalog
     [GeneratedRegex("^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$")]
     private static partial Regex IdPattern();
 
+    /// <summary>Whether <paramref name="id"/> could be a plugin's id (its folder's name, and a host name label).</summary>
+    public static bool IsValidId(string? id) => id != null && IdPattern().IsMatch(id);
+
     /// <summary>The plugins in <paramref name="folder"/>, by title; folders that aren't valid plugins are left out, with why.</summary>
     public static (List<PluginInfo> Plugins, List<string> Problems) Load(string folder)
     {

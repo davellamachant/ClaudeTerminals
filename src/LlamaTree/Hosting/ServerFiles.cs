@@ -1,0 +1,140 @@
+using LlamaTree.Sessions;
+
+namespace LlamaTree.Hosting;
+
+/// <summary>
+/// The files of the computer the sessions run on, for a window on another computer (see <see cref="HostLink.Remote"/>):
+/// its folders to browse, files pasted into its sessions (copied up from the window's computer), and the pieces files
+/// travel in over the connection, either way.
+/// </summary>
+internal static class ServerFiles
+{
+    /// <summary>The bytes in one message: small enough that a session's output is never held up long behind a file.</summary>
+    public const int PartSize = 192 * 1024;
+
+    /// <summary>The biggest file sent to a window to open, or pasted into a session.</summary>
+    public const long MaxFile = 200L << 20;
+
+    /// <summary>Most entries a folder lists: past this, it says there are more.</summary>
+    private const int MaxEntries = 5000;
+
+    /// <summary>
+    /// A folder's contents: its subfolders, then its files, by name. An empty path (or ~) is the home folder, and ~/
+    /// starts from it.
+    /// </summary>
+    public static object List(string? path)
+    {
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var full = Resolve(path, home);
+        if (!Directory.Exists(full)) throw new InvalidOperationException($"There's no folder {full} on {Environment.MachineName}.");
+        var entries = new List<Entry>();
+        var more = false;
+        var options = new EnumerationOptions { IgnoreInaccessible = true, AttributesToSkip = 0, RecurseSubdirectories = false };
+        foreach (var e in new DirectoryInfo(full).EnumerateFileSystemInfos("*", options))
+        {
+            if (entries.Count == MaxEntries) { more = true; break; }
+            var folder = e is DirectoryInfo;
+            var hidden = e.Name.StartsWith('.') || (OperatingSystem.IsWindows() && e.Attributes.HasFlag(FileAttributes.Hidden));
+            long? size = null;
+            if (!folder) try { size = ((FileInfo)e).Length; } catch (IOException) { }
+            entries.Add(new Entry(e.Name, folder, hidden, size));
+        }
+        entries.Sort((a, b) => a.Folder != b.Folder ? (a.Folder ? -1 : 1) : string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
+        return new { path = full, parent = Path.GetDirectoryName(full), home, separator = Path.DirectorySeparatorChar.ToString(), entries, more };
+    }
+
+    private sealed record Entry(string Name, bool Folder, bool Hidden, long? Size);
+
+    /// <summary>A path typed or browsed to, made full: ~ is the home folder, and a relative path starts there too.</summary>
+    public static string Resolve(string? path, string home)
+    {
+        path = path?.Trim() ?? "";
+        if (path.Length == 0 || path == "~") return home;
+        if (path.StartsWith("~/") || path.StartsWith("~\\")) path = Path.Combine(home, path[2..]);
+        return Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Combine(home, path));
+    }
+
+    /// <summary>A name from the other computer, made safe to use as a file name here: no folders, nothing the file system refuses.</summary>
+    public static string SafeName(string? name)
+    {
+        var leaf = Path.GetFileName((name ?? "").Replace('\\', '/').Split('/')[^1]);
+        var invalid = Path.GetInvalidFileNameChars();
+        leaf = new string(leaf.Select(c => invalid.Contains(c) || char.IsControl(c) ? '_' : c).ToArray()).Trim().TrimEnd('.');
+        if (leaf.Length > 120) leaf = leaf[..80] + leaf[^40..];
+        return leaf is "" or "." or ".." ? "file" : leaf;
+    }
+
+    /// <summary>
+    /// Where files pasted into this computer's sessions from another are kept: the app's data folder, so only you can
+    /// read them. Each paste has a folder of its own, so files keep their names; ones a week old are cleared out.
+    /// </summary>
+    public static string UploadFolder => Path.Combine(SessionStore.AppDataFolder, "pasted");
+
+    /// <summary>
+    /// Files on their way here from the window's computer: each begun, sent in parts, then ended, which gives its path.
+    /// Called on the app thread.
+    /// </summary>
+    public sealed class Uploads(string folder)
+    {
+        private readonly Dictionary<string, (FileStream File, string Path)> open = [];
+        private string? batch;   // this paste's folder, until it's a minute old
+
+        public void Begin(string token, string name)
+        {
+            if (open.Count > 64 || token.Length is 0 or > 64) throw new InvalidOperationException("Too many files at once.");
+            Abandon(token);
+            var into = BatchFolder();
+            var safe = SafeName(name);
+            var path = Path.Combine(into, safe);
+            for (var i = 2; File.Exists(path); i++)
+                path = Path.Combine(into, $"{Path.GetFileNameWithoutExtension(safe)} ({i}){Path.GetExtension(safe)}");
+            open[token] = (new FileStream(path, FileMode.CreateNew, FileAccess.Write), path);
+        }
+
+        public void Write(string token, string base64)
+        {
+            if (!open.TryGetValue(token, out var f)) return;   // given up on
+            var bytes = Convert.FromBase64String(base64);
+            if (f.File.Length + bytes.Length > MaxFile)
+            {
+                Abandon(token);
+                throw new InvalidOperationException($"{Path.GetFileName(f.Path)} is too big to paste (more than {MaxFile >> 20} MB).");
+            }
+            f.File.Write(bytes);
+        }
+
+        /// <summary>The file has all come: its path here.</summary>
+        public string End(string token)
+        {
+            if (!open.Remove(token, out var f)) throw new InvalidOperationException("That file didn't arrive.");
+            f.File.Dispose();
+            return f.Path;
+        }
+
+        /// <summary>The window has gone: files half sent are deleted.</summary>
+        public void AbandonAll()
+        {
+            foreach (var t in open.Keys.ToList()) Abandon(t);
+        }
+
+        private void Abandon(string token)
+        {
+            if (!open.Remove(token, out var f)) return;
+            f.File.Dispose();
+            try { File.Delete(f.Path); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+        }
+
+        private string BatchFolder()
+        {
+            if (batch != null && Directory.Exists(batch) && Directory.GetCreationTimeUtc(batch) > DateTime.UtcNow.AddMinutes(-1)) return batch;
+            Directory.CreateDirectory(folder);
+            foreach (var old in new DirectoryInfo(folder).EnumerateDirectories().Where(d => d.CreationTimeUtc < DateTime.UtcNow.AddDays(-7)))
+            {
+                try { old.Delete(true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            }
+            batch = Path.Combine(folder, $"{DateTime.Now:yyyyMMdd-HHmmss}-{Guid.NewGuid().ToString("N")[..6]}");
+            Directory.CreateDirectory(batch);
+            return batch;
+        }
+    }
+}

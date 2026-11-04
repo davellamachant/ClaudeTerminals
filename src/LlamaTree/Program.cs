@@ -48,7 +48,7 @@ static class Program
 
     /// <summary>A server's window has a lock of its own (a lock's name can't hold every character a target can, so a hash of it).</summary>
     private static string RemoteSuffix() => Hosting.HostLink.Remote is { } r
-        ? ".remote." + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(r.ToLowerInvariant())))[..16]
+        ? ".remote." + Hosting.HostLink.RemoteKey(r)
         : "";
 
     private static void ActivateExistingInstance()

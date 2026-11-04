@@ -50,14 +50,36 @@ internal sealed class AppHost
     public event Action? QuitRequested;
 
     /// <summary>
-    /// How the window reached this host when it's on another computer (its SSH target), else null. Then what would open
-    /// on this machine's desktop is refused (no one is looking at it), and this copy isn't updated from the window: a
-    /// server updates its LlamaTree as it does its other packages.
+    /// How the window reached this host when it's on another computer (its SSH target), else null. Then nothing opens on
+    /// this machine's desktop (no one is looking at it): a file opens on the window's computer, which is sent a copy,
+    /// and a folder in the page's folder browser. This copy isn't updated from the window: a server updates its
+    /// LlamaTree as it does its other packages.
     /// </summary>
     public string? Remote { get; set; }
 
-    /// <summary>Requests that open something on this machine's desktop.</summary>
-    private static readonly HashSet<string> OpensHere = ["openFolder", "terminal.openPath", "openFile", "git.openFolder", "plugins.openFolder", "themes.openFolder"];
+    /// <summary>Files on their way from a window on another computer, pasted into a session.</summary>
+    private readonly ServerFiles.Uploads uploads = new(ServerFiles.UploadFolder);
+
+    /// <summary>Opens a folder: in the file manager, or for a window on another computer, in the page's folder browser.</summary>
+    private void OpenFolder(string path)
+    {
+        if (Remote != null) Post(new { type = "files.browse", path });
+        else Desktop.OpenExternal(path);
+    }
+
+    /// <summary>Shows a file or folder in the folder it's in.</summary>
+    private void ShowInFolder(string path)
+    {
+        if (Remote != null) Post(new { type = "files.browse", path = Path.GetDirectoryName(path) ?? path, select = Path.GetFileName(path) });
+        else Desktop.ShowInFolder(path);
+    }
+
+    /// <summary>Opens a file for viewing (never running it): here, or on a window's computer, which is sent a copy. Off the app thread.</summary>
+    private void OpenFile(string path)
+    {
+        if (Remote != null) window.SendFile(path);
+        else Desktop.OpenFileForViewing(path);
+    }
 
     /// <summary>Each session's conversation, noted just before an update restarts the app (see <see cref="TerminalSession.ResumeOnce"/>).</summary>
     private static string ResumeFile => Path.Combine(SessionStore.AppDataFolder, "resume-after-update.json");
@@ -366,6 +388,7 @@ internal sealed class AppHost
     {
         webReady = false;
         lock (pendingOutput) pendingOutput.Clear();
+        uploads.AbandonAll();
     }
 
     /// <summary>The app is ending: stop the sessions, each noting the conversation it's in so it reopens there. Once only.</summary>
@@ -540,8 +563,6 @@ internal sealed class AppHost
 
     private async Task<object?> HandleAsync(string type, JsonElement msg)
     {
-        if (Remote != null && OpensHere.Contains(type))
-            throw new InvalidOperationException($"That's on {Environment.MachineName}, and LlamaTree can't open files or folders from a server yet.");
         switch (type)
         {
             case "ready":
@@ -976,7 +997,7 @@ internal sealed class AppHost
                 return new { id, saved = c != null, title = c?.Title, started = c?.Started, modified = c?.Modified };
             }
             case "openFolder":
-                Desktop.OpenExternal(Get(msg).Info.Directory);
+                OpenFolder(Get(msg).Info.Directory);
                 return null;
             case "terminal.paths":
             {
@@ -984,7 +1005,6 @@ internal sealed class AppHost
                 // underline as links. Off the UI thread: a mapped drive can be slow to answer.
                 var dir = Get(msg).Info.Directory;
                 var texts = msg.GetProperty("paths").EnumerateArray().Select(p => p.GetString() ?? "").Take(200).ToArray();
-                if (Remote != null) return texts.Select(_ => (object?)null).ToArray();   // no links: they'd open on the server
                 return await Task.Run(() => texts.Select(t => TerminalPaths.Resolve(t, dir) is { } f ? new { path = f.Path, folder = f.IsFolder } : null).ToArray());
             }
             case "terminal.openPath":
@@ -993,14 +1013,31 @@ internal sealed class AppHost
                 var found = TerminalPaths.Resolve(Str(msg, "path"), Get(msg).Info.Directory)
                     ?? throw new InvalidOperationException("That file or folder isn't there any more.");
                 var inFolder = msg.TryGetProperty("inFolder", out var f) && f.ValueKind == JsonValueKind.True;
-                await Task.Run(() =>
-                {
-                    if (inFolder) Desktop.ShowInFolder(found.Path);
-                    else if (found.IsFolder) Desktop.OpenExternal(found.Path);
-                    else Desktop.OpenFileForViewing(found.Path);
-                });
+                if (inFolder) ShowInFolder(found.Path);
+                else if (found.IsFolder) OpenFolder(found.Path);
+                else await Task.Run(() => OpenFile(found.Path));
                 return null;
             }
+
+            // ---- a server's files, for a window on another computer (see ServerFiles)
+            case "fs.list":
+                return await Task.Run(() => ServerFiles.List(Str(msg, "path")));
+            case "fs.open":
+            {
+                var path = ServerFiles.Resolve(Str(msg, "path"), Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+                if (Directory.Exists(path)) OpenFolder(path);
+                else if (File.Exists(path)) await Task.Run(() => OpenFile(path));
+                else throw new InvalidOperationException("That file or folder isn't there any more.");
+                return null;
+            }
+            case "upload.begin":
+                uploads.Begin(Str(msg, "token"), Str(msg, "name"));
+                return null;
+            case "upload.data":
+                uploads.Write(Str(msg, "token"), Str(msg, "data"));
+                return null;
+            case "upload.end":
+                return uploads.End(Str(msg, "token"));
 
             // ---- plugins
             case "plugins.list":
@@ -1015,7 +1052,7 @@ internal sealed class AppHost
             }
             case "plugins.openFolder":
                 Directory.CreateDirectory(PluginFolder);
-                Desktop.OpenExternal(PluginFolder);
+                OpenFolder(PluginFolder);
                 return null;
             // What a plugin allowed to see sessions asks for. Only the app's page asks (as for everything here); it checks
             // the plugin was allowed before it does.
@@ -1063,7 +1100,7 @@ internal sealed class AppHost
                 return Themes.ThemeCatalog.Save(ThemeFolder, BuiltInThemeFolder, msg.GetProperty("theme"));
             case "themes.openFolder":
                 Directory.CreateDirectory(ThemeFolder);
-                Desktop.OpenExternal(ThemeFolder);
+                OpenFolder(ThemeFolder);
                 return null;
 
             // ---- git
@@ -1255,7 +1292,7 @@ internal sealed class AppHost
                 if (!File.Exists(full)) return null;
                 if (GitService.ExistingPathInRepo(root, path) == null)
                     throw new InvalidOperationException("That file is outside the repository (it is reached through a link).");
-                Desktop.OpenFileForViewing(full);
+                await Task.Run(() => OpenFile(full));
                 return null;
             }
             case "git.openFolder":
@@ -1268,7 +1305,7 @@ internal sealed class AppHost
                 while (path.Length > 0 && !Directory.Exists(Path.Combine(root, path))) path = Path.GetDirectoryName(path) ?? "";
                 var target = path.Length == 0 ? root
                     : GitService.ExistingPathInRepo(root, path) ?? throw new InvalidOperationException("That folder is outside the repository (it is reached through a link).");
-                Desktop.OpenExternal(target);
+                OpenFolder(target);
                 return null;
             }
         }

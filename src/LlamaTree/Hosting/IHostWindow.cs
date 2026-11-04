@@ -30,4 +30,10 @@ internal interface IHostWindow
     void ServePlugin(PluginInfo plugin);
 
     void StopServingPlugin(string pluginId);
+
+    /// <summary>
+    /// Gives a window on another computer a copy of the file, which it opens there (see
+    /// <see cref="Platform.Desktop.OpenFileForViewing"/>). Reads the file on the calling thread; any thread.
+    /// </summary>
+    void SendFile(string path);
 }

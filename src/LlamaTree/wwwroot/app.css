@@ -1374,3 +1374,22 @@ button.sb-item:hover, .sb-item.open { background: var(--hover-strong); color: va
 .remote-badge svg.ic { width: 12px; height: 12px; flex: none; }
 .remote-badge + .app-version { margin-left: 0; }
 .host-error { white-space: pre-wrap; max-height: 160px; overflow: auto; font-size: 12px; padding: 8px; border-radius: 4px; background: var(--chrome-3); }
+
+/* A server's folders and files (serverBrowser): a window showing a server's sessions can't use this computer's file manager. */
+.file-browser { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.fb-bar { display: flex; align-items: center; gap: 4px; }
+.fb-bar .fb-path { flex: 1; min-width: 0; height: 28px; user-select: text; }
+.fb-list { border: 1px solid var(--border); border-radius: 4px; height: 280px; overflow: auto; background: var(--chrome-2); outline: none; }
+.fb-list:focus-visible { border-color: var(--accent); }
+.fb-item { display: flex; align-items: center; gap: 8px; height: 24px; padding: 0 8px; cursor: default; white-space: nowrap; }
+.fb-item:hover { background: var(--hover); }
+.fb-item.selected { background: var(--accent-strong); color: #fff; }
+.fb-item.hidden-entry:not(.selected) { color: var(--text-dim); }
+.fb-item svg.ic { width: 14px; height: 14px; flex: none; }
+.fb-item .name { overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
+.fb-item .size { color: var(--text-faint); font-size: 12px; }
+.fb-item.selected .size { color: inherit; }
+.fb-empty { padding: 8px; color: var(--text-faint); }
+.fb-foot { display: flex; align-items: center; gap: 12px; min-height: 28px; }
+.fb-status { flex: 1; min-width: 0; color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fb-hidden { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
