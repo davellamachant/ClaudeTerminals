@@ -171,7 +171,7 @@ byte[] TarGzip(IEnumerable<Item> entries, string root, bool withRootDir)
 
 // ---------------------------------------------------------------- .rpm
 
-// The RPM v3 file layout rpm 4 reads: a lead, a signature header (sizes and digests of what follows), the main header
+// The RPM v3 file layout rpm 4 and 6 read: a lead, a signature header (sizes and digests of what follows), the main header
 // (the package and its files), then a gzipped cpio archive of the files.
 void Rpm()
 {
@@ -233,6 +233,11 @@ void Rpm()
     h.String(1126, "9");                                                                        // PAYLOADFLAGS
     h.Int32(5011, [8]);                                                                         // FILEDIGESTALGO: SHA-256
     h.String(5062, "utf-8");                                                                    // ENCODING
+    // The payload's own digests, as rpmbuild writes them: RPM 6 no longer takes the signature's MD5 as covering the
+    // payload, and refuses a package without these ("does not verify: no digest").
+    h.StringArray(5092, [Convert.ToHexStringLower(SHA256.HashData(compressed))]);              // PAYLOADDIGEST
+    h.Int32(5093, [8]);                                                                         // PAYLOADDIGESTALGO: SHA-256
+    h.StringArray(5097, [Convert.ToHexStringLower(SHA256.HashData(payload))]);                 // PAYLOADDIGESTALT: uncompressed
     var header = h.ToBytes();
 
     var s = new Header(62);
