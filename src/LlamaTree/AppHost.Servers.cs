@@ -49,6 +49,7 @@ internal sealed partial class AppHost
         c = new ServerConnection(target, RunOnUi);
         c.PageMessage += OnServerMessage;
         c.ToolCall += OnServerToolCall;
+        c.PluginsChanged += _ => Post(new { type = "plugins.changed" });
         c.StateChanged += _ => Post(new { type = "servers", servers = ServersState() });
         servers[target] = c;
         c.Connect();
@@ -177,6 +178,22 @@ internal sealed partial class AppHost
         }
         try { c.Send(JsonSerializer.Serialize(new { type = "tools.reply", id, reply }, JsonOptions)); }
         catch (InvalidOperationException) { /* the connection went: the server answers it itself */ }
+    }
+
+    /// <summary>
+    /// Connected servers' plugins, among this computer's: each served here from the copy its server sent, under an id
+    /// of its own (its id there and its server's, so it never meets a plugin of the same name here), and with its
+    /// server's name after its title. Like any plugin here, it sees what you allow it to: sessions here and on servers.
+    /// </summary>
+    private void AddServerPlugins(List<Plugins.PluginInfo> found, List<string> problems)
+    {
+        foreach (var c in servers.Values)
+        {
+            var (list, trouble) = c.ServerPlugins();
+            var key = HostLink.RemoteKey(c.Target)[..8].ToLowerInvariant();
+            found.AddRange(list.Select(p => p with { Id = $"{p.Id[..Math.Min(p.Id.Length, 31)]}-{key}", Title = $"{p.Title} ({c.Target})" }));
+            problems.AddRange(trouble.Select(t => $"{c.Target}: {t}"));
+        }
     }
 
     private ServerSession? FindServerSession(string server, string? remoteId) =>

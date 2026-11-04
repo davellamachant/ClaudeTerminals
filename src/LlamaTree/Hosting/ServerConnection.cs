@@ -55,6 +55,21 @@ internal sealed class ServerConnection : IDisposable
     /// <summary>A server session's call to a tool (its id there, the JSON-RPC message), to answer with <see cref="Send"/>: { type: "tools.reply", id, reply }.</summary>
     public event Action<ServerConnection, int, string, JsonElement>? ToolCall;
 
+    /// <summary>The server's plugins have changed (one added, removed or sent again): see <see cref="ServerPlugins"/>.</summary>
+    public event Action<ServerConnection>? PluginsChanged;
+
+    private readonly HashSet<string> served = [];
+
+    /// <summary>
+    /// The server's plugins, from the copies of their folders it has sent here (their ids there): what's in its plugins
+    /// folder, read as this computer's would be.
+    /// </summary>
+    public (List<LlamaTree.Plugins.PluginInfo> Plugins, List<string> Problems) ServerPlugins()
+    {
+        var (found, problems) = LlamaTree.Plugins.PluginCatalog.Load(Path.GetDirectoryName(copies.PluginFolder("x"))!);
+        return (found.Where(p => served.Contains(p.Id)).ToList(), problems);
+    }
+
     /// <summary><see cref="State"/> changed, or the host came back (the page should be told again what its sessions show).</summary>
     public event Action<ServerConnection>? StateChanged;
 
@@ -111,7 +126,8 @@ internal sealed class ServerConnection : IDisposable
         // To the server's host this is a window on another computer: it opens nothing on its own desktop, sending files
         // here instead, and sends no plugins (this host doesn't show a server's plugins). Its sessions' tool calls
         // (panels, messages) are answered here, so they show and reach sessions here too (see ToolCall).
-        channel.Send(LinkKind.Hello, JsonSerializer.Serialize(new { pid = (int?)null, plugins = (object?)null, remote = Environment.MachineName, tools = true }, JsonOptions));
+        // Its plugins' folders are sent here, and shown among this computer's plugins (see ServerPlugins).
+        channel.Send(LinkKind.Hello, JsonSerializer.Serialize(new { pid = (int?)null, plugins = new { origin = (string?)null, key = (string?)null }, remote = Environment.MachineName, tools = true }, JsonOptions));
         runOnUi(() => { if (mine == attempt && !disposed) pending = channel; else channel.Close(); });
     }
 
@@ -137,6 +153,8 @@ internal sealed class ServerConnection : IDisposable
                     SetState("online", null);
                     // As a page does when it loads: the host sends its sessions, what they've shown, and their output from now on.
                     channel.Send(LinkKind.Page, """{"type":"ready"}""");
+                    // Its plugins folder, read: each plugin's folder is sent here, then served (see ServerPlugins).
+                    channel.Send(LinkKind.Page, """{"type":"plugins.list"}""");
                     break;
                 case "close":
                     // Another window took over the server's sessions (only one shows them at a time). Not taken back
@@ -148,6 +166,20 @@ internal sealed class ServerConnection : IDisposable
                 case "tools":
                     if (link == channel && op.TryGetProperty("id", out var callId) && callId.TryGetInt32(out var call) && op.TryGetProperty("message", out var message))
                         ToolCall?.Invoke(this, call, Str(op, "session"), message.Clone());
+                    break;
+                case "plugin.begin":
+                    copies.PluginBegin(Str(op, "id"));
+                    break;
+                case "plugin.file":
+                    copies.PluginPart(Str(op, "id"), Str(op, "path"), Str(op, "data"), Int(op, "index"), op.TryGetProperty("last", out var end) && end.ValueKind == JsonValueKind.True);
+                    break;
+                case "serve":
+                    // Its copy has all come.
+                    if (LlamaTree.Plugins.PluginCatalog.IsValidId(Str(op, "id")) && served.Add(Str(op, "id"))) PluginsChanged?.Invoke(this);
+                    else if (served.Contains(Str(op, "id"))) PluginsChanged?.Invoke(this);
+                    break;
+                case "unserve":
+                    if (served.Remove(Str(op, "id"))) PluginsChanged?.Invoke(this);
                     break;
                 case "file":
                     if (copies.FilePart(Str(op, "token"), Str(op, "name"), Str(op, "data"), Int(op, "index"), op.TryGetProperty("last", out var l) && l.ValueKind == JsonValueKind.True) is { } opened)

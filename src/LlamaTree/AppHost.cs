@@ -280,6 +280,7 @@ internal sealed partial class AppHost
     private (List<PluginInfo> Found, List<string> Problems) LoadPlugins()
     {
         var (found, problems) = PluginCatalog.Load(PluginFolder);
+        AddServerPlugins(found, problems);   // and connected servers' (see AppHost.Servers)
         foreach (var gone in plugins.Keys.Except(found.Select(p => p.Id)).ToList())
         {
             window.StopServingPlugin(gone);

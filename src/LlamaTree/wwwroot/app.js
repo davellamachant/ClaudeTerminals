@@ -225,6 +225,7 @@ host.addEventListener('message', (e) => {
     case 'relay.ask': askRelay(m.from, m.to); break;
     case 'relay.message': onRelayMessage(m); break;
     case 'plugins.grants': applyGrants(m.grants); break;
+    case 'plugins.changed': loadPlugins().then(() => renderGit()); break;   // a server's plugins arrived or changed
   }
 });
 
