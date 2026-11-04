@@ -90,7 +90,7 @@ internal sealed partial class TerminalSession : IDisposable
             FirstPromptOnce = null;
             PromptToType = onCommandLine ? null : firstPrompt;
             StartedUtc = DateTime.UtcNow;
-            p.Start(command, Info.Directory, env, cols, rows);
+            p.Start(command, Info.Directory, env, cols, rows, Info.Within);
         }
         catch
         {

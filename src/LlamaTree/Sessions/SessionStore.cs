@@ -31,6 +31,12 @@ internal sealed class SessionInfo
     public string? RemoteId { get; set; }
     /// <summary>The session whose agent started this one (start_session), which may drive it; null for one you made.</summary>
     public string? StartedBy { get; set; }
+    /// <summary>
+    /// For a session another session's agent started in a folder it was allowed: that allowed folder, as it resolved then.
+    /// Its process starts only if its folder is really inside it at that moment, and in that very folder (see
+    /// Terminal.ConfinedFolder); null for any other session.
+    /// </summary>
+    public string? Within { get; set; }
 }
 
 internal sealed partial class ProjectInfo

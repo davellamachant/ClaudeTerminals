@@ -306,7 +306,12 @@ internal sealed partial class AppHost
             if (within != null)
                 directory = PathText.ResolvedInside(directory, within)
                     ?? throw new ControlException($"{directory} leads outside {within} (through a link), so a session can't be started there.");
-            var info = new SessionInfo { Name = name, Directory = directory, Command = CommandLike(p.Info.Command), Project = p.Info.Project, StartedBy = parent };
+            var info = new SessionInfo
+            {
+                Name = name, Directory = directory, Command = CommandLike(p.Info.Command), Project = p.Info.Project, StartedBy = parent,
+                // Checked again as its process starts, against the allowed folder as it is now (see ConfinedFolder).
+                Within = within != null ? PathText.ResolvedPath(within) : null,
+            };
             if (TerminalSession.NeedsOwnConversation(info)) info.Conversation = Guid.NewGuid().ToString();
             var session = app.AddSessionRuntime(info);
             session.FirstPromptOnce = prompt;
@@ -927,6 +932,7 @@ internal sealed partial class AppHost
                         Directory = item.Dir,
                         Command = string.IsNullOrWhiteSpace(item.Command) ? "claude" : item.Command.Trim(),
                         Project = item.Project,
+                        Within = item.Within != null ? PathText.ResolvedPath(item.Within) : null,   // checked again at each start
                     };
                     TidyConversation(info);   // a "claude --resume X" typed as the command: conversation X
                     if (item.Conversation != null && TerminalSession.CanTrackConversation(info.Command))
