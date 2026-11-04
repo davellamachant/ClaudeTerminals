@@ -66,7 +66,9 @@ internal static partial class ServerUpdate
             var parts = last.Split(' ', 4);   // NEEDS_PASSWORD, the address, its SHA-256, the install command
             var file = parts[1].EndsWith(".deb", StringComparison.Ordinal) ? "llamatree.deb" : "llamatree.rpm";
             throw new InvalidOperationException($"sudo on {target} needs a password, which LlamaTree can't type. Run this there:\n" +
-                $"curl -fsSL -o {file} {parts[1]} && echo '{parts[2]}  {file}' | sha256sum -c && sudo {parts[3]} ./{file}");
+                // The address and hash passed the script's checks (no quote, space or shell character but & ? = in an
+                // address), and are quoted here all the same; the install command is one of the script's own.
+                $"curl -fsSL -o {file} '{parts[1]}' && echo '{parts[2]}  {file}' | sha256sum -c && sudo {parts[3]} ./{file}");
         }
         throw new InvalidOperationException($"LlamaTree couldn't be updated on {target}:\n{(output.Length > 0 ? output : $"ssh ended with {code}.")}");
     }
