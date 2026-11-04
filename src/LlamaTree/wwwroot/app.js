@@ -209,6 +209,9 @@ host.addEventListener('message', (e) => {
     }
     case 'sessions': state.agents = m.agents || state.agents; syncSessions(m.sessions, m.projects || []); break;
     case 'output': onOutput(m.id, m.data); break;
+    case 'replay': onReplay(m.id, m.data); break;
+    case 'closeRequested': onCloseRequested(); break;
+    case 'host.failed': onHostFailed(); break;
     case 'exited': onExited(m.id, m.code); break;
     case 'git.status': onGitStatus(m); break;
     case 'panels': onPanels(m); break;
@@ -910,6 +913,8 @@ function syncSessions(list, projects) {
       Object.assign(s, { name: info.name, directory: info.directory, command: info.command, conversation: info.conversation });
     }
     s.project = info.project || null;
+    // Running already: it ran on in the session host while no window was open (its output follows as a replay).
+    if (info.running && !s.running) s.started = true;
     s.running = info.running || s.running;
   }
   for (const s of [...state.byId.values()]) {
@@ -1103,6 +1108,18 @@ function onOutput(id, data) {
   // xterm draws written output later, in chunks; the screen is only read for "asking" once this output is on it.
   s.term.write(data, () => { s.act.drawnAt = performance.now(); });
   noteActivity(s);
+}
+
+/**
+ * What a session showed while no window was open (the session host kept the end of it). Written without counting as
+ * activity, so a session isn't marked as working or waiting for you just because the window opened; the host then
+ * has the program redraw its screen at this terminal's size.
+ */
+function onReplay(id, data) {
+  const s = state.byId.get(id);
+  if (!s) return;
+  fitTerm(s);   // at its real size first: the output's cursor moves assume the width it was written at
+  s.term.write(data, () => { s.act.drawnAt = performance.now(); });
 }
 
 function onExited(id, code) {
@@ -5727,6 +5744,55 @@ function showNoticesDialog() {
 }
 
 /** The version number's menu: updates, release notes and the tips along the top. */
+// ------------------------------------------------------------------ closing the window
+
+/** What closing the window does with running sessions: 'ask', 'keep' (they run on without it) or 'stop'. */
+const closeChoice = () => store.get('closeChoice', 'ask');
+
+let closeAsking = false;
+
+/**
+ * The window's close button (HostLink.AskToClose): sessions run in the session host, so closing the window can leave
+ * them running. With any running, this asks whether to keep them running or stop them, unless you've chosen once
+ * and for all. The answer goes to the host, which closes the window.
+ */
+async function onCloseRequested() {
+  post({ type: 'window.closing' });   // the window waits a moment for this, then closes regardless
+  if (closeAsking) return;
+  let info;
+  try { info = await request('app.closeInfo'); } catch { info = { running: 0 }; }
+  const choice = closeChoice();
+  if (!info.running || choice !== 'ask') {
+    request('app.close', { stop: !!info.running && choice === 'stop' });
+    return;
+  }
+  closeAsking = true;
+  const remember = h('input', { type: 'checkbox' });
+  const answer = (stop) => {
+    if (remember.checked) store.set('closeChoice', stop ? 'stop' : 'keep');
+    closeModal();
+    request('app.close', { stop });
+  };
+  openModal('Close LlamaTree', [
+    ...info.message.split('\n\n').map((p) => h('p', {}, p)),
+    h('label', { class: 'check-field' }, remember, 'Don’t ask again (change it in the version menu, top right)'),
+  ], [
+    h('button', { class: 'btn', onclick: closeModal }, 'Cancel'),
+    h('div', { class: 'spacer' }),
+    h('button', { class: 'btn danger', onclick: () => answer(true) }, 'Stop sessions'),
+    h('button', { class: 'btn primary', 'data-autofocus': '', onclick: () => answer(false) }, 'Keep running'),
+  ]);
+  onModalClose = () => { closeAsking = false; };
+}
+
+/** The window couldn't reach a session host, nor start one. */
+function onHostFailed() {
+  openModal('LlamaTree couldn’t start', [
+    h('p', {}, 'The part of LlamaTree that runs your sessions didn’t start, so no sessions can be shown.'),
+    h('p', {}, 'Close LlamaTree and open it again. If it keeps happening, restart your computer.'),
+  ], [h('div', { class: 'spacer' }), h('button', { class: 'btn primary', onclick: closeModal }, 'OK')]);
+}
+
 function versionMenu(x, y) {
   showMenu(x, y, [
     { icon: 'refresh', label: 'Check for updates', action: () => checkForUpdates(true) },
@@ -5737,6 +5803,11 @@ function versionMenu(x, y) {
     } },
     { icon: 'bulb', label: 'Show tips and offers', checked: notices.tips, action: () => setShowTips(!notices.tips) },
     { icon: 'gift', label: 'Tips and offers…', action: showNoticesDialog },
+    '-',
+    { header: 'Closing the window with sessions running' },
+    ...[['ask', 'Ask each time'], ['keep', 'Keep them running'], ['stop', 'Stop them']].map(([value, label]) =>
+      ({ label, checked: closeChoice() === value, action: () => store.set('closeChoice', value) })),
+    { label: 'Quit and stop all sessions', action: () => request('app.close', { stop: true }) },
     '-',
     { icon: 'info', label: `LlamaTree ${updates.current ?? ''}`.trim() + ' · release notes',
       action: () => request('openUrl', { uri: 'https://github.com/LlamachantTechnology/LlamaTree/releases' }) },

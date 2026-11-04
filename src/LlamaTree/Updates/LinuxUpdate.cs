@@ -126,12 +126,15 @@ internal static class LinuxUpdate
     private static string Launch(string program) =>
         $"cd {CommandLineResolver.ShellQuote(Path.GetDirectoryName(program)!)} && exec {CommandLineResolver.ShellQuote(program)} </dev/null >/dev/null 2>&1";
 
-    /// <summary>Runs <paramref name="finish"/> in a separate session once this process has exited (at most two minutes on).</summary>
-    public static void FinishAfterExit(string finish)
+    /// <summary>
+    /// Runs <paramref name="finish"/> in a separate session once <paramref name="processes"/> (the session host and its
+    /// window) have exited, at most two minutes on.
+    /// </summary>
+    public static void FinishAfterExit(string finish, int[] processes)
     {
         // An exited process its parent hasn't reaped yet still answers kill -0, so a zombie (state Z) counts as gone.
-        var pid = Environment.ProcessId;
-        var script = $"i=0; while kill -0 {pid} 2>/dev/null && [ \"$(cut -d' ' -f3 /proc/{pid}/stat 2>/dev/null)\" != Z ] && [ $i -lt 600 ]; " +
+        static string Alive(int pid) => $"(kill -0 {pid} 2>/dev/null && [ \"$(cut -d' ' -f3 /proc/{pid}/stat 2>/dev/null)\" != Z ])";
+        var script = $"i=0; while {{ {string.Join(" || ", processes.Select(Alive))}; }} && [ $i -lt 600 ]; " +
                      $"do sleep 0.2; i=$((i+1)); done; {finish}";
         // Its own session, so nothing that ends the app's process group ends this too.
         var psi = Find("setsid") is { } setsid ? new ProcessStartInfo(setsid) : new ProcessStartInfo("/bin/sh");

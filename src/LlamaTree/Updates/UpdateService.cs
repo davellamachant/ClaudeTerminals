@@ -155,13 +155,13 @@ internal static partial class UpdateService
     }
 
     /// <summary>
-    /// Runs the installer once this process has exited (setup won't replace a running copy): silently, with its
-    /// progress window, then reopening the app. A hidden PowerShell waits for the exit.
+    /// Runs the installer once <paramref name="processes"/> (the session host and its window) have exited, as setup won't
+    /// replace a running copy: silently, with its progress window, then reopening the app. A hidden PowerShell waits.
     /// </summary>
-    public static void InstallAfterExit(string installer)
+    public static void InstallAfterExit(string installer, int[] processes)
     {
         static string Quote(string s) => "'" + s.Replace("'", "''") + "'";
-        var script = $"Wait-Process -Id {Environment.ProcessId} -Timeout 120 -ErrorAction SilentlyContinue; " +
+        var script = $"Wait-Process -Id {string.Join(',', processes)} -Timeout 120 -ErrorAction SilentlyContinue; " +
                      $"Start-Process -FilePath {Quote(installer)} -ArgumentList '/SILENT','/SUPPRESSMSGBOXES','/NORESTART','/RELAUNCH=1'";
         var powershell = Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe");
         var psi = new ProcessStartInfo(powershell)
