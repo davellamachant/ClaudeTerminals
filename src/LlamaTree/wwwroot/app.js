@@ -779,10 +779,11 @@ const TERM_THEME_LIGHT = {
 /** The terminals' colours: a theme's own over its base's. */
 const termTheme = (look = themeLook()) => ({ ...(isLight() ? TERM_THEME_LIGHT : TERM_THEME_DARK), ...look?.terminal });
 
-// The light cycle cursor (a theme's "cursor": "light-cycle"): the cursor is a light cycle, drawn in the terminal's cursor
-// colour over the cell the cursor is in (its rear wheel on the cell, the rest riding out over the next two), leaving a
-// ribbon of light that fades behind it as it moves, turning at right angles when it changes line. It's a layer over the
-// terminal's screen; xterm's own cursor is made invisible (an underline in the background colour) while it's on.
+// The light cycle (a theme's "cursor": "light-cycle"): a light cycle drawn in the terminal's cursor colour, riding a little to
+// the right of the cursor (CYCLE_OFFSET; three cells wide) and leaving a ribbon of light that fades behind it as it moves,
+// turning at right angles when it changes line. It's a layer over the terminal's screen. The cursor itself stays a
+// blinking bar in the cursor colour, so you can see where you're typing and whether the terminal has focus; the cycle
+// dims while it hasn't (see .cycle-head in app.css).
 const TRAIL_MAX = 48;        // pieces of ribbon kept at once
 const CYCLE_CELLS = 3;       // how many cells wide the light cycle is drawn
 const CYCLE_OFFSET = 25;     // how far right of the cursor it rides, in pixels, so it never covers what you're typing
@@ -800,16 +801,15 @@ const trailsAllowed = () => !matchMedia('(prefers-reduced-motion: reduce)').matc
 
 /**
  * The terminal's colours as the theme wants them on screen: see-through over the Grid floor (the tile under it paints
- * the floor's lines, see .tile in app.css), and xterm's own cursor made invisible while the light cycle stands in for it.
+ * the floor's lines, see .tile in app.css), and the cursor a bar, blinking as ever, while the light cycle rides beside it.
  */
 function dressCursor(s) {
   const t = termTheme();
   const theme = { ...t };
   const look = themeLook();
   if (look?.grid || look?.rain) theme.background = 'rgba(0, 0, 0, 0)';
-  if (s.cycle) { theme.cursor = t.background; theme.cursorAccent = t.background; }
   s.term.options.theme = theme;
-  s.term.options.cursorStyle = s.cycle ? 'underline' : 'block';
+  s.term.options.cursorStyle = s.cycle ? 'bar' : 'block';   // a bar beside the cycle: the cell stays readable
 }
 
 /** Puts the light cycle on a session's terminal, or takes it off, and sets the terminal's colours either way. */
