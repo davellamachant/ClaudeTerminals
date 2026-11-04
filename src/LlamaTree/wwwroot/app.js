@@ -39,6 +39,7 @@ const PATHS = {
   plug: 'M6 1.5v3M10 1.5v3M4 4.5h8v2.5a4 4 0 0 1-8 0zM8 11v3.5',   // a plugin's tab   // the Project view: a list of the project's worktrees
   shield: 'M8 1.5l5.5 2v4.2c0 3.2-2.3 5.6-5.5 6.8-3.2-1.2-5.5-3.6-5.5-6.8V3.5z',   // the Permissions view
   link: 'M6.8 9.2l2.4-2.4M7.3 4.7l1-1a2.6 2.6 0 0 1 3.7 3.7l-1 1M8.7 11.3l-1 1a2.6 2.6 0 0 1-3.7-3.7l1-1',   // a session that may message others
+  server: 'M2.5 2.5h11v4.5h-11zM2.5 9h11v4.5h-11zM5 4.75h.01M5 11.25h.01',   // a server: a session that runs on one
   mail: 'M2 4h12v8.5H2zM2 4.5l6 4.5 6-4.5',   // unread messages
   save: 'M2.5 2.5h9l2 2v9h-11zM5 2.5v3.5h5v-3.5M5 13.5v-4h6v4',   // Save as a new theme
   warn: 'M8 2l6.5 11.5h-13zM8 6.5v3.5M8 12h.01',   // something couldn't be loaded
@@ -215,6 +216,7 @@ host.addEventListener('message', (e) => {
     case 'host.failed': onHostFailed(m); break;
     case 'host.reconnecting': onReconnecting(m); break;
     case 'machine': onMachine(m); break;
+    case 'files.opened': toast(`Opened a read-only copy of ${m.name} from ${m.server}. Changes to it aren’t saved on the server: edit the file there, through the session.`); break;
     case 'files.browse': browseServerFolder(m.path, m.select, m.server); break;
     case 'exited': onExited(m.id, m.code); break;
     case 'git.status': onGitStatus(m); break;
@@ -1336,6 +1338,8 @@ function renderTileHeader(s) {
     h('button', { class: 'icon-btn', title: 'Session options', onclick: (e) => { const r = e.currentTarget.getBoundingClientRect(); sessionMenu(s, r.left, r.bottom + 2); } }, iconEl('more')),
     expanded && h('button', { class: 'icon-btn', title: 'Back to all sessions (Shift+Esc)', onclick: collapse }, iconEl('collapse')),
   );
+  s.tile.classList.toggle('on-server', !!s.server);   // its edge says it runs elsewhere
+  s.tile.classList.toggle('server-down', serverDown(s));
   const away = serverDown(s);   // a session on a server that can't be reached: why, rather than whether it runs
   s.exitedBadge.hidden = !away && (s.running || !(s.started || s.startsOnOpen));
   s.exitedBadge.textContent = away ? serverStateText(serverOf(s))
@@ -1397,7 +1401,7 @@ function renderSessionTabs() {
     onauxclick: (e) => { if (e.button === 1) confirmRemove(s); },
     oncontextmenu: (e) => { e.preventDefault(); sessionMenu(s, e.clientX, e.clientY, 'sessionTab'); },
   }, h('button', { class: 'tab-label' },
-    statusDot(s), h('span', { class: 'tab-name' }, s.name), s.server && h('span', { class: 'tab-server' + (serverDown(s) ? ' down' : ''), title: serverTitle(serverOf(s)) }, iconEl('link')), i < 9 ? h('span', { class: 'key' }, `Ctrl+${i + 1}`) : null),
+    statusDot(s), h('span', { class: 'tab-name' }, s.name), s.server && h('span', { class: 'tab-server' + (serverDown(s) ? ' down' : ''), title: serverTitle(serverOf(s)) }, iconEl('server'), h('span', {}, serverName(serverOf(s)))), i < 9 ? h('span', { class: 'key' }, `Ctrl+${i + 1}`) : null),
   // Closing a session tab removes the session, after the same confirmation as "Remove session…".
   h('button', { class: 'icon-btn small tab-close', title: 'Close session…', onclick: () => confirmRemove(s) }, iconEl('close'))));
   // A + at the end of each project's group (or of the row without projects): another session like one of that group's.
@@ -5902,7 +5906,12 @@ function serverTag(s) {
   return h('span', {
     class: 'server-tag' + (down ? ' down' : ''), title: serverTitle(c),
     onclick: down && c.state !== 'connecting' && ((e) => { e.stopPropagation(); request('servers.reconnect', { server: c.target }).catch((err) => toast(err.message, true)); }),
-  }, iconEl('link'), c.target);
+  }, iconEl('server'), serverName(c));
+}
+
+/** A server, briefly: its own name once connected (vm-build), else how it's reached without the user (4.204.25.78). */
+function serverName(c) {
+  return c.machine || c.target.replace(/^ssh:\/\//, '').replace(/:\d+$/, '').replace(/^.*@/, '');
 }
 
 function onMachine(m) {

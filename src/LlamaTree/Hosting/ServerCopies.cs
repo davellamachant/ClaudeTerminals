@@ -41,7 +41,9 @@ internal sealed class ServerCopies(string folder)
             var path = Path.Combine(dir, ServerFiles.SafeName(name));
             files[token] = new Incoming(new FileStream(path, FileMode.Create, FileAccess.Write), path);
         }
-        return Append(token, data, index, last, ServerFiles.MaxFile, out _);
+        var done = Append(token, data, index, last, ServerFiles.MaxFile, out _);
+        if (done != null) ReadOnly(done);
+        return done;
     }
 
     /// <summary>A plugin's copy starts afresh (its folder here is emptied).</summary>
@@ -73,6 +75,20 @@ internal sealed class ServerCopies(string folder)
         Append(key, data, index, last, MaxPluginBytes, out var written);
         pluginBytes[id] += written;
         if (pluginBytes[id] > MaxPluginBytes) PluginBegin(id);   // more than a plugin should be: none of it
+    }
+
+    /// <summary>
+    /// A copy of a server's file is made read-only: it's a copy, and saving it wouldn't change the file on the server, so
+    /// an editor says so (or asks where to save) rather than appearing to save it.
+    /// </summary>
+    private static void ReadOnly(string path)
+    {
+        try
+        {
+            if (OperatingSystem.IsWindows()) File.SetAttributes(path, File.GetAttributes(path) | FileAttributes.ReadOnly);
+            else File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.GroupRead);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
 
     private string? Append(string key, string data, int index, bool last, long max, out int written)
@@ -120,7 +136,12 @@ internal sealed class ServerCopies(string folder)
         if (!opened.Exists) return;
         foreach (var d in opened.EnumerateDirectories().Where(d => d.CreationTimeUtc < DateTime.UtcNow.AddDays(-1)))
         {
-            try { d.Delete(true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            try
+            {
+                foreach (var f in d.EnumerateFiles("*", SearchOption.AllDirectories)) f.Attributes = FileAttributes.Normal;   // Windows won't delete a read-only file
+                d.Delete(true);
+            }
+            catch (IOException) { } catch (UnauthorizedAccessException) { }
         }
     }
 }

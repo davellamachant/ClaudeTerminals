@@ -55,6 +55,9 @@ internal sealed class ServerConnection : IDisposable
     /// <summary>A server session's call to a tool (its id there, the JSON-RPC message), to answer with <see cref="Send"/>: { type: "tools.reply", id, reply }.</summary>
     public event Action<ServerConnection, int, string, JsonElement>? ToolCall;
 
+    /// <summary>A copy of one of the server's files was opened here (its name): the page says it's a read-only copy.</summary>
+    public event Action<ServerConnection, string>? FileOpened;
+
     /// <summary>The server's plugins have changed (one added, removed or sent again): see <see cref="ServerPlugins"/>.</summary>
     public event Action<ServerConnection>? PluginsChanged;
 
@@ -183,7 +186,10 @@ internal sealed class ServerConnection : IDisposable
                     break;
                 case "file":
                     if (copies.FilePart(Str(op, "token"), Str(op, "name"), Str(op, "data"), Int(op, "index"), op.TryGetProperty("last", out var l) && l.ValueKind == JsonValueKind.True) is { } opened)
+                    {
                         _ = Task.Run(() => Desktop.OpenFileForViewing(opened));
+                        FileOpened?.Invoke(this, Path.GetFileName(opened));
+                    }
                     break;
             }
             return name;

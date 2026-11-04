@@ -50,6 +50,7 @@ internal sealed partial class AppHost
         c.PageMessage += OnServerMessage;
         c.ToolCall += OnServerToolCall;
         c.PluginsChanged += _ => Post(new { type = "plugins.changed" });
+        c.FileOpened += (_, name) => Post(new { type = "files.opened", name, server = c.Machine is { Length: > 0 } m ? m : c.Target });
         c.StateChanged += _ => Post(new { type = "servers", servers = ServersState() });
         servers[target] = c;
         c.Connect();

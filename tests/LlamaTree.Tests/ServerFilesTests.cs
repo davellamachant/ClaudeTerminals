@@ -11,7 +11,12 @@ public class ServerFilesTests : IDisposable
 
     public void Dispose()
     {
-        try { Directory.Delete(root, true); } catch (IOException) { }
+        try
+        {
+            foreach (var f in new DirectoryInfo(root).EnumerateFiles("*", SearchOption.AllDirectories)) f.Attributes = FileAttributes.Normal;
+            Directory.Delete(root, true);
+        }
+        catch (IOException) { }
     }
 
     private static string Part(string text) => Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(text));
@@ -57,6 +62,9 @@ public class ServerFilesTests : IDisposable
         var path = copies.FilePart("abc123", "../report.txt", Part("two"), 1, true);
         Assert.Equal(Path.Combine(root, "opened", "abc123", "report.txt"), path);
         Assert.Equal("one two", File.ReadAllText(path!));
+        // A copy: saving it wouldn't change the server's file, so it can't be saved.
+        if (OperatingSystem.IsWindows()) Assert.True(File.GetAttributes(path!).HasFlag(FileAttributes.ReadOnly));
+        else Assert.Equal(UnixFileMode.UserRead | UnixFileMode.GroupRead, File.GetUnixFileMode(path!));
     }
 
     [Fact]

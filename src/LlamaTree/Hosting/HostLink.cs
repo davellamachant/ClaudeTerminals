@@ -354,7 +354,10 @@ internal sealed class HostLink
                 // A server's files: one to open here, or a plugin's.
                 case "file" when Remote != null:
                     if (Copies.FilePart(Str(op, "token"), Str(op, "name"), Str(op, "data"), Int(op, "index"), Bool(op, "last")) is { } opened)
+                    {
                         _ = Task.Run(() => Desktop.OpenFileForViewing(opened));
+                        window.PostJson(JsonSerializer.Serialize(new { type = "files.opened", name = Path.GetFileName(opened), server = hostMachine is { Length: > 0 } m ? m : Remote }, JsonOptions));
+                    }
                     break;
                 case "plugin.begin" when Remote != null:
                     Copies.PluginBegin(Str(op, "id"));
