@@ -61,10 +61,6 @@ internal sealed class HostLink
     /// <summary>The window's title: the app's, and which computer's sessions it shows when they aren't this one's.</summary>
     public static string WindowTitle => Remote is { } r ? $"{AppHost.Title} — {r}" : AppHost.Title;
 
-    /// <summary>What's run on the server: LlamaTree's bridge to its session host. LLAMATREE_REMOTE_COMMAND overrides it.</summary>
-    private static string RemoteCommand =>
-        Environment.GetEnvironmentVariable("LLAMATREE_REMOTE_COMMAND") is { Length: > 0 } c ? c : "llamatree --attach";
-
     /// <summary>Waits between attempts to reach a server again, the last repeated.</summary>
     private static readonly int[] RetrySeconds = [2, 5, 10, 20, 30];
 
@@ -74,8 +70,7 @@ internal sealed class HostLink
     private readonly List<string> waiting = [];   // the page's messages from before the host answered
     private LinkChannel? channel;
     private volatile LinkChannel? latest;          // the connection being made or in use
-    private StringBuilder sshErrors = new();
-    private Task sshErrorsDone = Task.CompletedTask;
+    private Ssh? ssh;   // this connection's ssh, for a server's sessions
     private bool pageUp;
     private bool closing;
     private bool closeAcknowledged;
@@ -96,8 +91,7 @@ internal sealed class HostLink
     public bool Closing => closing;
 
     /// <summary>Whether <paramref name="target"/> can be handed to ssh as where to connect: never an option, a space or a control character.</summary>
-    public static bool IsValidTarget(string? target) =>
-        target is { Length: > 0 and <= 255 } && target[0] != '-' && !target.Any(c => char.IsWhiteSpace(c) || char.IsControl(c));
+    public static bool IsValidTarget(string? target) => Ssh.IsValidTarget(target);
 
     private async Task ConnectAsync(bool reload)
     {
@@ -111,7 +105,8 @@ internal sealed class HostLink
         }
         else
         {
-            (stream, failure) = StartSsh();
+            ssh = Ssh.Start(Remote);
+            (stream, failure) = (ssh.Stream, ssh.Failure);
         }
         if (stream == null)
         {
@@ -145,54 +140,6 @@ internal sealed class HostLink
             foreach (var m in waiting) link.Send(LinkKind.Page, m);
             waiting.Clear();
         });
-    }
-
-    /// <summary>Runs ssh to the server's bridge; its output and input are the connection. Its errors are kept, to show if it fails.</summary>
-    private (Stream?, string?) StartSsh()
-    {
-        var errors = new StringBuilder();
-        var errorsDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        sshErrors = errors;
-        sshErrorsDone = errorsDone.Task;
-        // LLAMATREE_SSH: another ssh program, for one that isn't on the PATH.
-        var program = Environment.GetEnvironmentVariable("LLAMATREE_SSH") is { Length: > 0 } p ? p : "ssh";
-        var psi = new ProcessStartInfo(program)
-        {
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        // No password prompts (there's no terminal to type one in): a key, or ssh-agent. Keep-alives notice a dead
-        // connection within about 45 seconds.
-        foreach (var a in new[] { "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "--", Remote!, RemoteCommand })
-            psi.ArgumentList.Add(a);
-        Process? ssh;
-        try
-        {
-            ssh = Process.Start(psi);
-        }
-        catch (System.ComponentModel.Win32Exception)
-        {
-            return (null, "ssh isn't installed on this computer (or isn't on the PATH). LlamaTree uses it to reach the server.");
-        }
-        if (ssh == null) return (null, "ssh didn't start.");
-        ssh.ErrorDataReceived += (_, e) =>
-        {
-            if (e.Data == null)
-            {
-                errorsDone.TrySetResult();   // ssh has ended
-                return;
-            }
-            lock (errors) { if (errors.Length < 4000) errors.AppendLine(e.Data); }
-        };
-        ssh.BeginErrorReadLine();
-        return (new DuplexStream(ssh.StandardOutput.BaseStream, ssh.StandardInput.BaseStream, () =>
-        {
-            try { if (!ssh.HasExited) ssh.Kill(); } catch (Exception) { }
-            ssh.Dispose();
-        }), null);
     }
 
     /// <summary>No host could be reached: the page says why, and can ask to try again. Kept until the page is there (ssh can fail before it has loaded).</summary>
@@ -307,6 +254,7 @@ internal sealed class HostLink
                     closeAcknowledged = true;   // the page is asking you (see AskToClose)
                     break;
                 default:
+                    if (Remote != null && ServerConnection.OpensFile(type)) Copies.ExpectFile();   // a file may come for it
                     return false;
             }
         }
@@ -363,45 +311,8 @@ internal sealed class HostLink
         return true;
     }
 
-    /// <summary>
-    /// Copies files from this computer to the server, a part at a time, for pasting into a session there: their paths
-    /// there. Every few parts it waits for the host to have written the ones before, so a big file isn't all held in
-    /// memory waiting to go.
-    /// </summary>
-    private async Task<List<string>> UploadAsync(LinkChannel link, string[] paths)
-    {
-        var copied = new List<string>();
-        foreach (var path in paths)
-        {
-            if (Directory.Exists(path)) throw new InvalidOperationException($"{Path.GetFileName(path)} is a folder: only files can be pasted into a session on a server.");
-            var size = new FileInfo(path).Length;
-            if (size > ServerFiles.MaxFile) throw new InvalidOperationException($"{Path.GetFileName(path)} is too big to paste ({size >> 20} MB; at most {ServerFiles.MaxFile >> 20} MB).");
-        }
-        foreach (var path in paths)
-        {
-            var token = Guid.NewGuid().ToString("N");
-            await RequestAsync(link, new { type = "upload.begin", token, name = Path.GetFileName(path) });
-            await using var f = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1, useAsync: true);
-            var buffer = new byte[ServerFiles.PartSize];
-            Task? written = null;
-            for (var part = 1; ; part++)
-            {
-                var n = await f.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: false);
-                if (n == 0) break;
-                var data = Convert.ToBase64String(buffer, 0, n);
-                if (part % 8 != 0) link.Send(LinkKind.Page, JsonSerializer.Serialize(new { type = "upload.data", token, data }, JsonOptions));
-                else
-                {
-                    if (written != null) await written;
-                    written = RequestAsync(link, new { type = "upload.data", token, data });
-                }
-                if (n < buffer.Length) break;
-            }
-            if (written != null) await written;
-            copied.Add((await RequestAsync(link, new { type = "upload.end", token })).GetString() ?? throw new InvalidOperationException("The server didn't say where the file went."));
-        }
-        return copied;
-    }
+    private Task<List<string>> UploadAsync(LinkChannel link, string[] paths) =>
+        ServerFiles.UploadAsync(paths, m => RequestAsync(link, m), json => link.Send(LinkKind.Page, json));
 
     private void OnHostMessage(LinkChannel link, char kind, string json)
     {
@@ -440,11 +351,15 @@ internal sealed class HostLink
                 }
                 case "unserve":
                     window.StopServingPlugin(Str(op, "id"));
+                    if (Remote != null) Copies.PluginGone(Str(op, "id"));
                     break;
                 // A server's files: one to open here, or a plugin's.
                 case "file" when Remote != null:
                     if (Copies.FilePart(Str(op, "token"), Str(op, "name"), Str(op, "data"), Int(op, "index"), Bool(op, "last")) is { } opened)
+                    {
                         _ = Task.Run(() => Desktop.OpenFileForViewing(opened));
+                        window.PostJson(JsonSerializer.Serialize(new { type = "files.opened", name = Path.GetFileName(opened), server = hostMachine is { Length: > 0 } m ? m : Remote }, JsonOptions));
+                    }
                     break;
                 case "plugin.begin" when Remote != null:
                     Copies.PluginBegin(Str(op, "id"));
@@ -480,11 +395,10 @@ internal sealed class HostLink
         if (!everWelcomed)
         {
             // Its output can end a moment before ssh has finished saying why: wait for that (briefly).
-            var errors = sshErrors;
-            _ = Task.WhenAny(sshErrorsDone, Task.Delay(2000)).ContinueWith(_ => window.RunOnUi(() =>
+            var said = ssh?.ErrorsAsync(TimeSpan.FromSeconds(2)) ?? Task.FromResult("");
+            _ = said.ContinueWith(t => window.RunOnUi(() =>
             {
-                string why;
-                lock (errors) why = errors.ToString().Trim();
+                var why = t.Result;
                 Failed(why.Length > 0 ? why : "The connection ended before LlamaTree answered on the server.");
             }), TaskScheduler.Default);
             return;

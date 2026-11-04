@@ -11,8 +11,12 @@ internal interface IPtyProcess : IDisposable
 
     int ProcessId { get; }
 
-    /// <summary>Starts <paramref name="command"/>, a command as the user would type it (see <see cref="CommandLineResolver"/>).</summary>
-    void Start(string command, string workingDirectory, IReadOnlyDictionary<string, string> environment, int cols, int rows);
+    /// <summary>
+    /// Starts <paramref name="command"/>, a command as the user would type it (see <see cref="CommandLineResolver"/>). With
+    /// <paramref name="within"/>, it starts only if the folder really is inside that one at that moment, and in that very
+    /// folder (see <see cref="ConfinedFolder"/>); otherwise it throws <see cref="IOException"/>.
+    /// </summary>
+    void Start(string command, string workingDirectory, IReadOnlyDictionary<string, string> environment, int cols, int rows, string? within = null);
 
     void Write(string text);
 
