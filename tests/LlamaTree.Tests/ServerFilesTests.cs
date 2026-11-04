@@ -143,6 +143,73 @@ public class ServerFilesTests : IDisposable
     }
 
     [Fact]
+    public void A_plugin_of_endless_empty_files_is_dropped()
+    {
+        var copies = new ServerCopies(root);
+        copies.PluginBegin("flood");
+        for (var i = 0; i <= ServerCopies.MaxPluginFiles + 10; i++) copies.PluginPart("flood", $"f{i}.txt", "", 0, true);
+        Assert.False(Directory.Exists(copies.PluginFolder("flood")));
+        // Nothing more of it is taken once it's gone.
+        copies.PluginPart("flood", "late.txt", Part("x"), 0, true);
+        Assert.False(Directory.Exists(copies.PluginFolder("flood")));
+    }
+
+    [Fact]
+    public void A_folder_isnt_inside_another_that_differs_only_in_letter_case_nor_is_anything_inside_root_refused()
+    {
+        var upper = Path.Combine(root, "Project");
+        var lower = Path.Combine(root, "project");
+        Directory.CreateDirectory(upper);
+        if (Directory.Exists(lower) && LlamaTree.Platform.PathText.FinalPath(lower) == LlamaTree.Platform.PathText.FinalPath(upper))
+        {
+            // Not case sensitive here (Windows, a Mac's usual volume): the one folder is spelled as the system has it.
+            Assert.NotNull(LlamaTree.Platform.PathText.ResolvedInside(Path.Combine(lower, "."), upper));
+        }
+        else
+        {
+            Directory.CreateDirectory(Path.Combine(lower, "private"));
+            Assert.Null(LlamaTree.Platform.PathText.ResolvedInside(Path.Combine(lower, "private"), upper));
+        }
+        // The root of the file system holds everything.
+        var top = Path.GetPathRoot(root)!;
+        Assert.NotNull(LlamaTree.Platform.PathText.ResolvedInside(root, top));
+    }
+
+    [Theory]
+    [InlineData("NEEDS_PASSWORD apt x64", "curl -fsSL -o llamatree.deb 'https://github.com/x/llamatree_1.3.0_amd64.deb' && echo 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  llamatree.deb' | sha256sum -c && sudo apt-get install -y ./llamatree.deb")]
+    [InlineData("NEEDS_PASSWORD dnf arm64", "curl -fsSL -o llamatree.rpm 'https://github.com/x/llamatree-1.3.0-1.aarch64.rpm' && echo 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb  llamatree.rpm' | sha256sum -c && sudo dnf install -y ./llamatree.rpm")]
+    [InlineData("NEEDS_PASSWORD https://evil/x';rm -rf ~;' 0000 apt-get install -y", null)]   // the old form, forged
+    [InlineData("NEEDS_PASSWORD apt x64; rm -rf ~", null)]
+    [InlineData("NEEDS_PASSWORD pacman x64", null)]
+    [InlineData("NEEDS_PASSWORD apt riscv64", null)]
+    [InlineData("NEEDS_PASSWORD zypper x64", null)]   // no such file in this release
+    [InlineData("", null)]
+    public void The_command_shown_for_a_sudo_password_comes_only_from_this_computers_values(string said, string? expected)
+    {
+        var files = new Dictionary<string, (string Url, string Sha256)>
+        {
+            ["llamatree_1.3.0_amd64.deb"] = ("https://github.com/x/llamatree_1.3.0_amd64.deb", new string('a', 64)),
+            ["llamatree-1.3.0-1.aarch64.rpm"] = ("https://github.com/x/llamatree-1.3.0-1.aarch64.rpm", new string('b', 64)),
+        };
+        Assert.Equal(expected, ServerUpdate.PasswordCommand(said, new Version(1, 3, 0), files));
+    }
+
+    [Fact]
+    public void The_session_a_server_made_is_the_one_it_names()
+    {
+        static JsonElement Json(string s) => JsonDocument.Parse(s).RootElement;
+        string? Find(string id) => id is "r1" or "r2" ? "local-" + id : null;
+        // It says which: that one, whatever else appeared meanwhile (another add, someone else's session).
+        Assert.Equal("local-r2", AppHost.StartedOnServer(Json("""["r2"]"""), Find, ["local-r1", "local-r2", "local-x"]));
+        Assert.Null(AppHost.StartedOnServer(Json("""["gone"]"""), Find, ["local-r1"]));
+        Assert.Null(AppHost.StartedOnServer(Json("""["r1","r2"]"""), Find, ["local-r1"]));
+        // An older server says nothing: the one that appeared, or none when two did (no guessing).
+        Assert.Equal("local-r1", AppHost.StartedOnServer(Json("null"), Find, ["local-r1"]));
+        Assert.Null(AppHost.StartedOnServer(Json("null"), Find, ["local-r1", "local-x"]));
+        Assert.Null(AppHost.StartedOnServer(Json("null"), Find, Array.Empty<string>()));
+    }
+
+    [Fact]
     public void A_servers_plugin_never_takes_a_local_plugins_id()
     {
         var id = AppHost.ServerPluginId("dev@box", "tool");

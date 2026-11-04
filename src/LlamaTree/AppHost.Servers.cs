@@ -239,6 +239,17 @@ internal sealed partial class AppHost
     internal static string ServerPluginId(string server, string pluginId) =>
         "s-" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(server.ToLowerInvariant() + "\n" + pluginId)))[..48].ToLowerInvariant();
 
+    /// <summary>
+    /// The session a server made when asked to add one (start_session): the one whose id it answered with, found by
+    /// <paramref name="byRemoteId"/>, whatever else came and went meanwhile. A server from before it answered with ids
+    /// (<paramref name="made"/> not an array): the one session of it that <paramref name="appeared"/> meanwhile, and
+    /// none when more than one did, rather than a guess.
+    /// </summary>
+    internal static T? StartedOnServer<T>(JsonElement made, Func<string, T?> byRemoteId, IEnumerable<T> appeared) where T : class =>
+        made.ValueKind == JsonValueKind.Array
+            ? made.GetArrayLength() == 1 && made[0].ValueKind == JsonValueKind.String ? byRemoteId(made[0].GetString()!) : null
+            : appeared.Take(2).ToList() is [var only] ? only : null;
+
     private ServerSession? FindServerSession(string server, string? remoteId) =>
         remoteId == null ? null : serverSessions.Values.FirstOrDefault(x => x.Info.RemoteId == remoteId && string.Equals(x.Info.Server, server, StringComparison.OrdinalIgnoreCase));
 

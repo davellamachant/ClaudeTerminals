@@ -145,6 +145,9 @@ internal sealed class SessionHost : IHostWindow
             channel.Send(LinkKind.Window, JsonSerializer.Serialize(new
             {
                 op = "welcome", version = Updates.UpdateService.CurrentVersion.ToString(), machine = Environment.MachineName,
+                // What it does that an older one didn't, which another computer's host may count on: "within", addSessions
+                // checking a folder is really inside another, links resolved (start_session; see AppHost.ControlHost).
+                features = new[] { "within" },
             }));
             app.Attached();
         }

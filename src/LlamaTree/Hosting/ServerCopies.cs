@@ -22,6 +22,12 @@ internal sealed class ServerCopies(string folder)
     public const long MaxAllPluginBytes = 128L << 20;
     public const int MaxPlugins = 32;
 
+    /// <summary>The most files a plugin, and all of a server's, may have here, however small (each takes a place on the disk).</summary>
+    public const int MaxPluginFiles = 1000;
+    public const int MaxAllPluginFiles = 4000;
+
+    private readonly Dictionary<string, int> pluginFiles = [];
+
     /// <summary>Files on their way at once: to open, and of plugins.</summary>
     private const int MaxOpenTransfers = 4;
 
@@ -98,6 +104,7 @@ internal sealed class ServerCopies(string folder)
         if (!PluginCatalog.IsValidId(id)) return;
         foreach (var key in files.Keys.Where(k => k.StartsWith(id + "/", StringComparison.Ordinal)).ToList()) Drop(key);
         pluginBytes.Remove(id);
+        pluginFiles.Remove(id);
         try { Directory.Delete(PluginFolder(id), true); } catch (DirectoryNotFoundException) { } catch (IOException) { } catch (UnauthorizedAccessException) { }
     }
 
@@ -116,6 +123,13 @@ internal sealed class ServerCopies(string folder)
         {
             Drop(key);
             if (files.Keys.Count(k => k.Contains('/')) >= MaxOpenTransfers) return;
+            // Counted as it starts, empty or not: too many files is none of the plugin.
+            pluginFiles[id] = pluginFiles.GetValueOrDefault(id) + 1;
+            if (pluginFiles[id] > MaxPluginFiles || pluginFiles.Values.Sum() > MaxAllPluginFiles)
+            {
+                PluginGone(id);
+                return;
+            }
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             files[key] = new Incoming(new FileStream(path, FileMode.Create, FileAccess.Write), path);
         }

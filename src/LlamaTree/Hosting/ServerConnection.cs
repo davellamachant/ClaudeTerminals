@@ -47,6 +47,10 @@ internal sealed class ServerConnection : IDisposable
     public string? Machine { get; private set; }
     public string? Version { get; private set; }
 
+    /// <summary>Whether the server's LlamaTree does <paramref name=feature/> (see SessionHost's welcome); an older one doesn't say.</summary>
+    public bool Supports(string feature) => features.Contains(feature);
+    private HashSet<string> features = [];
+
     public bool IsOnline => State == "online" && link is { IsOpen: true };
 
     /// <summary>The server's host told its page something (a session's output, its session list…): the JSON, on the app thread.</summary>
@@ -164,6 +168,8 @@ internal sealed class ServerConnection : IDisposable
                     pending = null;
                     failures = 0;
                     Machine = Str(op, "machine");
+                    features = op.TryGetProperty("features", out var fs) && fs.ValueKind == JsonValueKind.Array
+                        ? fs.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!).ToHashSet(StringComparer.Ordinal) : [];
                     Version = Str(op, "version");
                     SetState("online", null);
                     // As a page does when it loads: the host sends its sessions, what they've shown, and their output from now on.

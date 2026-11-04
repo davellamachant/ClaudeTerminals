@@ -54,9 +54,12 @@ internal static class PathText
     public static string? ResolvedInside(string path, string root)
     {
         if (FinalPath(path) is not { } real || FinalPath(root) is not { } realRoot) return null;
-        var comparison = OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+        // Compared exactly, letter case included, on every system: a volume (or, on Windows, a folder) can be case
+        // sensitive, where /work/Project and /work/project are two folders. Both are as the system resolved them, so
+        // the same folder is spelled the same; at worst a path is refused, never let out.
         (real, realRoot) = (TrimEnd(real), TrimEnd(realRoot));
-        if (!string.Equals(real, realRoot, comparison) && !real.StartsWith(realRoot + Path.DirectorySeparatorChar, comparison)) return null;
+        var prefix = realRoot.EndsWith(Path.DirectorySeparatorChar) ? realRoot : realRoot + Path.DirectorySeparatorChar;   // "/" is its own
+        if (!string.Equals(real, realRoot, StringComparison.Ordinal) && !real.StartsWith(prefix, StringComparison.Ordinal)) return null;
         // Windows gives \\?\C:\... (or \\?\UNC\server\share\...): the path as it's normally written.
         if (real.StartsWith(@"\\?\UNC\", StringComparison.Ordinal)) return @"\\" + real[8..];
         return real.StartsWith(@"\\?\", StringComparison.Ordinal) ? real[4..] : real;

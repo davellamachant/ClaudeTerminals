@@ -274,8 +274,12 @@ internal sealed partial class AppHost
             if (app.serverSessions.TryGetValue(parent, out var sp))
             {
                 // A session on a server starts one on the same server: its folders are there.
-                // The server checks the folder is really inside the allowed one (within), links resolved there.
+                // The server checks the folder is really inside the allowed one (within), links resolved there; one too old
+                // to check isn't asked to start it there at all.
                 var c = app.ServerFor(sp.Info.Server!);
+                await c.WhenSettledAsync(TimeSpan.FromSeconds(30));
+                if (within != null && c.IsOnline && !c.Supports("within"))
+                    throw new ControlException($"LlamaTree on {c.Target} is too old to check where a new session's folder leads, so a session can't be started there. Update it first (the server's badge or its sessions' menu).");
                 var before = app.serverSessions.Keys.ToHashSet();
                 app.addingTo[c.Target] = sp.Info.Project;
                 JsonElement made;
@@ -288,9 +292,8 @@ internal sealed partial class AppHost
                 finally { app.addingTo.Remove(c.Target); }
                 // The session the server says it made (it's in its session list by now); a server from before it said
                 // so: the one new session of it here.
-                var added = made.ValueKind == JsonValueKind.Array && made.GetArrayLength() == 1 && made[0].GetString() is { } rid
-                    ? app.FindServerSession(c.Target, rid)
-                    : app.serverSessions.Values.Where(x => !before.Contains(x.Info.Id) && x.Info.Server == sp.Info.Server).ToList() is [var only] ? only : null;
+                var added = StartedOnServer(made, rid => app.FindServerSession(c.Target, rid),
+                    app.serverSessions.Values.Where(x => !before.Contains(x.Info.Id) && x.Info.Server == sp.Info.Server));
                 if (added == null) throw new ControlException($"{c.Target} didn't add the session.");
                 added.Info.StartedBy = parent;
                 app.SaveSessions();
