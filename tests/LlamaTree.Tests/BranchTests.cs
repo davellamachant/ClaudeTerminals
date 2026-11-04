@@ -41,7 +41,7 @@ public class BranchTests : IDisposable
         Assert.Equal([false, false, true, true], list.Select(b => b.Remote));
         var main = list[0];
         Assert.Equal(("origin/main", 1, 0), (main.Upstream, main.Ahead, main.Behind));
-        Assert.Equal(Path.GetFullPath(repo.Root).TrimEnd('\\'), Path.GetFullPath(main.Worktree!).TrimEnd('\\'), ignoreCase: true);
+        Assert.True(LlamaTree.Platform.PathText.SamePlace(repo.Root, main.Worktree!), $"{main.Worktree} isn't {repo.Root}");   // macOS: git gives /private/var for /var
         Assert.Null(list[1].Upstream);
         Assert.Null(list[1].Worktree);
     }
