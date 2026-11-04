@@ -138,8 +138,8 @@ public class SessionControlTests
         policy.Set(ControlAbility.Spawn, "a", RelayDecision.Allow);
         await control.StartAsync("a", "Helper", "go", "web", null);   // inside its own
         await control.StartAsync("a", "Helper", "go", @"D:\repo-other\docs", null);   // inside a project session's
-        await control.StartAsync("a", "Helper", "go", null, "feature/y");   // a worktree it made: nothing to check
-        Assert.Equal([@"D:\repo", @"D:\repo-other", null], host.Within);
+        await control.StartAsync("a", "Helper", "go", null, "feature/y");   // a worktree it made: held to that
+        Assert.Equal([@"D:\repo", @"D:\repo-other", @"D:\repo-feature-y"], host.Within);
     }
 
     // A folder inside its own or a project session's: given in full (either slash), or from its own folder.

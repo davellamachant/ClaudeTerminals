@@ -278,7 +278,7 @@ internal sealed partial class AppHost
                 // to check isn't asked to start it there at all.
                 var c = app.ServerFor(sp.Info.Server!);
                 await c.WhenSettledAsync(TimeSpan.FromSeconds(30));
-                if (within != null && c.IsOnline && !c.Supports("within"))
+                if (within != null && c.IsOnline && !c.Supports("confined-start"))
                     throw new ControlException($"LlamaTree on {c.Target} is too old to check where a new session's folder leads, so a session can't be started there. Update it first (the server's badge or its sessions' menu).");
                 var before = app.serverSessions.Keys.ToHashSet();
                 app.addingTo[c.Target] = sp.Info.Project;
@@ -303,14 +303,14 @@ internal sealed partial class AppHost
             }
             var p = app.sessions.GetValueOrDefault(parent) ?? throw new ControlException("That session isn't in LlamaTree any more.");
             if (!Directory.Exists(directory)) throw new ControlException($"{directory} doesn't exist.");
-            if (within != null)
-                directory = PathText.ResolvedInside(directory, within)
-                    ?? throw new ControlException($"{directory} leads outside {within} (through a link), so a session can't be started there.");
+            // Every session an agent starts is held to a folder: the one it was allowed, resolved once here, the folder
+            // checked against that very value, which is what's kept (and checked again as its process starts).
+            var confined = PathText.Confine(directory, within ?? throw new ControlException("A started session needs the folder it's allowed."))
+                ?? throw new ControlException($"{directory} isn't inside {within} (a folder on the way leads elsewhere, or isn't there), so a session can't be started there.");
             var info = new SessionInfo
             {
-                Name = name, Directory = directory, Command = CommandLike(p.Info.Command), Project = p.Info.Project, StartedBy = parent,
-                // Checked again as its process starts, against the allowed folder as it is now (see ConfinedFolder).
-                Within = within != null ? PathText.ResolvedPath(within) : null,
+                Name = name, Directory = confined.Folder, Command = CommandLike(p.Info.Command), Project = p.Info.Project, StartedBy = parent,
+                Within = confined.Root,
             };
             if (TerminalSession.NeedsOwnConversation(info)) info.Conversation = Guid.NewGuid().ToString();
             var session = app.AddSessionRuntime(info);
@@ -915,13 +915,14 @@ internal sealed partial class AppHost
                 {
                     if (!Directory.Exists(items[i].Dir)) throw new DirectoryNotFoundException(items[i].Dir);
                     // Started by another session (start_session on another computer): it must really be inside the
-                    // folder it was allowed, with links resolved here, where they lead.
+                    // folder it was allowed, links resolved here, where they lead; that folder is resolved once, and the
+                    // value checked against is the one kept (see PathText.Confine).
                     if (items[i].Within is { } within)
-                        items[i] = items[i] with
-                        {
-                            Dir = PathText.ResolvedInside(items[i].Dir, within)
-                                ?? throw new InvalidOperationException($"{items[i].Dir} leads outside {within} (through a link), so a session can't be started there."),
-                        };
+                    {
+                        var confined = PathText.Confine(items[i].Dir, within)
+                            ?? throw new InvalidOperationException($"{items[i].Dir} isn't inside {within} (a folder on the way leads elsewhere, or isn't there), so a session can't be started there.");
+                        items[i] = items[i] with { Dir = confined.Folder, Within = confined.Root };
+                    }
                 }
                 var made = new List<string>();
                 foreach (var item in items)
@@ -932,7 +933,7 @@ internal sealed partial class AppHost
                         Directory = item.Dir,
                         Command = string.IsNullOrWhiteSpace(item.Command) ? "claude" : item.Command.Trim(),
                         Project = item.Project,
-                        Within = item.Within != null ? PathText.ResolvedPath(item.Within) : null,   // checked again at each start
+                        Within = item.Within,   // as resolved and checked above; checked again at each start
                     };
                     TidyConversation(info);   // a "claude --resume X" typed as the command: conversation X
                     if (item.Conversation != null && TerminalSession.CanTrackConversation(info.Command))

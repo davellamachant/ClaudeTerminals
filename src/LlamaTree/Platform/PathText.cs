@@ -52,8 +52,15 @@ internal static class PathText
     /// inside one is checked this way when it's given; the process is then started in the folder as it is at that moment
     /// (see Terminal.ConfinedFolder), against the root as resolved here (<see cref="ResolvedPath"/>).
     /// </summary>
-    public static string? ResolvedInside(string path, string root) =>
-        ResolvedPath(path) is { } real && ResolvedPath(root) is { } realRoot && IsInside(real, realRoot) ? real : null;
+    public static string? ResolvedInside(string path, string root) => Confine(path, root)?.Folder;
+
+    /// <summary>
+    /// The folder and the root it must be inside, both with every link resolved once, here and now, and the folder checked
+    /// against that very root: null if either isn't there or the folder isn't inside. What's kept for the session (and
+    /// checked again as its process starts) is this root, never one resolved again later, which could have gone or moved.
+    /// </summary>
+    public static (string Folder, string Root)? Confine(string path, string root) =>
+        ResolvedPath(root) is { } realRoot && ResolvedPath(path) is { } real && IsInside(real, realRoot) ? (real, realRoot) : null;
 
     /// <summary>The path with every link in it resolved, as it's normally written; null if it isn't there.</summary>
     public static string? ResolvedPath(string path) => FinalPath(path) is { } real ? Plain(TrimEnd(real)) : null;

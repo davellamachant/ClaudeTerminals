@@ -37,6 +37,35 @@ public class ConfinedFolderTests : IDisposable
     }
 
     [Fact]
+    public void The_root_kept_is_the_one_checked_and_a_missing_root_confines_nothing()
+    {
+        // Resolved once, and the folder checked against that very value, which is what's kept.
+        var confined = PathText.Confine(child, Path.Combine(root, "project"));
+        Assert.NotNull(confined);
+        Assert.Equal(allowed, confined.Value.Root);
+        Assert.Equal(PathText.ResolvedPath(child), confined.Value.Folder);
+        // A root that has gone (renamed, deleted) gives no confinement at all: refused, never "unconfined".
+        Assert.Null(PathText.Confine(child, Path.Combine(root, "gone")));
+        // A root swapped for a link elsewhere: what it leads to now is the root, and the folder isn't inside it.
+        var swapped = Path.Combine(root, "swapped");
+        try { Directory.CreateSymbolicLink(swapped, outside); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return; }
+        Assert.Null(PathText.Confine(child, swapped));
+    }
+
+    [Fact]
+    public void A_session_an_agent_started_without_its_folder_held_isnt_started()
+    {
+        // Saved by a build between (before every such session was held to its folder).
+        var s = new LlamaTree.Sessions.TerminalSession(new LlamaTree.Sessions.SessionInfo
+        {
+            Name = "old helper", Directory = child, Command = OperatingSystem.IsWindows() ? "cmd" : "sh", StartedBy = "lead", Within = null,
+        });
+        Assert.Throws<IOException>(() => s.Start(80, 24));
+        Assert.False(s.IsRunning);
+    }
+
+    [Fact]
     public void A_link_inside_that_leads_out_is_refused()
     {
         var link = Path.Combine(allowed, "out");

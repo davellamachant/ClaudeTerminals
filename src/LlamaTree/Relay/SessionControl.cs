@@ -203,6 +203,7 @@ internal sealed class SessionControl
         try
         {
             dir = branch != null ? await host.AddWorktreeAsync(from, branch) : folder;
+            within ??= dir;   // a worktree it made: held to that
             var id = await host.StartAsync(from, name, dir, prompt, within);
             lock (gate) prompted[id] = (now(), false, FirstStartGrace);
             AddLog(from, id, "start", $"\"{name}\" in {dir}", true);

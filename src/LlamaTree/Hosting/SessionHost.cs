@@ -145,9 +145,10 @@ internal sealed class SessionHost : IHostWindow
             channel.Send(LinkKind.Window, JsonSerializer.Serialize(new
             {
                 op = "welcome", version = Updates.UpdateService.CurrentVersion.ToString(), machine = Environment.MachineName,
-                // What it does that an older one didn't, which another computer's host may count on: "within", addSessions
-                // checking a folder is really inside another, links resolved (start_session; see AppHost.ControlHost).
-                features = new[] { "within" },
+                // What it does that an older one didn't, which another computer's host may count on: "confined-start", a
+                // session added with "within" checked against that folder as resolved once, and its process started in the
+                // folder held as checked (see Terminal.ConfinedFolder). An earlier build that only checked said "within".
+                features = new[] { "confined-start" },
             }));
             app.Attached();
         }
