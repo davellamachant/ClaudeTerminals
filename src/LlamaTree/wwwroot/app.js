@@ -80,6 +80,10 @@ const PATHS = {
   bulb: 'M6 12.5h4M6.5 14.5h3M8 1.5a4.5 4.5 0 0 0-2.6 8.2c.4.3.6.7.6 1.2v.6h4v-.6c0-.5.2-.9.6-1.2A4.5 4.5 0 0 0 8 1.5z',
   gift: 'M2.5 6h11v2.5h-11zM3.5 8.5h9v6h-9zM8 6v8.5M8 6C6.5 3 4 3.5 4.5 5c.3.8 2 1 3.5 1zM8 6c1.5-3 4-2.5 3.5-1-.3.8-2 1-3.5 1z',
   info: 'M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 1 0 0-13M8 7v4.5M8 4.8h.01',
+  // Which agent a session runs and where (sessionMarks): Claude, Codex or anything else; this computer (a server is `server`).
+  computer: 'M2 2.5h12v8.5H2zM5.5 14h5M8 11v3',
+  agentClaude: 'M8 2v12M2 8h12M3.8 3.8l8.4 8.4M12.2 3.8l-8.4 8.4',
+  agentCodex: 'M5.5 4.5L2 8l3.5 3.5M10.5 4.5L14 8l-3.5 3.5M9.2 3l-2.4 10',
   sparkle: 'M7 2l1.2 3.3L11.5 6.5 8.2 7.7 7 11 5.8 7.7 2.5 6.5l3.3-1.2zM12 9.5l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z',
 };
 
@@ -269,6 +273,9 @@ const state = {
   surface: { w: 0, h: 0 },
   projects: [],                                        // [{ id, name }] in display order
   hiddenProjects: new Set(store.get('hiddenProjects', [])),   // hidden rather than shown, so new projects start visible
+  // Where projects and sessions go (see NAV_LAYOUTS): 'top', 'hybrid' (projects on the left) or 'left' (both, as a tree).
+  navLayout: ['hybrid', 'left'].includes(store.get('navLayout')) ? store.get('navLayout') : 'top',
+  navWidth: store.get('navWidth', 230),
 };
 
 // ------------------------------------------------------------------ projects: which sessions are visible
@@ -340,7 +347,7 @@ function applyProjectFilter(instant = false) {
   $('#empty').hidden = shown.length > 0;
   $('#empty .empty-title').textContent = anySessions ? 'No sessions in the selected projects' : 'No sessions yet';
   $('#empty .empty-sub').textContent = anySessions
-    ? 'Tick a project above (Unknown holds sessions with no project), or choose All.'
+    ? `Tick a project ${state.navLayout === 'top' ? 'above' : 'on the left'} (Unknown holds sessions with no project), or choose All.`
     : 'Add a session for each worktree you want Claude to work in.';
   layout(instant);
   for (const s of state.sessions) renderTileHeader(s);
@@ -383,46 +390,94 @@ function hideAllProjects() {
  */
 function renderProjectBar() {
   const bar = $('#projectTabs');   // the grid button sits before it in the same row and is left alone
-  // With no projects there is nothing to toggle, so Unknown only appears once a project exists.
-  const groups = state.projects.length
-    ? [...state.projects, { id: UNKNOWN, name: UNKNOWN_NAME, unknown: true }]
-    : [];
-  const tabs = groups.map((p) => {
-    const members = state.sessions.filter((s) => groupOf(s) === p.id);
-    const waiting = members.filter(waitingForYou).length;
-    const shown = !state.hiddenProjects.has(p.id);
-    const what = p.unknown ? 'sessions with no project' : p.name;
-    return h('div', {
-      class: 'project-tab' + (shown ? ' shown' : '') + (p.unknown ? ' unknown' : ''),
-      style: p.unknown ? null : `--proj:${projectColor(p)}`,
-      'data-id': p.id,
-      oncontextmenu: (e) => { e.preventDefault(); projectMenu(p, e.clientX, e.clientY); },
-    },
-    h('button', {
-      class: 'project-check', role: 'checkbox', 'aria-checked': String(shown),
-      title: `${shown ? 'Hide' : 'Show'} ${what}, keeping the others as they are`,
-      onclick: () => toggleProject(p.id),
-    }, iconEl(shown ? 'checkOn' : 'checkOff')),
-    // The name toggles like the checkbox; Ctrl+click (or the right-click menu) shows only this project.
-    h('button', {
-      class: 'project-name',
-      title: `${shown ? 'Hide' : 'Show'} ${what} · Ctrl+click to show only this\n${members.length} session${members.length === 1 ? '' : 's'} · right-click for options`,
-      onclick: (e) => (e.ctrlKey ? showOnlyProject(p.id) : toggleProject(p.id)),
-    }, p.name,
-    projectDot(members),
-    waiting ? h('span', { class: 'badge', title: `${waiting} session${waiting === 1 ? '' : 's'} waiting for you` }, String(waiting)) : null));
-  });
-  const allShown = groups.length > 0 && groups.every((g) => !state.hiddenProjects.has(g.id));
-  const noneShown = groups.length > 0 && groups.every((g) => state.hiddenProjects.has(g.id));
+  if (state.navLayout !== 'top') { bar.replaceChildren(); renderNav(); return; }   // the projects are on the left
+  const groups = projectGroups();
   fill(bar,
     h('span', { class: 'project-bar-label' }, 'Projects'),
-    ...tabs,
-    groups.length ? h('button', { class: 'project-all' + (allShown ? ' active' : ''), title: 'Show every project, Unknown included', onclick: showAllProjects }, 'All') : null,
-    groups.length ? h('button', { class: 'project-all' + (noneShown ? ' active' : ''), title: 'Hide every project, Unknown included', onclick: hideAllProjects }, 'None') : null,
-    h('button', { class: 'tb-btn text project-add', title: 'New project', onclick: showNewProjectDialog }, iconEl('plus'),
-      state.projects.length ? 'Project' : 'New project (group sessions)'),
+    groups.map((p) => projectTab(p)),
+    projectAllButtons(groups),
+    projectAddButton(),
   );
   syncStatus(bar);
+}
+
+/** The groups the projects bar lists: the projects, then Unknown. With no projects there is nothing to toggle, so none. */
+const projectGroups = () => (state.projects.length ? [...state.projects, { id: UNKNOWN, name: UNKNOWN_NAME, unknown: true }] : []);
+
+/** A project's tab in the projects bar (or row down the left): its checkbox and its name, with `extra` at the end. */
+function projectTab(p, extra = null) {
+  const members = state.sessions.filter((s) => groupOf(s) === p.id);
+  const waiting = members.filter(waitingForYou).length;
+  const shown = !state.hiddenProjects.has(p.id);
+  const what = p.unknown ? 'sessions with no project' : p.name;
+  return h('div', {
+    class: 'project-tab' + (shown ? ' shown' : '') + (p.unknown ? ' unknown' : ''),
+    style: p.unknown ? null : `--proj:${projectColor(p)}`,
+    'data-id': p.id,
+    oncontextmenu: (e) => { e.preventDefault(); projectMenu(p, e.clientX, e.clientY); },
+  },
+  h('button', {
+    class: 'project-check', role: 'checkbox', 'aria-checked': String(shown),
+    title: `${shown ? 'Hide' : 'Show'} ${what}, keeping the others as they are`,
+    onclick: () => toggleProject(p.id),
+  }, iconEl(shown ? 'checkOn' : 'checkOff')),
+  // The name toggles like the checkbox; Ctrl+click (or the right-click menu) shows only this project.
+  h('button', {
+    class: 'project-name',
+    title: `${shown ? 'Hide' : 'Show'} ${what} · Ctrl+click to show only this\n${members.length} session${members.length === 1 ? '' : 's'} · right-click for options`,
+    onclick: (e) => (e.ctrlKey ? showOnlyProject(p.id) : toggleProject(p.id)),
+  }, h('span', { class: 'project-label' }, p.name),
+  projectDot(members),
+  waiting ? h('span', { class: 'badge', title: `${waiting} session${waiting === 1 ? '' : 's'} waiting for you` }, String(waiting)) : null),
+  extra);
+}
+
+/** All and None: show or hide every project at once. */
+function projectAllButtons(groups) {
+  if (!groups.length) return [];
+  const allShown = groups.every((g) => !state.hiddenProjects.has(g.id));
+  const noneShown = groups.every((g) => state.hiddenProjects.has(g.id));
+  return [
+    h('button', { class: 'project-all' + (allShown ? ' active' : ''), title: 'Show every project, Unknown included', onclick: showAllProjects }, 'All'),
+    h('button', { class: 'project-all' + (noneShown ? ' active' : ''), title: 'Hide every project, Unknown included', onclick: hideAllProjects }, 'None'),
+  ];
+}
+
+const projectAddButton = () => h('button', { class: 'tb-btn text project-add', title: 'New project', onclick: showNewProjectDialog }, iconEl('plus'),
+  state.projects.length ? 'Project' : 'New project (group sessions)');
+
+/**
+ * The bar down the left in the Hybrid and Left layouts: a row per project, as its tab in the Top layout's projects bar,
+ * with a button for its Project view; in Left, also its visible sessions beneath it, as a tree, in place of the session
+ * tab row. Rows carry the tabs' own classes (project-tab, session-tab), so what updates a tab in place finds them.
+ */
+function renderNav() {
+  if (state.navLayout === 'top') return;
+  const tree = state.navLayout === 'left';
+  const groups = projectGroups();
+  const shown = tree ? visibleSessions() : [];
+  const tabOf = (s) => sessionTab(s, shown.indexOf(s), true);   // the index gives its Ctrl+1…9, as in the tab row
+  const rows = groups.map((p) => {
+    const members = shown.filter((s) => groupOf(s) === p.id);
+    return h('div', { class: 'nav-group' + (p.unknown ? ' unknown' : ''), style: p.unknown ? null : `--proj:${projectColor(p)}` },
+      projectTab(p, h('button', {
+        class: 'icon-btn small nav-view' + (projectViewShowing(p.id) ? ' active' : ''), 'data-project': p.id,
+        title: 'Project view: its worktrees side by side (again to go back)',
+        onclick: () => toggleProjectView(p.id),
+      }, iconEl('list'))),
+      members.length > 0 && h('div', { class: 'nav-sessions' }, members.map(tabOf), sessionPlus(members, p.unknown ? 'with no project' : `in ${p.name}`)));
+  });
+  // No projects: in Left the sessions are still listed, as one group with no name; otherwise just what projects are for.
+  if (!groups.length) {
+    rows.push(tree && shown.length
+      ? h('div', { class: 'nav-sessions unnamed' }, shown.map(tabOf), sessionPlus(shown, 'like these'))
+      : h('div', { class: 'nav-hint' }, 'Projects group your sessions, so you can show and hide them together.'));
+  }
+  fill($('#navHead'), h('span', { class: 'project-bar-label' }, 'Projects'), h('span', { class: 'spacer' }), projectAllButtons(groups));
+  fill($('#navList'), rows);
+  fill($('#navFoot'), projectAddButton());
+  syncStatus($('#navList'));
+  if (tree) revealActive($('#navList'), '.session-tab.active');
 }
 
 function projectMenu(p, x, y) {
@@ -437,6 +492,7 @@ function projectMenu(p, x, y) {
     return;
   }
   const i = state.projects.indexOf(p);
+  const across = state.navLayout === 'top';   // a row of tabs; down the left, a list
   showMenu(x, y, [
     { label: 'Project view: its worktrees side by side', action: () => openProjectView(p.id) },
     '-',
@@ -444,8 +500,8 @@ function projectMenu(p, x, y) {
     { label: state.hiddenProjects.has(p.id) ? 'Show alongside the others' : 'Hide', action: () => toggleProject(p.id) },
     '-',
     { label: 'Edit project (name, colour)…', action: () => showEditProjectDialog(p) },
-    i > 0 && { label: 'Move left', action: () => moveProject(p, -1) },
-    i < state.projects.length - 1 && { label: 'Move right', action: () => moveProject(p, 1) },
+    i > 0 && { label: across ? 'Move left' : 'Move up', action: () => moveProject(p, -1) },
+    i < state.projects.length - 1 && { label: across ? 'Move right' : 'Move down', action: () => moveProject(p, 1) },
     '-',
     { label: 'Delete project…', danger: true, action: () => confirmDeleteProject(p) },
     ...pluginMenuItems('project', { project: p.name }, p.id),
@@ -1396,14 +1452,14 @@ async function loadConversationInfo(s) {
   s.header.querySelector('.tile-name')?.setAttribute('title', conversationLine(s) ?? '');
 }
 
-function renderSessionTabs() {
-  const host = $('#sessionTabs');
-  // The label and the close button are sibling buttons, since one button can't contain another: both stay reachable
-  // with Tab, and Enter or Space on the label switches sessions. A click elsewhere on the tab counts as the label's.
-  // Visible sessions only, grouped by project. Each group is outlined in its project's colour and named once at its
-  // start, so the tabs themselves carry no project tag.
-  const shown = visibleSessions();
-  const tabs = shown.map((s, i) => h('div', {
+/**
+ * A session's tab, `i` its place among the visible sessions (for its Ctrl+1…9). The label and the close button are
+ * sibling buttons, since one button can't contain another: both stay reachable with Tab, and Enter or Space on the label
+ * switches sessions. A click elsewhere on the tab counts as the label's. With `marks` (the list down the left), it also
+ * shows which agent the session runs and where (see sessionMarks).
+ */
+function sessionTab(s, i, marks = false) {
+  return h('div', {
     class: 'session-tab' + (state.expandedId === s.id ? ' active' : '') + (['working', 'asking'].includes(statusClass(s)) ? ' ' + statusClass(s) : ''),
     'data-id': s.id,
     title: sessionTabTitle(s),
@@ -1419,21 +1475,57 @@ function renderSessionTabs() {
     onauxclick: (e) => { if (e.button === 1) confirmRemove(s); },
     oncontextmenu: (e) => { e.preventDefault(); sessionMenu(s, e.clientX, e.clientY, 'sessionTab'); },
   }, h('button', { class: 'tab-label' },
-    statusDot(s), h('span', { class: 'tab-name' }, s.name), s.server && h('span', { class: 'tab-server' + (serverDown(s) ? ' down' : ''), title: serverTitle(serverOf(s)) }, iconEl('server'), h('span', {}, serverName(serverOf(s)))), i < 9 ? h('span', { class: 'key' }, `Ctrl+${i + 1}`) : null),
+    statusDot(s), h('span', { class: 'tab-name' }, s.name),
+    // Down the left, icons for its agent and where it runs; across the top, the server's name for a session on one.
+    marks ? sessionMarks(s) : s.server && h('span', { class: 'tab-server' + (serverDown(s) ? ' down' : ''), title: serverTitle(serverOf(s)) }, iconEl('server'), h('span', {}, serverName(serverOf(s)))),
+    i < 9 ? h('span', { class: 'key' }, `Ctrl+${i + 1}`) : null),
   // Closing a session tab removes the session, after the same confirmation as "Remove session…".
-  h('button', { class: 'icon-btn small tab-close', title: 'Close session…', onclick: () => confirmRemove(s) }, iconEl('close'))));
-  // A + at the end of each project's group (or of the row without projects): another session like one of that group's.
-  const plus = (sessions, where) => {
-    const like = sessions.find((s) => s.id === state.currentId) || sessions[0];
-    return h('button', {
-      class: 'icon-btn small session-add', 'aria-label': `New session ${where}`,
-      title: `New session ${where}: in the same folder as ${like.name}${like.git?.isRepo ? ", in a new worktree" : ""}, or in a different folder`,
-      onclick: (e) => quickAddMenu(like, e.currentTarget),
-    }, iconEl('plus'));
-  };
-  if (!state.projects.length) {
+  h('button', { class: 'icon-btn small tab-close', title: 'Close session…', onclick: () => confirmRemove(s) }, iconEl('close')));
+}
+
+const AGENT_ICONS = { claude: 'agentClaude', codex: 'agentCodex' };   // by AgentProfile.Id
+
+/**
+ * Two small icons: the agent the session runs (Claude or Codex in its colour, AgentProfile.Color; a terminal for any
+ * other command) and where it runs (this computer, or its server, in red while that can't be reached).
+ */
+function sessionMarks(s) {
+  const a = agentOf(s.command);
+  const glyph = a ? AGENT_ICONS[a.id] ?? 'sparkle' : 'terminal';   // an agent with no icon of its own gets a generic one
+  return h('span', { class: 'session-marks' },
+    h('span', {
+      class: 'session-mark agent' + (a?.color ? ' colored' : ''),
+      style: a?.color && `--agent-dark: ${a.color.dark}; --agent-light: ${a.color.light}`,
+      title: a ? `Runs ${a.name}` : `Runs ${(s.command || '').trim().split(' ')[0] || 'a command'}: not a coding agent`,
+    }, iconEl(glyph)),
+    h('span', {
+      class: 'session-mark where' + (s.server ? ' remote' : '') + (serverDown(s) ? ' down' : ''),
+      title: s.server ? `${serverName(serverOf(s))}: ${serverStateText(serverOf(s))}` : 'Runs on this computer',
+    }, iconEl(s.server ? 'server' : 'computer')));
+}
+
+/** The + at the end of a project's sessions (or of them all, without projects): another session like one of them. */
+function sessionPlus(sessions, where) {
+  const like = sessions.find((s) => s.id === state.currentId) || sessions[0];
+  return h('button', {
+    class: 'icon-btn small session-add', 'aria-label': `New session ${where}`,
+    title: `New session ${where}: in the same folder as ${like.name}${like.git?.isRepo ? ", in a new worktree" : ""}, or in a different folder`,
+    onclick: (e) => quickAddMenu(like, e.currentTarget),
+  }, iconEl('plus'));
+}
+
+function renderSessionTabs() {
+  const host = $('#sessionTabs');
+  // Visible sessions only, grouped by project. Each group is outlined in its project's colour and named once at its
+  // start, so the tabs themselves carry no project tag. In the Left layout they're listed down the left instead.
+  const shown = state.navLayout === 'left' ? [] : visibleSessions();
+  const tabs = shown.map((s, i) => sessionTab(s, i));
+  if (state.navLayout === 'left') {
+    host.replaceChildren();
+    renderNav();
+  } else if (!state.projects.length) {
     // Nothing to group by: the sessions are still outlined as one group, as Unknown's would be, but with no name.
-    host.replaceChildren(...(shown.length ? [h('div', { class: 'session-group unknown unnamed' }, tabs, plus(shown, 'like these'))] : []));
+    host.replaceChildren(...(shown.length ? [h('div', { class: 'session-group unknown unnamed' }, tabs, sessionPlus(shown, 'like these'))] : []));
   } else {
     const groups = [];
     shown.forEach((s, i) => {
@@ -1455,7 +1547,7 @@ function renderSessionTabs() {
       onclick: () => toggleProjectView(g.id),
     }, iconEl('list'), g.name),   // the Project tab's icon, so it's clear the name opens something
     g.tabs,
-    plus(g.sessions, g.color ? `in ${g.name}` : 'with no project'))));
+    sessionPlus(g.sessions, g.color ? `in ${g.name}` : 'with no project'))));
   }
   syncStatus(host);
   $('#btnGrid').classList.toggle('active', !state.expandedId);
@@ -4600,8 +4692,8 @@ function renderDocTabs() {
     el.classList.toggle('beside', !!side && !el.classList.contains('active') && (el.classList.contains('terminal') || el.dataset.id === side.key));
   }
   revealActive($('#docTabs'), '.doc-tab.active');
-  // The project label in the session tab row looks selected while its Project view is showing.
-  for (const label of document.querySelectorAll('.session-group-label')) label.classList.toggle('active', projectViewShowing(label.dataset.project));
+  // The project label in the session tab row (or its button down the left) looks selected while its Project view is showing.
+  for (const label of document.querySelectorAll('.session-group-label, .nav-view')) label.classList.toggle('active', projectViewShowing(label.dataset.project));
 }
 
 async function loadDiff(tab, keepView = false) {
@@ -6237,6 +6329,8 @@ function themeMenu(x, y) {
     { icon: h('span', { class: 'menu-dot', 'data-dots': dotStyle.id }, h('span', { class: 'dot attention' })),   // the style in use, waiting for you
       label: DOT_STYLES.find((d) => d.id === dotStyle.id).name, kbd: 'Change…', action: showDotStyleDialog },
     '-',
+    ...navLayoutItems(),
+    '-',
     { header: 'Plugins' },
     ...plugins.list.flatMap((p) => [
       { icon: pluginIcon(p.id), label: p.title, kbd: pluginPlacement(p) === 'panel' ? 'Side panel' : '', action: () => openPlugin(p.id) },
@@ -6447,28 +6541,32 @@ function makeScrollable(row, extraClass = '') {
  * `onDrop(draggedId, targetId, before)` is told where to put it. Listeners sit on the row itself, so its contents can
  * be re-rendered freely. With `outside`, a tab can also be dragged out below the row: `outside.over(id, x, y)` shows
  * where it would land and returns that place (or null), `outside.over(null)` hides it, and `outside.drop(id, place)`
- * puts it there. `fixed(id)` items stay where they are: only dragged out, and never a place to drop beside.
+ * puts it there. `fixed(id)` items stay where they are: only dragged out, and never a place to drop beside. `axis: 'y'`
+ * is for a list down the page (the bar down the left) rather than a row across it.
  *
  * Built on pointer events rather than HTML5 drag and drop: in WebView2 an HTML5 drag runs through the operating
  * system's drag loop, which AllowExternalDrop = false (set so dropped files can't navigate the page) also blocks.
  */
-function enableTabDrag(row, { item, canDrag = () => true, onDrop, outside = null, fixed = () => false }) {
+function enableTabDrag(row, { item, canDrag = () => true, onDrop, outside = null, fixed = () => false, axis = 'x' }) {
   const THRESHOLD = 8;   // pixels the pointer must move before a press becomes a drag (a hurried click can move ~5)
-  let press = null;      // { id, el, x, pointerId } from pointerdown until pointerup
+  let press = null;      // { id, el, x, y, pointerId } from pointerdown until pointerup
   let dragging = false;
   let place = null;      // where outside.over says a drop below the row lands
+  const down = axis === 'y';
+  const along = (e) => (down ? e.clientY : e.clientX);                         // the pointer's place along the row
+  const span = (r) => (down ? [r.top, r.bottom] : [r.left, r.right]);         // a box's extent along it
 
   const clear = () => row.querySelectorAll('.drop-before, .drop-after').forEach((el) => el.classList.remove('drop-before', 'drop-after'));
 
   /** The item nearest the pointer (other than the dragged one), and which side of it the drop lands on. */
-  const targetAt = (x) => {
+  const targetAt = (at) => {
     if (fixed(press.id)) return null;
     let best = null;
     for (const el of row.querySelectorAll(item)) {
       if (el.dataset.id === press.id || fixed(el.dataset.id)) continue;
-      const r = el.getBoundingClientRect();
-      const d = x < r.left ? r.left - x : x > r.right ? x - r.right : 0;
-      if (!best || d < best.d) best = { el, before: x < r.left + r.width / 2, d };
+      const [lo, hi] = span(el.getBoundingClientRect());
+      const d = at < lo ? lo - at : at > hi ? at - hi : 0;
+      if (!best || d < best.d) best = { el, before: at < (lo + hi) / 2, d };
     }
     return best;
   };
@@ -6500,7 +6598,7 @@ function enableTabDrag(row, { item, canDrag = () => true, onDrop, outside = null
     if (!dragging) {
       // Along the row only, unless a tab can be dragged out of it: then down counts too (the row loses the pointer once it's
       // out, so a drag must start before then).
-      const moved = outside ? Math.hypot(e.clientX - press.x, e.clientY - press.y) : Math.abs(e.clientX - press.x);
+      const moved = outside ? Math.hypot(e.clientX - press.x, e.clientY - press.y) : Math.abs(along(e) - (down ? press.y : press.x));
       if (moved < THRESHOLD) return;
       dragging = true;
       row.setPointerCapture(e.pointerId);   // keep receiving moves even when the pointer leaves the row
@@ -6512,9 +6610,11 @@ function enableTabDrag(row, { item, canDrag = () => true, onDrop, outside = null
       place = e.clientY > r.bottom + 6 ? outside.over(press.id, e.clientX, e.clientY) : (place != null && outside.over(null), null);
       if (place != null) { clear(); return; }
     }
-    if (e.clientX < r.left + 30) row.scrollLeft -= 12;
-    else if (e.clientX > r.right - 30) row.scrollLeft += 12;
-    const t = targetAt(e.clientX);
+    const [lo, hi] = span(r);
+    const scroll = down ? 'scrollTop' : 'scrollLeft';
+    if (along(e) < lo + 30) row[scroll] -= 12;
+    else if (along(e) > hi - 30) row[scroll] += 12;
+    const t = targetAt(along(e));
     clear();
     if (t) t.el.classList.add(t.before ? 'drop-before' : 'drop-after');
   });
@@ -6532,7 +6632,7 @@ function enableTabDrag(row, { item, canDrag = () => true, onDrop, outside = null
       if (under && row.contains(under)) under.click();
       return;
     }
-    const t = targetAt(e.clientX);
+    const t = targetAt(along(e));
     const id = press.id;
     const out = place;
     finish();
@@ -7952,7 +8052,7 @@ function moveId(ids, id, targetId, before) {
 }
 
 // Session tabs: dropping into another project's group moves the session into that project, at that spot.
-enableTabDrag($('#sessionTabs'), {
+const sessionDrag = {
   item: '.session-tab',
   onDrop: (id, targetId, before) => {
     const s = state.byId.get(id), target = state.byId.get(targetId);
@@ -7965,10 +8065,10 @@ enableTabDrag($('#sessionTabs'), {
     }
     applyProjectFilter();
   },
-});
+};
 
 // Project tabs; Unknown isn't draggable and stays last, so a drop beside it goes at the end of the real projects.
-enableTabDrag($('#projectTabs'), {
+const projectDrag = {
   item: '.project-tab',
   canDrag: (id) => id !== UNKNOWN,
   onDrop: (id, targetId, before) => {
@@ -7976,7 +8076,78 @@ enableTabDrag($('#projectTabs'), {
     const ordered = targetId === UNKNOWN ? moveId(ids, id, ids[ids.length - 1], false) : moveId(ids, id, targetId, before);
     request('projects.reorder', { ids: ordered }).catch((e) => toast(e.message, true));
   },
-});
+};
+enableTabDrag($('#sessionTabs'), sessionDrag);
+enableTabDrag($('#projectTabs'), projectDrag);
+// The same down the left: each looks only for its own kind of row, so the two share the list.
+enableTabDrag($('#navList'), { ...sessionDrag, axis: 'y' });
+enableTabDrag($('#navList'), { ...projectDrag, axis: 'y' });
+
+// ------------------------------------------------------------------ where projects and sessions go
+
+const NAV_LAYOUTS = [
+  { id: 'top', label: 'Projects and sessions across the top' },
+  { id: 'hybrid', label: 'Projects on the left, sessions across the top' },
+  { id: 'left', label: 'Projects and sessions on the left' },
+];
+
+/**
+ * Applies the layout: Top keeps the two rows of tabs; Hybrid and Left drop the projects row for the bar down the left
+ * (see renderNav), and the buttons that row held join the title bar, All sessions first and the version and theme last.
+ */
+function applyNavLayout(render = true) {
+  const top = state.navLayout === 'top';
+  document.body.dataset.nav = state.navLayout;
+  const row = top ? $('#projectBar') : $('#titlebar');
+  row.prepend($('#btnGrid'));
+  row.append($('#appVersion'), $('#btnTheme'));
+  $('#navBar').style.width = state.navWidth + 'px';
+  if (render) applyProjectFilter();   // redraws both bars, and the empty grid's hint says where the projects are
+}
+
+function setNavLayout(id) {
+  state.navLayout = id;
+  store.set('navLayout', id);
+  applyNavLayout();
+}
+
+const navLayoutItems = () => [
+  { header: 'Layout' },
+  ...NAV_LAYOUTS.map((l) => ({ label: l.label, checked: state.navLayout === l.id, action: () => setNavLayout(l.id) })),
+];
+
+applyNavLayout(false);   // the bars are filled once the sessions arrive
+
+// Right-click on a bar's free space offers the layouts (a tab's own right-click has its menu).
+for (const bar of [$('#projectBar'), $('#titlebar'), $('#navBar')]) {
+  bar.addEventListener('contextmenu', (e) => {
+    if (e.target.closest('button, .project-tab, .session-tab')) return;
+    e.preventDefault();
+    showMenu(e.clientX, e.clientY, navLayoutItems());
+  });
+}
+
+// The bar down the left's width: dragged like the side panel's (its terminals refit as #termPane resizes).
+(() => {
+  const sp = $('#navSplitter');
+  sp.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    sp.classList.add('dragging');
+    const startX = e.clientX, startW = state.navWidth;
+    const move = (ev) => {
+      state.navWidth = Math.max(160, Math.min(480, innerWidth - 400, startW + (ev.clientX - startX)));
+      $('#navBar').style.width = state.navWidth + 'px';
+    };
+    const up = () => {
+      sp.classList.remove('dragging');
+      store.set('navWidth', state.navWidth);
+      removeEventListener('mousemove', move);
+      removeEventListener('mouseup', up);
+    };
+    addEventListener('mousemove', move);
+    addEventListener('mouseup', up);
+  });
+})();
 
 // Diff tabs. The Terminal tab stays first, but can be dragged to a side of the area like them.
 enableTabDrag($('#docTabs'), {
