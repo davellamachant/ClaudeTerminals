@@ -197,6 +197,7 @@ internal sealed class ServerConnection : IDisposable
                     else if (served.Contains(Str(op, "id"))) PluginsChanged?.Invoke(this);
                     break;
                 case "unserve":
+                    copies.PluginGone(Str(op, "id"));
                     if (served.Remove(Str(op, "id"))) PluginsChanged?.Invoke(this);
                     break;
                 case "file":
@@ -257,6 +258,12 @@ internal sealed class ServerConnection : IDisposable
         var until = DateTime.UtcNow + wait;
         while (State == "connecting" && DateTime.UtcNow < until) await Task.Delay(150);
     }
+
+    /// <summary>This computer asks the server to open something: a file it sends for that is taken (see ServerCopies.ExpectFile).</summary>
+    public void ExpectFile() => copies.ExpectFile();
+
+    /// <summary>Requests that can send a file here to open: anything else sent unasked is refused.</summary>
+    public static bool OpensFile(string type) => type is "fs.open" or "openFile" or "terminal.openPath";
 
     /// <summary>Sends the server's host a message from the page, as it is (no reply wanted).</summary>
     public void Send(string json)

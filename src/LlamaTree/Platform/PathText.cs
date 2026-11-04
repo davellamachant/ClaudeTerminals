@@ -47,6 +47,22 @@ internal static class PathText
     private static string? RealPath(string path) => Libc.Instance.RealPath(path);
 
     /// <summary>
+    /// <paramref name="path"/> with every link in it resolved, if it really is <paramref name="root"/> or inside it (also
+    /// resolved); null if it isn't, or either isn't there. A link inside a folder can lead anywhere, so a path given as
+    /// inside one is checked this way before anything is started there.
+    /// </summary>
+    public static string? ResolvedInside(string path, string root)
+    {
+        if (FinalPath(path) is not { } real || FinalPath(root) is not { } realRoot) return null;
+        var comparison = OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+        (real, realRoot) = (TrimEnd(real), TrimEnd(realRoot));
+        if (!string.Equals(real, realRoot, comparison) && !real.StartsWith(realRoot + Path.DirectorySeparatorChar, comparison)) return null;
+        // Windows gives \\?\C:\... (or \\?\UNC\server\share\...): the path as it's normally written.
+        if (real.StartsWith(@"\\?\UNC\", StringComparison.Ordinal)) return @"\\" + real[8..];
+        return real.StartsWith(@"\\?\", StringComparison.Ordinal) ? real[4..] : real;
+    }
+
+    /// <summary>
     /// Whether two full paths name the same place, also when one reaches it through a link: git reports real paths,
     /// and on a Mac the temporary folder /var/... is really /private/var/.... A path that's gone is compared through
     /// the nearest folder above it that's still there.

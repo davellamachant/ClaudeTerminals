@@ -254,6 +254,7 @@ internal sealed class HostLink
                     closeAcknowledged = true;   // the page is asking you (see AskToClose)
                     break;
                 default:
+                    if (Remote != null && ServerConnection.OpensFile(type)) Copies.ExpectFile();   // a file may come for it
                     return false;
             }
         }
@@ -350,6 +351,7 @@ internal sealed class HostLink
                 }
                 case "unserve":
                     window.StopServingPlugin(Str(op, "id"));
+                    if (Remote != null) Copies.PluginGone(Str(op, "id"));
                     break;
                 // A server's files: one to open here, or a plugin's.
                 case "file" when Remote != null:

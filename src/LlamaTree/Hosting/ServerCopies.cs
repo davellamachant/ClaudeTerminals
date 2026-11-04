@@ -5,8 +5,10 @@ namespace LlamaTree.Hosting;
 /// <summary>
 /// The window's copies of a server's files (see <see cref="HostLink.Remote"/>): files it was sent to open here, and its
 /// plugins' folders, which the window serves from here. Kept in this computer's app data, a folder per server. What a
-/// server sends is checked as it would be from anyone: names can't reach out of their folder, and sizes are capped.
-/// Called on the window's UI thread.
+/// server sends is checked as it would be from anyone: names can't reach out of their folder; a file to open is taken
+/// only when this computer asked to open one (<see cref="ExpectFile"/>); and the number and size of transfers, files
+/// and plugins are capped, so a server can't fill this computer's disk or hold its files open. Called on the window's
+/// (or this computer's host's) UI thread.
 /// </summary>
 internal sealed class ServerCopies(string folder)
 {
@@ -15,6 +17,22 @@ internal sealed class ServerCopies(string folder)
 
     /// <summary>The most a plugin's folder may hold (as the server checks too, see SessionHost).</summary>
     public const long MaxPluginBytes = 32L << 20;
+
+    /// <summary>The most all of a server's plugins may hold here, and how many it may have.</summary>
+    public const long MaxAllPluginBytes = 128L << 20;
+    public const int MaxPlugins = 32;
+
+    /// <summary>Files on their way at once: to open, and of plugins.</summary>
+    private const int MaxOpenTransfers = 4;
+
+    /// <summary>The longest part of a file in a message: <see cref="ServerFiles.PartSize"/> bytes, as base64.</summary>
+    private const int MaxPartChars = (ServerFiles.PartSize + 2) / 3 * 4;
+
+    /// <summary>How long an asked-for file may take to start coming.</summary>
+    private static readonly TimeSpan ExpectFor = TimeSpan.FromMinutes(2);
+
+    /// <summary>When this computer asked to open each file it's still waiting for (oldest first).</summary>
+    private readonly Queue<DateTime> expected = new();
     private bool tidied;
 
     private sealed record Incoming(FileStream Stream, string Path)
@@ -26,15 +44,34 @@ internal sealed class ServerCopies(string folder)
     public string PluginFolder(string id) => Path.Combine(folder, "plugins", id);
 
     /// <summary>
-    /// A part of a file to open. Returns its path here once the last part has come, else null. A file whose parts come
-    /// out of order, or that grows too big, is dropped.
+    /// This computer has asked the server to open something (a file, a path link…): a file may come for it, starting
+    /// within <see cref="ExpectFor"/>. A file the server sends unasked is refused.
+    /// </summary>
+    public void ExpectFile()
+    {
+        Prune();
+        if (expected.Count < 16) expected.Enqueue(DateTime.UtcNow);
+    }
+
+    private void Prune()
+    {
+        while (expected.Count > 0 && DateTime.UtcNow - expected.Peek() > ExpectFor) expected.Dequeue();
+    }
+
+    /// <summary>
+    /// A part of a file to open. Returns its path here once the last part has come, else null. A file nobody asked
+    /// for, one past the number on their way at once, one whose parts come out of order, and one that grows too big
+    /// are dropped.
     /// </summary>
     public string? FilePart(string token, string name, string data, int index, bool last)
     {
-        if (token.Length is 0 or > 64 || !token.All(char.IsAsciiLetterOrDigit)) return null;
+        if (token.Length is 0 or > 64 || !token.All(char.IsAsciiLetterOrDigit) || token.Contains('/')) return null;
         if (index == 0)
         {
             Drop(token);
+            Prune();
+            if (expected.Count == 0 || files.Keys.Count(k => !k.Contains('/')) >= MaxOpenTransfers) return null;
+            expected.Dequeue();
             Tidy();
             var dir = Path.Combine(folder, "opened", token);
             Directory.CreateDirectory(dir);
@@ -46,12 +83,21 @@ internal sealed class ServerCopies(string folder)
         return done;
     }
 
-    /// <summary>A plugin's copy starts afresh (its folder here is emptied).</summary>
+    /// <summary>A plugin's copy starts afresh (its folder here is emptied). Past <see cref="MaxPlugins"/>, refused.</summary>
     public void PluginBegin(string id)
     {
         if (!PluginCatalog.IsValidId(id)) return;
-        foreach (var key in files.Keys.Where(k => k.StartsWith(id + "/", StringComparison.Ordinal)).ToList()) Drop(key);
+        if (!pluginBytes.ContainsKey(id) && pluginBytes.Count >= MaxPlugins) return;
+        PluginGone(id);
         pluginBytes[id] = 0;
+    }
+
+    /// <summary>A plugin's copy is dropped: the server no longer has it, or it was more than allowed.</summary>
+    public void PluginGone(string id)
+    {
+        if (!PluginCatalog.IsValidId(id)) return;
+        foreach (var key in files.Keys.Where(k => k.StartsWith(id + "/", StringComparison.Ordinal)).ToList()) Drop(key);
+        pluginBytes.Remove(id);
         try { Directory.Delete(PluginFolder(id), true); } catch (DirectoryNotFoundException) { } catch (IOException) { } catch (UnauthorizedAccessException) { }
     }
 
@@ -69,12 +115,14 @@ internal sealed class ServerCopies(string folder)
         if (index == 0)
         {
             Drop(key);
+            if (files.Keys.Count(k => k.Contains('/')) >= MaxOpenTransfers) return;
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             files[key] = new Incoming(new FileStream(path, FileMode.Create, FileAccess.Write), path);
         }
         Append(key, data, index, last, MaxPluginBytes, out var written);
         pluginBytes[id] += written;
-        if (pluginBytes[id] > MaxPluginBytes) PluginBegin(id);   // more than a plugin should be: none of it
+        // More than a plugin, or all of a server's, should be: none of it.
+        if (pluginBytes[id] > MaxPluginBytes || pluginBytes.Values.Sum() > MaxAllPluginBytes) PluginGone(id);
     }
 
     /// <summary>
@@ -97,7 +145,7 @@ internal sealed class ServerCopies(string folder)
         if (!files.TryGetValue(key, out var f)) return null;
         try
         {
-            if (index != f.Next++) throw new InvalidDataException();
+            if (index != f.Next++ || data.Length > MaxPartChars) throw new InvalidDataException();
             var bytes = Convert.FromBase64String(data);
             if (f.Stream.Length + bytes.Length > max) throw new InvalidDataException();
             f.Stream.Write(bytes);

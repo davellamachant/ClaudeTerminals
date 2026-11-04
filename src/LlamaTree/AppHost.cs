@@ -261,31 +261,37 @@ internal sealed partial class AppHost
         private Task<T> OnUiAsync<T>(Func<Task<T>> f) => OnUi(f);
 
         public IReadOnlyList<ControlSession> Sessions() => OnUi(() => app.order.Select(id => app.sessions.TryGetValue(id, out var s)
-            ? new ControlSession(s.Id, s.Info.Name.Length > 0 ? s.Info.Name : s.Id, s.Info.Directory, s.Info.Project, s.Info.StartedBy, s.Agent != null, s.IsRunning)
+            ? new ControlSession(s.Id, s.Info.Name.Length > 0 ? s.Info.Name : s.Id, s.Info.Directory, s.Info.Project, s.Info.StartedBy, s.Agent != null, s.IsRunning, null)
             : app.serverSessions[id] is var x
-                ? new ControlSession(x.Info.Id, x.Info.Name.Length > 0 ? x.Info.Name : x.Info.Id, x.Info.Directory, x.Info.Project, x.Info.StartedBy, Agents.For(x.Info.Command) != null, x.Running)
+                ? new ControlSession(x.Info.Id, x.Info.Name.Length > 0 ? x.Info.Name : x.Info.Id, x.Info.Directory, x.Info.Project, x.Info.StartedBy, Agents.For(x.Info.Command) != null, x.Running, x.Info.Server)
                 : null!).ToList());
 
         /// <summary>The starter's own agent and options, never a command of the agent's choosing, in a conversation of its own.</summary>
         private static string CommandLike(string command) => TerminalSession.StripContinue(TerminalSession.TakeConversation(command).Command);
 
-        public Task<string> StartAsync(string parent, string name, string directory, string prompt) => OnUiAsync(async () =>
+        public Task<string> StartAsync(string parent, string name, string directory, string prompt, string? within) => OnUiAsync(async () =>
         {
             if (app.serverSessions.TryGetValue(parent, out var sp))
             {
                 // A session on a server starts one on the same server: its folders are there.
+                // The server checks the folder is really inside the allowed one (within), links resolved there.
                 var c = app.ServerFor(sp.Info.Server!);
                 var before = app.serverSessions.Keys.ToHashSet();
                 app.addingTo[c.Target] = sp.Info.Project;
+                JsonElement made;
                 try
                 {
                     await c.WhenSettledAsync(TimeSpan.FromSeconds(30));
-                    await c.RequestAsync(new { type = "addSessions", sessions = new[] { new { directory, name, command = CommandLike(sp.Info.Command), prompt } } });
+                    made = await c.RequestAsync(new { type = "addSessions", sessions = new[] { new { directory, name, command = CommandLike(sp.Info.Command), prompt, within } } });
                 }
                 catch (InvalidOperationException ex) { throw new ControlException(ex.Message); }
                 finally { app.addingTo.Remove(c.Target); }
-                var added = app.serverSessions.Values.FirstOrDefault(x => !before.Contains(x.Info.Id) && x.Info.Server == sp.Info.Server)
-                    ?? throw new ControlException($"{c.Target} didn't add the session.");
+                // The session the server says it made (it's in its session list by now); a server from before it said
+                // so: the one new session of it here.
+                var added = made.ValueKind == JsonValueKind.Array && made.GetArrayLength() == 1 && made[0].GetString() is { } rid
+                    ? app.FindServerSession(c.Target, rid)
+                    : app.serverSessions.Values.Where(x => !before.Contains(x.Info.Id) && x.Info.Server == sp.Info.Server).ToList() is [var only] ? only : null;
+                if (added == null) throw new ControlException($"{c.Target} didn't add the session.");
                 added.Info.StartedBy = parent;
                 app.SaveSessions();
                 app.Post(app.SessionList());
@@ -294,6 +300,9 @@ internal sealed partial class AppHost
             }
             var p = app.sessions.GetValueOrDefault(parent) ?? throw new ControlException("That session isn't in LlamaTree any more.");
             if (!Directory.Exists(directory)) throw new ControlException($"{directory} doesn't exist.");
+            if (within != null)
+                directory = PathText.ResolvedInside(directory, within)
+                    ?? throw new ControlException($"{directory} leads outside {within} (through a link), so a session can't be started there.");
             var info = new SessionInfo { Name = name, Directory = directory, Command = CommandLike(p.Info.Command), Project = p.Info.Project, StartedBy = parent };
             if (TerminalSession.NeedsOwnConversation(info)) info.Conversation = Guid.NewGuid().ToString();
             var session = app.AddSessionRuntime(info);
@@ -889,12 +898,24 @@ internal sealed partial class AppHost
                 var items = msg.GetProperty("sessions").EnumerateArray()
                     .Select(item => (Dir: Str(item, "directory"), Name: Str(item, "name"), Command: Str(item, "command"), Project: ProjectId(item),
                         Prompt: OptStr(item, "prompt")?.Trim() is { Length: > 0 and <= PanelSpec.MaxPrompt } p ? p : null,
-                        Conversation: OptStr(item, "conversation") is { } conv && TerminalSession.IsConversationId(conv) ? conv : null))
+                        Conversation: OptStr(item, "conversation") is { } conv && TerminalSession.IsConversationId(conv) ? conv : null,
+                        Within: OptStr(item, "within")))
                     .ToList();
                 // All or nothing: check every folder before adding any. Adding as we went left the earlier sessions
                 // added but unsaved and unshown after a failure, and a retry then added them a second time.
-                foreach (var item in items)
-                    if (!Directory.Exists(item.Dir)) throw new DirectoryNotFoundException(item.Dir);
+                for (var i = 0; i < items.Count; i++)
+                {
+                    if (!Directory.Exists(items[i].Dir)) throw new DirectoryNotFoundException(items[i].Dir);
+                    // Started by another session (start_session on another computer): it must really be inside the
+                    // folder it was allowed, with links resolved here, where they lead.
+                    if (items[i].Within is { } within)
+                        items[i] = items[i] with
+                        {
+                            Dir = PathText.ResolvedInside(items[i].Dir, within)
+                                ?? throw new InvalidOperationException($"{items[i].Dir} leads outside {within} (through a link), so a session can't be started there."),
+                        };
+                }
+                var made = new List<string>();
                 foreach (var item in items)
                 {
                     var info = new SessionInfo
@@ -916,10 +937,11 @@ internal sealed partial class AppHost
                     if (TerminalSession.NeedsOwnConversation(info)) info.Conversation = Guid.NewGuid().ToString();
                     var added = AddSessionRuntime(info);
                     added.FirstPromptOnce = item.Prompt;   // from a panel's button: its first start is a new conversation with this prompt
+                    made.Add(info.Id);
                 }
                 SaveSessions();
                 Post(SessionList());
-                return null;
+                return made;
             }
             case "updateSession":
             {

@@ -3,7 +3,8 @@ namespace LlamaTree.Relay;
 /// <summary>A session as session control knows it.</summary>
 /// <param name="StartedBy">The session that started this one through <see cref="SessionControl.StartAsync"/>, if one did.</param>
 /// <param name="IsAgent">It runs a coding agent (only those can use the tools, or be started).</param>
-internal sealed record ControlSession(string Id, string Name, string Directory, string? Project, string? StartedBy, bool IsAgent, bool Running);
+/// <param name="Server">The server it runs on (how it's reached), or null for this computer: its folders are that computer's.</param>
+internal sealed record ControlSession(string Id, string Name, string Directory, string? Project, string? StartedBy, bool IsAgent, bool Running, string? Server = null);
 
 /// <summary>What a session's agent was last asked and answered, from its conversation.</summary>
 /// <param name="PendingTool">The tool call its last reply ends with, if any: what a permission prompt is about.</param>
@@ -14,8 +15,13 @@ internal interface IControlHost
 {
     IReadOnlyList<ControlSession> Sessions();
 
-    /// <summary>Adds and starts a session running <paramref name="parent"/>'s agent with its options, in a new conversation that starts with <paramref name="prompt"/>; its id.</summary>
-    Task<string> StartAsync(string parent, string name, string directory, string prompt);
+    /// <summary>
+    /// Adds and starts a session running <paramref name="parent"/>'s agent with its options, in a new conversation that
+    /// starts with <paramref name="prompt"/>; its id. With <paramref name="within"/>, the folder must really be inside that
+    /// one, links resolved, on the computer it runs on (a link inside an allowed folder can lead anywhere); the session
+    /// is started in the folder as resolved. Throws <see cref="ControlException"/> when it isn't.
+    /// </summary>
+    Task<string> StartAsync(string parent, string name, string directory, string prompt, string? within);
 
     /// <summary>A new worktree of <paramref name="parent"/>'s repository on the new branch <paramref name="branch"/>; its folder. Throws <see cref="ControlException"/>.</summary>
     Task<string> AddWorktreeAsync(string parent, string branch);
@@ -168,7 +174,7 @@ internal sealed class SessionControl
         CheckPrompt(prompt);
         if (name.Any(char.IsControl)) throw new ControlException("A session's name can't hold control characters.");
         if (branch != null && !string.IsNullOrWhiteSpace(directory)) throw new ControlException("Give a folder or a new branch (for a new worktree), not both.");
-        var folder = branch != null ? $"a new worktree on the branch {branch}" : AllowedFolder(me, directory);
+        var (folder, within) = branch != null ? ($"a new worktree on the branch {branch}", null) : AllowedFolder(me, directory);
         CheckLimits(me);
 
         var decision = policy.Decide(ControlAbility.Spawn, me.Id, me.Project, me.StartedBy != null).Decision;
@@ -197,7 +203,7 @@ internal sealed class SessionControl
         try
         {
             dir = branch != null ? await host.AddWorktreeAsync(from, branch) : folder;
-            var id = await host.StartAsync(from, name, dir, prompt);
+            var id = await host.StartAsync(from, name, dir, prompt, within);
             lock (gate) prompted[id] = (now(), false, FirstStartGrace);
             AddLog(from, id, "start", $"\"{name}\" in {dir}", true);
             return (id, dir);
@@ -232,12 +238,14 @@ internal sealed class SessionControl
 
     /// <summary>
     /// The folder a new session may use: the starter's own, one another session of its project uses, or a folder inside
-    /// either (a relative path is taken from the starter's folder). Paths are compared as text, in the way of the
-    /// computer the sessions are on (a server's are its own, not this computer's), and can't climb out with "..".
+    /// either (a relative path is taken from the starter's folder), and the folder it's in. Only sessions on the
+    /// starter's own computer count: another computer's folders say nothing about this one's. Paths are compared as text
+    /// here, in the way of the computer the sessions are on, and can't climb out with ".."; the computer the session
+    /// starts on then checks the folder really is inside, with links resolved (see IControlHost.StartAsync).
     /// </summary>
-    private string AllowedFolder(ControlSession me, string? directory)
+    private (string Folder, string Within) AllowedFolder(ControlSession me, string? directory)
     {
-        if (string.IsNullOrWhiteSpace(directory)) return me.Directory;
+        if (string.IsNullOrWhiteSpace(directory)) return (me.Directory, me.Directory);
         directory = directory.Trim();
         static bool Rooted(string p) => p.StartsWith('/') || p.StartsWith('\\') || (p.Length >= 2 && char.IsAsciiLetter(p[0]) && p[1] == ':');
         var sep = me.Directory.StartsWith('/') ? '/' : '\\';   // the starter's computer's way
@@ -251,13 +259,13 @@ internal sealed class SessionControl
             return lead + string.Join('/', p.Split('\\', '/').Where(x => x.Length > 0 && x != "."));
         }
         var want = Norm(directory);
-        var allowed = host.Sessions().Where(s => s.Id == me.Id || (me.Project != null && s.Project == me.Project)).Select(s => s.Directory);
+        var allowed = host.Sessions().Where(s => s.Id == me.Id || (me.Project != null && s.Project == me.Project && s.Server == me.Server)).Select(s => s.Directory);
         foreach (var d in allowed)
         {
             var root = Norm(d);
-            if (string.Equals(root, want, StringComparison.OrdinalIgnoreCase)) return d.TrimEnd('\\', '/');
+            if (string.Equals(root, want, StringComparison.OrdinalIgnoreCase)) return (d.TrimEnd('\\', '/'), d);
             if (root.Length > 0 && want.Length > root.Length + 1 && want.StartsWith(root + "/", StringComparison.OrdinalIgnoreCase))
-                return d.TrimEnd('\\', '/') + sep + want[(root.Length + 1)..].Replace('/', sep);
+                return (d.TrimEnd('\\', '/') + sep + want[(root.Length + 1)..].Replace('/', sep), d);
         }
         throw new ControlException("A new session can use this session's folder, a folder another session of its project uses, a folder inside " +
             $"either, or a new worktree (give branch instead); {directory} is none of these.");

@@ -158,6 +158,7 @@ internal sealed partial class AppHost
     private static async Task<object?> ForwardAsync(ServerConnection c, JsonElement msg, string? remoteId)
     {
         if (c.State == "connecting") await c.WhenSettledAsync(TimeSpan.FromSeconds(30));
+        if (msg.TryGetProperty("type", out var t) && t.ValueKind == JsonValueKind.String && ServerConnection.OpensFile(t.GetString()!)) c.ExpectFile();
         var obj = JsonNode.Parse(msg.GetRawText())!.AsObject();
         var wantsReply = obj.Remove("reqId");
         obj.Remove("server");
@@ -212,14 +213,31 @@ internal sealed partial class AppHost
     /// </summary>
     private void AddServerPlugins(List<Plugins.PluginInfo> found, List<string> problems)
     {
+        var taken = found.Select(p => p.Id).ToHashSet(StringComparer.Ordinal);
         foreach (var c in servers.Values)
         {
             var (list, trouble) = c.ServerPlugins();
-            var key = HostLink.RemoteKey(c.Target)[..8].ToLowerInvariant();
-            found.AddRange(list.Select(p => p with { Id = $"{p.Id[..Math.Min(p.Id.Length, 31)]}-{key}", Title = $"{p.Title} ({c.Target})" }));
             problems.AddRange(trouble.Select(t => $"{c.Target}: {t}"));
+            foreach (var p in list)
+            {
+                var id = ServerPluginId(c.Target, p.Id);
+                if (!taken.Add(id))
+                {
+                    problems.Add($"{c.Target}: {p.Id} wasn't loaded: another plugin already has its address.");
+                    continue;   // never in place of one that's there: it would take that one's address and permissions
+                }
+                found.Add(p with { Id = id, Title = $"{p.Title} ({c.Target})" });
+            }
         }
     }
+
+    /// <summary>
+    /// A server's plugin's id here: "s-" and 48 hex digits of a hash of the server and its full id there. A plugin
+    /// here is named by its folder, at most 40 characters (see PluginCatalog), so a server's plugin can never take a
+    /// local one's id, address or permissions, and two servers' (or two long ids) can't meet by chance.
+    /// </summary>
+    internal static string ServerPluginId(string server, string pluginId) =>
+        "s-" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(server.ToLowerInvariant() + "\n" + pluginId)))[..48].ToLowerInvariant();
 
     private ServerSession? FindServerSession(string server, string? remoteId) =>
         remoteId == null ? null : serverSessions.Values.FirstOrDefault(x => x.Info.RemoteId == remoteId && string.Equals(x.Info.Server, server, StringComparison.OrdinalIgnoreCase));

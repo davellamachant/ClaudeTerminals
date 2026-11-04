@@ -17,8 +17,11 @@ public class SessionControlTests
 
         public IReadOnlyList<ControlSession> Sessions() => [.. List];
 
-        public Task<string> StartAsync(string parent, string name, string directory, string prompt)
+        public readonly List<string?> Within = [];
+
+        public Task<string> StartAsync(string parent, string name, string directory, string prompt, string? within)
         {
+            Within.Add(within);
             var p = List.First(s => s.Id == parent);
             var id = "c" + (List.Count + 1);
             List.Add(new ControlSession(id, name, directory, p.Project, parent, true, true));
@@ -117,6 +120,26 @@ public class SessionControlTests
         await Assert.ThrowsAsync<ControlException>(() => control.StartAsync("a", "Helper", "go", @"..\elsewhere", null));
         var (_, wt) = await control.StartAsync("a", "Helper", "go", null, "feature/x");
         Assert.Equal(@"D:\repo-feature-x", wt);
+    }
+
+    [Fact]
+    public async Task Another_computers_sessions_dont_make_a_folder_here_allowed()
+    {
+        // A server session in the same project says it's in a folder that exists here too: that says nothing about here.
+        host.List.Add(new ControlSession("r", "On a server", @"C:\private\other", "p1", null, true, true, "dev@box"));
+        policy.Set(ControlAbility.Spawn, "a", RelayDecision.Allow);
+        await Assert.ThrowsAsync<ControlException>(() => control.StartAsync("a", "Helper", "go", @"C:\private\other", null));
+        await Assert.ThrowsAsync<ControlException>(() => control.StartAsync("a", "Helper", "go", @"C:\private\other\x", null));
+    }
+
+    [Fact]
+    public async Task The_folder_its_allowed_is_passed_on_to_be_checked_where_it_starts()
+    {
+        policy.Set(ControlAbility.Spawn, "a", RelayDecision.Allow);
+        await control.StartAsync("a", "Helper", "go", "web", null);   // inside its own
+        await control.StartAsync("a", "Helper", "go", @"D:\repo-other\docs", null);   // inside a project session's
+        await control.StartAsync("a", "Helper", "go", null, "feature/y");   // a worktree it made: nothing to check
+        Assert.Equal([@"D:\repo", @"D:\repo-other", null], host.Within);
     }
 
     // A folder inside its own or a project session's: given in full (either slash), or from its own folder.

@@ -56,17 +56,17 @@ internal static partial class ServerUpdate
             chmod 755 "$d"; chmod 644 "$d/$file"
             if [ "$(id -u)" = 0 ]; then $inst "$d/$file"
             elif sudo -n true 2>/dev/null; then sudo -n $inst "$d/$file"
-            else echo "NEEDS_PASSWORD $url $inst"; exit {{NeedsPassword}}; fi
+            else echo "NEEDS_PASSWORD $url $sha $inst"; exit {{NeedsPassword}}; fi
             """;
         var (code, output) = await Ssh.RunScriptAsync(target, script, TimeSpan.FromMinutes(10));
         if (code == 0) return $"LlamaTree {version} is installed on {target}.";
         var last = output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).LastOrDefault() ?? "";
         if (code == NeedsPassword && last.StartsWith("NEEDS_PASSWORD ", StringComparison.Ordinal))
         {
-            var parts = last.Split(' ', 3);
+            var parts = last.Split(' ', 4);   // NEEDS_PASSWORD, the address, its SHA-256, the install command
             var file = parts[1].EndsWith(".deb", StringComparison.Ordinal) ? "llamatree.deb" : "llamatree.rpm";
             throw new InvalidOperationException($"sudo on {target} needs a password, which LlamaTree can't type. Run this there:\n" +
-                $"curl -fsSL -o {file} {parts[1]} && sudo {parts[2]} ./{file}");
+                $"curl -fsSL -o {file} {parts[1]} && echo '{parts[2]}  {file}' | sha256sum -c && sudo {parts[3]} ./{file}");
         }
         throw new InvalidOperationException($"LlamaTree couldn't be updated on {target}:\n{(output.Length > 0 ? output : $"ssh ended with {code}.")}");
     }
