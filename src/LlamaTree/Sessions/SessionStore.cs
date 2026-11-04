@@ -29,6 +29,8 @@ internal sealed class SessionInfo
     public string? Server { get; set; }
     /// <summary>The session's id on <see cref="Server"/>.</summary>
     public string? RemoteId { get; set; }
+    /// <summary>The session whose agent started this one (start_session), which may drive it; null for one you made.</summary>
+    public string? StartedBy { get; set; }
 }
 
 internal sealed partial class ProjectInfo
