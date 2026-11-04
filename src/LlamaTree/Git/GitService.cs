@@ -481,7 +481,7 @@ internal static class GitService
             var name = f[0][(remote ? "refs/remotes/" : "refs/heads/").Length..];
             int Count(string word) => f[2].Split(", ").FirstOrDefault(p => p.StartsWith(word + " ")) is { } p && int.TryParse(p[(word.Length + 1)..], out var n) ? n : 0;
             list.Add(new BranchInfo(name, remote, f[1].Length > 0 ? f[1] : null, Count("ahead"), Count("behind"), f[2] == "gone",
-                f[3].Length > 0 ? f[3].Replace('/', '\\') : null));
+                f[3].Length > 0 ? (OperatingSystem.IsWindows() ? f[3].Replace('/', '\\') : f[3]) : null));
         }
         return list;
     }

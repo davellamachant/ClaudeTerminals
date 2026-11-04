@@ -10,7 +10,7 @@ public sealed class SessionHostLinkTests
     /// <summary>Two channels joined by an anonymous pipe pair, each side's writes the other's reads.</summary>
     private static (LinkChannel A, LinkChannel B) Pair()
     {
-        var name = "llamatree-test-" + Guid.NewGuid().ToString("N");
+        var name = "lt-" + Guid.NewGuid().ToString("N")[..12];   // short: macOS caps a socket path at 104 characters, and its temp folder is long
         var server = new NamedPipeServerStream(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
         var client = new NamedPipeClientStream(".", name, PipeDirection.InOut, PipeOptions.Asynchronous);
         var waiting = server.WaitForConnectionAsync();
