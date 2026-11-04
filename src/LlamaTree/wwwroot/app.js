@@ -207,14 +207,15 @@ host.addEventListener('message', (e) => {
       m.ok ? p.resolve(m.result) : p.reject(new Error(m.error));
       break;
     }
-    case 'sessions': state.agents = m.agents || state.agents; syncSessions(m.sessions, m.projects || []); break;
+    case 'sessions': state.agents = m.agents || state.agents; setServers(m.servers); syncSessions(m.sessions, m.projects || []); break;
+    case 'servers': setServers(m.servers); break;
     case 'output': onOutput(m.id, m.data); break;
     case 'replay': onReplay(m.id, m.data); break;
     case 'closeRequested': onCloseRequested(); break;
     case 'host.failed': onHostFailed(m); break;
     case 'host.reconnecting': onReconnecting(m); break;
     case 'machine': onMachine(m); break;
-    case 'files.browse': browseServerFolder(m.path, m.select); break;
+    case 'files.browse': browseServerFolder(m.path, m.select, m.server); break;
     case 'exited': onExited(m.id, m.code); break;
     case 'git.status': onGitStatus(m); break;
     case 'panels': onPanels(m); break;
@@ -913,7 +914,7 @@ function syncSessions(list, projects) {
       s = createSession(info);
       state.byId.set(s.id, s);
     } else {
-      Object.assign(s, { name: info.name, directory: info.directory, command: info.command, conversation: info.conversation });
+      Object.assign(s, { name: info.name, directory: info.directory, command: info.command, conversation: info.conversation, server: info.server ?? null });
     }
     s.project = info.project || null;
     // Running already: it ran on in the session host while no window was open (its output follows as a replay).
@@ -1323,6 +1324,7 @@ function renderTileHeader(s) {
   fill(s.header,
     h('span', { class: 'dot ' + statusClass(s), title: statusText(s) }),
     h('span', { class: 'tile-name', title: conversationLine(s) }, s.name),
+    serverTag(s),
     projectTag(s),
     relayTileMark(s),
     h('span', { class: 'tile-title', title: s.title }, s.title),
@@ -1333,13 +1335,15 @@ function renderTileHeader(s) {
     h('button', { class: 'icon-btn', title: 'Session options', onclick: (e) => { const r = e.currentTarget.getBoundingClientRect(); sessionMenu(s, r.left, r.bottom + 2); } }, iconEl('more')),
     expanded && h('button', { class: 'icon-btn', title: 'Back to all sessions (Shift+Esc)', onclick: collapse }, iconEl('collapse')),
   );
-  s.exitedBadge.hidden = s.running || !(s.started || s.startsOnOpen);
-  s.exitedBadge.textContent = s.startsOnOpen ? 'Starts when you open it' : s.exitCode === null ? 'Not running' : `Exited (${s.exitCode})`;
+  const away = serverDown(s);   // a session on a server that can't be reached: why, rather than whether it runs
+  s.exitedBadge.hidden = !away && (s.running || !(s.started || s.startsOnOpen));
+  s.exitedBadge.textContent = away ? serverStateText(serverOf(s))
+    : s.startsOnOpen ? 'Starts when you open it' : s.exitCode === null ? 'Not running' : `Exited (${s.exitCode})`;
   renderTileState(s);
 }
 
 function sessionTabTitle(s) {
-  return [s.directory, statusText(s), conversationLine(s), 'Click again to go back to all sessions · middle-click to close'].filter(Boolean).join('\n');
+  return [s.directory, s.server && serverTitle(serverOf(s)), statusText(s), conversationLine(s), 'Click again to go back to all sessions · middle-click to close'].filter(Boolean).join('\n');
 }
 
 /**
@@ -1392,7 +1396,7 @@ function renderSessionTabs() {
     onauxclick: (e) => { if (e.button === 1) confirmRemove(s); },
     oncontextmenu: (e) => { e.preventDefault(); sessionMenu(s, e.clientX, e.clientY, 'sessionTab'); },
   }, h('button', { class: 'tab-label' },
-    statusDot(s), h('span', { class: 'tab-name' }, s.name), i < 9 ? h('span', { class: 'key' }, `Ctrl+${i + 1}`) : null),
+    statusDot(s), h('span', { class: 'tab-name' }, s.name), s.server && h('span', { class: 'tab-server' + (serverDown(s) ? ' down' : ''), title: serverTitle(serverOf(s)) }, iconEl('link')), i < 9 ? h('span', { class: 'key' }, `Ctrl+${i + 1}`) : null),
   // Closing a session tab removes the session, after the same confirmation as "Remove session…".
   h('button', { class: 'icon-btn small tab-close', title: 'Close session…', onclick: () => confirmRemove(s) }, iconEl('close'))));
   // A + at the end of each project's group (or of the row without projects): another session like one of that group's.
@@ -1645,7 +1649,9 @@ async function pasteClipboard(s) {
  */
 async function pasteClipboardFiles(s) {
   try {
-    const paths = await request('clipboard.files');
+    let paths = await request('clipboard.files');
+    // A session on a server gets copies there: their paths there are pasted.
+    if (paths?.length && s.server) paths = await request('files.upload', { id: s.id, paths });
     if (paths?.length) s.term.paste(paths.map((p) => (/\s/.test(p) ? `"${p}"` : p)).join(' '));
   } catch (err) {
     toast(err.message, true);
@@ -1731,7 +1737,11 @@ function menuKey(e) {
 
 /** from: 'session' (the tile's ⋯ button or header) or 'sessionTab' (the session tab), for plugins' items (see pluginMenuItems). */
 function sessionMenu(s, x, y, from = 'session') {
+  const c = serverOf(s);
   showMenu(x, y, [
+    c && c.state !== 'online' && { header: serverStateText(c) },
+    c && ['offline', 'elsewhere'].includes(c.state) && { label: `Reconnect to ${c.target}`, action: () => request('servers.reconnect', { server: c.target }).catch((e) => toast(e.message, true)) },
+    c && c.state !== 'online' && '-',
     state.expandedId === s.id ? { label: 'Back to all sessions', kbd: 'Shift+Esc', action: collapse } : { label: 'Expand', action: () => expand(s.id) },
     gitTabOn('changes') && { label: 'Show Git changes', action: () => showGit(s.id) },
     { label: 'Show conversation', action: () => openConversation(s) },
@@ -1743,7 +1753,7 @@ function sessionMenu(s, x, y, from = 'session') {
     { label: 'Move to project…', action: () => showEditDialog(s, 'project') },
     { label: s.running ? 'Restart session' : 'Start session', action: () => (s.running ? confirmRestart(s) : restartSession(s)) },
     s.running && { label: 'Stop session', action: () => confirmStop(s) },
-    { label: machine ? 'Browse the folder' : `Open folder in ${IS_MAC || IS_LINUX ? FILE_MANAGER : 'Explorer'}`, action: () => request('openFolder', { id: s.id }) },
+    { label: machine || s.server ? 'Browse the folder' : `Open folder in ${IS_MAC || IS_LINUX ? FILE_MANAGER : 'Explorer'}`, action: () => request('openFolder', { id: s.id }) },
     '-',
     { label: 'Move left', action: () => moveSession(s, -1) },
     { label: 'Move right', action: () => moveSession(s, 1) },
@@ -2011,7 +2021,7 @@ const leafName = (path) => (path || '').split(/[\\/]/).filter(Boolean).pop() || 
  * Searchable list of Claude Code's and Codex's saved conversations (optionally limited to one folder, or one agent's).
  * onPick(conv, confirm) fires on click; confirm is true for a double-click. Each conversation's agent is conv.agent.
  */
-function conversationPicker({ directory = null, agent = null, onPick }) {
+function conversationPicker({ directory = null, agent = null, server = null, onPick }) {
   const search = h('input', { placeholder: 'Search conversations by title, prompt or folder…', spellcheck: 'false' });
   const list = h('div', { class: 'conv-list' }, h('div', { class: 'conv-empty' }, 'Loading conversations…'));
   let all = [];
@@ -2045,7 +2055,7 @@ function conversationPicker({ directory = null, agent = null, onPick }) {
   };
 
   search.addEventListener('input', render);
-  request('conversations', { directory, agent })
+  request('conversations', { directory, agent, ...onServer(server) })
     .then((r) => { all = r || []; render(); })
     .catch((e) => list.replaceChildren(h('div', { class: 'conv-empty' }, e.message)));
   return h('div', { class: 'conv-picker' }, search, list);
@@ -2061,7 +2071,31 @@ function showAddDialog(mode = 'new', from = null) {
   // previous default rather than a choice, so it gives way to the new one.
   const remembered = store.get('lastCommand', null);
   const lastCommand = !remembered || remembered === 'claude --continue' ? DEFAULT_COMMAND : remembered;
-  const dir = h('input', { value: from?.directory ?? '', placeholder: machine || IS_LINUX ? '/home/you/my-repo' : IS_MAC ? '/Users/you/my-repo' : 'D:\\Source\\MyRepo', spellcheck: 'false' });
+  const dir = h('input', { value: from?.directory ?? '', spellcheck: 'false' });
+  // Which computer the session runs on: this one, or a server whose sessions show here too (LlamaTree installed there,
+  // reached with ssh as for a server's window). A window showing one server's sessions adds them there.
+  const NEW_SERVER = '*new';
+  const knownServers = [...new Set([...state.sessions.map((x) => x.server), ...servers.keys(), ...store.get('servers', [])].filter(Boolean))];
+  const computer = h('select', {},
+    h('option', { value: '' }, 'This computer'),
+    knownServers.map((t) => h('option', { value: t }, t)),
+    h('option', { value: NEW_SERVER }, 'A server…'));
+  computer.value = from?.server && knownServers.includes(from.server) ? from.server : '';
+  const newServer = h('input', { placeholder: 'user@server, or a Host from your SSH config', spellcheck: 'false', hidden: true });
+  const serverValue = () => (computer.value === NEW_SERVER ? newServer.value.trim() || null : computer.value || null);
+  const setPlaceholder = () => { dir.placeholder = machine || serverValue() || IS_LINUX ? '/home/you/my-repo' : IS_MAC ? '/Users/you/my-repo' : 'D:\\Source\\MyRepo'; };
+  setPlaceholder();
+  const computerChanged = () => {
+    newServer.hidden = computer.value !== NEW_SERVER;
+    if (!newServer.hidden && document.activeElement === computer) newServer.focus();
+    browserHost.hidden = true;
+    wtHost.hidden = true;
+    setPlaceholder();
+    if (mode === 'resume') setMode('resume');   // that computer's conversations
+    else loadWorktrees();
+  };
+  computer.addEventListener('change', computerChanged);
+  newServer.addEventListener('change', computerChanged);
   const name = h('input', { value: from?.name ?? '', placeholder: '(Session Name)', spellcheck: 'false' });
   const command = h('input', { value: lastCommand, spellcheck: 'false' });
   const wtHost = h('div', { class: 'field', hidden: true });
@@ -2077,7 +2111,7 @@ function showAddDialog(mode = 'new', from = null) {
     wtHost.hidden = true;
     if (!d || mode !== 'new') return;
     let worktrees;
-    try { worktrees = (await request('worktrees', { directory: d })) || []; } catch { worktrees = []; }
+    try { worktrees = (await request('worktrees', { directory: d, ...onServer(serverValue()) })) || []; } catch { worktrees = []; }
     if (dir.value.trim() !== d || mode !== 'new') return;   // a slow reply for a folder no longer in the dialog
     const norm = (p) => p.replace(/[\\/]+$/, '').toLowerCase();
     const existing = new Set(state.sessions.map((s) => norm(s.directory)));
@@ -2102,10 +2136,11 @@ function showAddDialog(mode = 'new', from = null) {
   const browse = h('button', {
     class: 'btn',
     onclick: async () => {
-      if (machine) {
+      if (machine || serverValue()) {
         browserHost.hidden = !browserHost.hidden;
         if (!browserHost.hidden) browserHost.replaceChildren(serverBrowser({
-          path: dir.value.trim() || lastDir,
+          server: serverValue(),
+          path: dir.value.trim() || (serverValue() ? '' : lastDir),
           onPick: (p) => { dir.value = p; browserHost.hidden = true; loadWorktrees(); dir.focus(); },
         }));
         return;
@@ -2132,10 +2167,13 @@ function showAddDialog(mode = 'new', from = null) {
     try {
       const projectId = await project.resolve();
       for (const item of list) item.project = projectId ?? '';
-      await request('addSessions', { sessions: list });
+      const server = serverValue();
+      if (computer.value === NEW_SERVER && !server) throw new Error('Enter the server as user@server, or a Host from your SSH config.');
+      await request('addSessions', { sessions: list, ...onServer(server) });
+      if (server) store.set('servers', [server, ...store.get('servers', []).filter((x) => x !== server)].slice(0, 8));
       // Make sure the new session is on screen even if its project was hidden.
       if (projectId && state.hiddenProjects.has(projectId)) toggleProject(projectId);
-      store.set('lastDir', d);
+      if (!server) store.set('lastDir', d);
       if (mode === 'new') store.set('lastCommand', cmd);
       closeModal();
       const added = state.sessions.find((x) => !before.has(x.id));
@@ -2161,6 +2199,7 @@ function showAddDialog(mode = 'new', from = null) {
       dir.value = '';
       name.value = '';
       pickerHost.replaceChildren(h('label', {}, 'Conversation (double-click to add)'), conversationPicker({
+        server: serverValue(),
         onPick: (c, confirm) => {
           picked = c;
           dir.value = c.cwd || '';
@@ -2214,6 +2253,7 @@ function showAddDialog(mode = 'new', from = null) {
 
   openModal('New session', [
     !firstPrompt && h('div', { class: 'seg' }, segNew, segResume),
+    !machine && field('Computer', h('div', { class: 'inline' }, computer, newServer), 'This computer, or a server: the session runs there, and shows here with the others.'),
     pickerHost,
     field('Folder (repository or worktree)', h('div', { class: 'inline' }, dir, browse)),
     browserHost,
@@ -2242,7 +2282,7 @@ function quickAddMenu(s, anchor) {
     { label: 'In the same folder', action: () => quickSession(s) },
     s.git?.isRepo && { label: 'In a new worktree…', action: () => showWorktreeDialog(s) },   // worktrees need a Git repository
     '-',
-    { label: 'A different folder…', action: () => showAddDialog('new', { directory: s.directory, project: s.project ?? null }) },
+    { label: 'A different folder…', action: () => showAddDialog('new', { directory: s.directory, project: s.project ?? null, server: s.server ?? null }) },
   ]);
 }
 
@@ -2263,7 +2303,7 @@ function freeName(base) {
 
 async function addAndOpen(item) {
   const before = new Set(state.sessions.map((x) => x.id));
-  await request('addSessions', { sessions: [item] });
+  await request('addSessions', { sessions: [item], ...onServer(item.server) });
   if (item.project && state.hiddenProjects.has(item.project)) toggleProject(item.project);
   const added = state.sessions.find((x) => !before.has(x.id));
   if (added) expand(added.id);
@@ -2271,7 +2311,7 @@ async function addAndOpen(item) {
 
 /** One click: another session in the same folder and project, with a conversation of its own. */
 function quickSession(s) {
-  addAndOpen({ directory: s.directory, name: freeName(s.name), command: ownOptionsOnly(s.command), project: s.project ?? '' })
+  addAndOpen({ directory: s.directory, name: freeName(s.name), command: ownOptionsOnly(s.command), project: s.project ?? '', server: s.server ?? undefined })
     .catch((e) => toast(e.message, true));
 }
 
@@ -2327,7 +2367,7 @@ function showWorktreeDialog(s, { startFrom = null } = {}) {
     }
     // The worktree exists now, so the dialog can't be retried: a failure from here on is reported on its own.
     try {
-      await addAndOpen({ directory: path, name: freeName(name.value.trim() || b), command: ownOptionsOnly(s.command), project: s.project ?? '' });
+      await addAndOpen({ directory: path, name: freeName(name.value.trim() || b), command: ownOptionsOnly(s.command), project: s.project ?? '', server: s.server ?? undefined });
     } catch (e) {
       toast(`The worktree was created in ${path}, but no session could be added there: ${e.message}`, true);
     }
@@ -2363,6 +2403,7 @@ function showResumeDialog(s) {
     conversationPicker({
       directory: s.directory,
       agent: agentOf(s.command)?.id ?? null,
+      server: s.server,
       onPick: (c, confirm) => { picked = c; resumeBtn.disabled = false; if (confirm) apply(c.sessionId); },
     }),
     h('div', { class: 'dim' }, `Close the conversation in any other terminal first, so two ${agentOf(s.command)?.name ?? 'agent'} processes don’t write to it at once.`),
@@ -3508,7 +3549,7 @@ function fileSection(s, kind, title, files) {
           : { label: 'Stage', action: () => gitOp(s, 'git.stage', folderFiles.map((f) => f.path)) },
         undoableInFolder.length && { label: 'Undo Changes…', danger: true, action: () => confirmUndo(s, kind, undoableInFolder, folder) },
         '-',
-        { label: machine ? 'Browse the folder' : `Open in ${FILE_MANAGER}`, action: () => request('git.openFolder', { id: s.id, path: folder }) },
+        { label: machine || s.server ? 'Browse the folder' : `Open in ${FILE_MANAGER}`, action: () => request('git.openFolder', { id: s.id, path: folder }) },
       ]);
     })];
 }
@@ -5053,8 +5094,8 @@ async function loadProjectView(force = false) {
   try {
     await Promise.all([
       ...[...firstIn].map(async ([root, s]) => {
-        try { projectView.repos.set(root, { ...await request('worktree.overview', { id: s.id }), error: null }); }
-        catch (e) { projectView.repos.set(root, { root: s.git.root, baseBranch: null, worktrees: [], error: e.message }); }
+        try { projectView.repos.set(root, { ...await request('worktree.overview', { id: s.id }), server: s.server ?? null, error: null }); }
+        catch (e) { projectView.repos.set(root, { root: s.git.root, server: s.server ?? null, baseBranch: null, worktrees: [], error: e.message }); }
       }),
       ...members.filter((s) => s.running).map((s) => loadConversation(s, false)),
       ...members.filter((s) => !s.running && !s.convInfo).map((s) => loadConversationInfo(s)),
@@ -5318,7 +5359,7 @@ function startSessionIn(row) {
   const members = projectMembers(tab.projectId);
   const like = members.find((s) => agentOf(s.command)) ?? members[0];
   const name = freeName(leafName(row.branch && !row.branch.startsWith('(') ? row.branch : row.path));
-  addAndOpen({ directory: row.path, name, command: like ? ownOptionsOnly(like.command) : 'claude', project: tab.projectId === UNKNOWN ? '' : tab.projectId })
+  addAndOpen({ directory: row.path, name, command: like ? ownOptionsOnly(like.command) : 'claude', project: tab.projectId === UNKNOWN ? '' : tab.projectId, server: row.repo?.server ?? undefined })
     .catch((e) => toast(e.message, true));
 }
 
@@ -5338,7 +5379,7 @@ function confirmRemoveWorktree(row) {
     remove.textContent = 'Removing…';
     try {
       for (const s of row.sessions) await request('removeSession', { id: s.id });
-      await request('worktree.remove', { root: repo.root, path: row.path });
+      await request('worktree.remove', { root: repo.root, path: row.path, ...onServer(repo.server) });
       closeModal();
       toast(`Removed the worktree at ${row.path}. The branch ${row.branch ?? ''} stays.`);
     } catch (e) {
@@ -5809,6 +5850,60 @@ async function onCloseRequested() {
  */
 let machine = null;
 
+/**
+ * Servers whose sessions show among this computer's (s.server is how each is reached: user@server, or a Host from the
+ * SSH config). This computer's LlamaTree keeps a connection to each (AppHost.Servers): target → { target, state:
+ * 'connecting' | 'online' | 'offline' | 'elsewhere', problem, machine, version }.
+ */
+const servers = new Map();
+
+function setServers(list) {
+  if (!list) return;
+  const before = JSON.stringify([...servers.values()]);
+  servers.clear();
+  for (const c of list) servers.set(c.target, c);
+  if (JSON.stringify([...servers.values()]) === before || !state.restored) return;
+  for (const s of state.sessions) if (s.server) renderTileHeader(s);
+  renderSessionTabs();
+}
+
+/** The connection to the session's server, or null for a session on this computer. */
+const serverOf = (s) => (s?.server ? servers.get(s.server) ?? { target: s.server, state: 'connecting' } : null);
+
+/** Whether the session is on a server that can't be reached now. */
+const serverDown = (s) => !!s?.server && serverOf(s).state !== 'online';
+
+/** For a request about a folder rather than a session: which server it's on ({} for this computer). */
+const onServer = (server) => (server ? { server } : {});
+
+function serverStateText(c) {
+  return {
+    online: `On ${c.target}`,
+    connecting: `Connecting to ${c.target}…`,
+    offline: `Can’t reach ${c.target}`,
+    elsewhere: `Showing in another window`,
+  }[c.state] ?? c.target;
+}
+
+function serverTitle(c) {
+  if (!c) return '';
+  if (c.state === 'online') return `Runs on ${c.machine || c.target}, reached over SSH as ${c.target}. It keeps running there when LlamaTree closes or the connection drops.`;
+  if (c.state === 'connecting') return `Connecting to ${c.target}…`;
+  if (c.state === 'elsewhere') return `${c.problem ?? ''}\nClick to show ${c.target}’s sessions here instead.`;
+  return `Can’t reach ${c.target}${c.problem ? ':\n' + c.problem : '.'}\nThe session keeps running there; LlamaTree keeps trying. Click to try now.`;
+}
+
+/** The server a session runs on, by its tile's name: click it to reconnect when the server can't be reached. */
+function serverTag(s) {
+  const c = serverOf(s);
+  if (!c) return null;
+  const down = c.state !== 'online';
+  return h('span', {
+    class: 'server-tag' + (down ? ' down' : ''), title: serverTitle(c),
+    onclick: down && c.state !== 'connecting' && ((e) => { e.stopPropagation(); request('servers.reconnect', { server: c.target }).catch((err) => toast(err.message, true)); }),
+  }, iconEl('link'), c.target);
+}
+
 function onMachine(m) {
   if (!m.remote) return;
   machine = m;
@@ -5861,7 +5956,7 @@ function connectToServerDialog() {
  * copy the server sends (fs.open). With onPick it chooses a folder: its button picks the folder selected, else the one
  * shown. `select` names an entry to select once the folder is shown. Returns the element.
  */
-function serverBrowser({ path = '', select = null, onPick = null } = {}) {
+function serverBrowser({ path = '', select = null, onPick = null, server = null } = {}) {
   let shown = null;   // the folder's listing (fs.list): { path, parent, home, separator, entries, more }
   let showHidden = store.get('browser.hidden', false);
   const where = h('input', { class: 'fb-path', spellcheck: 'false', title: 'A folder on the server: type a path and press Enter' });
@@ -5878,7 +5973,7 @@ function serverBrowser({ path = '', select = null, onPick = null } = {}) {
   };
   const go = async (p, sel = null) => {
     try {
-      shown = await request('fs.list', { path: p });
+      shown = await request('fs.list', { path: p, ...onServer(server) });
     } catch (err) {
       status.textContent = err.message;
       status.classList.add('form-error');
@@ -5892,7 +5987,7 @@ function serverBrowser({ path = '', select = null, onPick = null } = {}) {
   const open = (e) => {
     if (e.folder) { go(full(e.name)); return; }
     toast(`Opening ${e.name}…`);
-    request('fs.open', { path: full(e.name) }).catch((err) => toast(err.message, true));
+    request('fs.open', { path: full(e.name), ...onServer(server) }).catch((err) => toast(err.message, true));
   };
   const up = () => { if (shown?.parent) go(shown.parent, shown.path.replace(/[\\/]+$/, '').split(/[\\/]/).pop()); };
   const draw = (sel) => {
@@ -5949,9 +6044,10 @@ function sizeText(n) {
 }
 
 /** A server's folder, in a dialog of its own: what "open the folder" does for a window showing a server's sessions. */
-function browseServerFolder(path, select) {
-  const browser = serverBrowser({ path, select });
-  openModal(`Files on ${machine?.machine || machine?.remote || 'the server'}`, [browser], [
+function browseServerFolder(path, select, server = null) {
+  const browser = serverBrowser({ path, select, server });
+  const c = server && servers.get(server);
+  openModal(`Files on ${c ? c.machine || c.target : server || machine?.machine || machine?.remote || 'the server'}`, [browser], [
     h('button', { class: 'btn', onclick: () => navigator.clipboard.writeText(browser.querySelector('.fb-path').value) }, 'Copy path'),
     h('div', { class: 'spacer' }),
     h('button', { class: 'btn primary', onclick: closeModal }, 'Close'),

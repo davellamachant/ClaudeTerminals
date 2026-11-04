@@ -18,7 +18,7 @@ namespace LlamaTree;
 /// so sessions carry on while no window is open; the window that shows the page attaches to it (<see cref="IHostWindow"/>).
 /// Everything here runs on the host's app thread.
 /// </summary>
-internal sealed class AppHost
+internal sealed partial class AppHost
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -101,6 +101,11 @@ internal sealed class AppHost
         {
             // A session whose project no longer exists (e.g. projects.json was lost) just has no project.
             if (info.Project != null && !projects.Any(p => p.Id == info.Project)) info.Project = null;
+            if (info.Server != null)
+            {
+                AddServerSession(info);   // run by its server's LlamaTree (see AppHost.Servers)
+                continue;
+            }
             tidied |= TidyConversation(info);
             AddSessionRuntime(info);
         }
@@ -216,7 +221,7 @@ internal sealed class AppHost
     {
         // A session counts in a project only while that project exists (as the page shows it), for plugins' projects too.
         string? ProjectOf(TerminalSession s) => projects.Any(p => p.Id == s.Info.Project) ? s.Info.Project : null;
-        var list = order.Select(id => sessions[id]).Where(s => s.Agent != null).Select(s => new RelayPeer(
+        var list = order.Where(sessions.ContainsKey).Select(id => sessions[id]).Where(s => s.Agent != null).Select(s => new RelayPeer(
             s.Id, s.Info.Name.Length > 0 ? s.Info.Name : s.Id, ProjectOf(s), projects.FirstOrDefault(p => p.Id == s.Info.Project)?.Name,
             s.Agent?.Name, s.IsRunning)).ToList();
         // Plugins allowed to message sessions take part too, as "plugin:<id>" (see PluginGrants.RelayGate).
@@ -401,6 +406,7 @@ internal sealed class AppHost
         foreach (var s in sessions.Values) CatchUpConversation(s);   // so each reopens where it was
         foreach (var s in sessions.Values) s.Dispose();
         panelServer?.Dispose();
+        DisposeServers();
         relay.Flush();   // unread and waiting messages, for next time
     }
 
@@ -464,12 +470,12 @@ internal sealed class AppHost
         return s;
     }
 
-    private void SaveSessions() => SessionStore.Save(order.Select(id => sessions[id].Info));
+    private void SaveSessions() => SessionStore.Save(order.Select(id => sessions.TryGetValue(id, out var s) ? s.Info : serverSessions[id].Info));
 
     private object SessionList()
     {
         relay.SetPeers(RelayPeers());   // the list goes out whenever sessions or projects change
-        grants.Keep(sessions.Keys.ToHashSet(), projects.Select(p => p.Id).ToHashSet());
+        grants.Keep(order.ToHashSet(), projects.Select(p => p.Id).ToHashSet());
         return SessionListMessage();
     }
 
@@ -478,16 +484,18 @@ internal sealed class AppHost
         type = "sessions",
         agents = Agents.All.Select(a => a.Describe()),
         projects = projects.Select(p => new { id = p.Id, name = p.Name, color = p.Color }),
-        sessions = order.Select(id => sessions[id]).Select(s => new
+        sessions = order.Select(id => sessions.TryGetValue(id, out var s) ? (s.Info, s.IsRunning) : (serverSessions[id].Info, serverSessions[id].Running)).Select(x => new
         {
-            id = s.Id,
-            name = s.Info.Name,
-            directory = s.Info.Directory,
-            command = s.Info.Command,
-            project = s.Info.Project,
-            conversation = s.Info.Conversation,
-            running = s.IsRunning,
+            id = x.Info.Id,
+            name = x.Info.Name,
+            directory = x.Info.Directory,
+            command = x.Info.Command,
+            project = x.Info.Project,
+            conversation = x.Info.Conversation,
+            running = x.Item2,
+            server = x.Info.Server,
         }),
+        servers = ServersState(),
     };
 
     /// <summary>A project id from the page, or null for "no project" (empty or unknown ids included).</summary>
@@ -563,18 +571,20 @@ internal sealed class AppHost
 
     private async Task<object?> HandleAsync(string type, JsonElement msg)
     {
+        if (await TryForwardAsync(type, msg) is (true, var forwarded)) return forwarded;
         switch (type)
         {
             case "ready":
                 window.PostJson(AccentMessage());   // first: with Windows' app mode the page knows its theme before sessions start
                 Post(SessionList());
                 // Sessions that ran on while no window was open: what they showed, and a redraw at the page's size.
-                foreach (var s in order.Select(id => sessions[id]).Where(s => s.IsRunning))
+                foreach (var s in order.Where(sessions.ContainsKey).Select(id => sessions[id]).Where(s => s.IsRunning))
                 {
                     if (tails[s.Id].ToString() is { Length: > 0 } shown) Post(new { type = "replay", id = s.Id, data = shown });
                     repaint.Add(s.Id);
                 }
                 webReady = true;   // after the replay, so live output follows it
+                ServersPageReady();
                 Post(PanelsMessage());
                 if (newConversations.Count > 0)
                 {
@@ -894,7 +904,7 @@ internal sealed class AppHost
             }
             case "reorder":
             {
-                var ids = msg.GetProperty("ids").EnumerateArray().Select(x => x.GetString()!).Where(sessions.ContainsKey).ToList();
+                var ids = msg.GetProperty("ids").EnumerateArray().Select(x => x.GetString()!).Where(id => sessions.ContainsKey(id) || serverSessions.ContainsKey(id)).Distinct().ToList();
                 if (ids.Count == order.Count)
                 {
                     order.Clear();

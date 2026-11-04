@@ -32,6 +32,7 @@ internal sealed class SessionHost : IHostWindow
     private AppHost app = null!;
     private LinkChannel? window;
     private PluginAddressing plugins = PluginAddressing.VirtualHosts;
+    private bool pluginCopies;   // the window is sent copies of plugins' folders (see ServePlugin)
     private int? windowPid;
     private bool quitting;
     private bool everAttached;
@@ -159,6 +160,9 @@ internal sealed class SessionHost : IHostWindow
             // Null for a window on another computer (TryGetInt32 throws on anything but a number).
             windowPid = root.TryGetProperty("pid", out var pid) && pid.ValueKind == JsonValueKind.Number && pid.TryGetInt32(out var p) ? p : null;
             app.Remote = root.TryGetProperty("remote", out var r) && r.ValueKind == JsonValueKind.String ? r.GetString() : null;
+            // A window on another computer that serves plugins is sent their folders; one that doesn't (another
+            // computer's host, showing this one's sessions among its own) isn't.
+            pluginCopies = app.Remote != null && root.TryGetProperty("plugins", out var wants) && wants.ValueKind == JsonValueKind.Object;
             plugins = root.TryGetProperty("plugins", out var pl) && pl.ValueKind == JsonValueKind.Object &&
                       pl.TryGetProperty("origin", out var o) && o.ValueKind == JsonValueKind.String &&
                       pl.TryGetProperty("key", out var k) && k.ValueKind == JsonValueKind.String
@@ -167,7 +171,7 @@ internal sealed class SessionHost : IHostWindow
         }
         catch (JsonException)
         {
-            (windowPid, plugins, app.Remote) = (null, PluginAddressing.VirtualHosts, null);
+            (windowPid, plugins, app.Remote, pluginCopies) = (null, PluginAddressing.VirtualHosts, null, false);
         }
     }
 
@@ -269,7 +273,7 @@ internal sealed class SessionHost : IHostWindow
         if (window is not { } w) return;
         // A window on another computer can't read the plugin's folder: it's sent a copy first, which it serves. The
         // copy is all sent before anything else, so it's there before the page has heard of the plugin.
-        if (app.Remote != null) SendPluginFiles(w, plugin);
+        if (pluginCopies) SendPluginFiles(w, plugin);
         w.Send(LinkKind.Window, JsonSerializer.Serialize(new { op = "serve", id = plugin.Id, folder = plugin.Folder }));
     }
 

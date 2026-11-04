@@ -21,6 +21,14 @@ internal sealed class SessionInfo
     /// folder above several repositories). Null for the default: the folder's repository, or the first one inside it.
     /// </summary>
     public string? GitRepo { get; set; }
+    /// <summary>
+    /// For a session that runs on a server: how it's reached (user@server, or a Host from the SSH config). Null for one
+    /// on this computer. A server's session is run by that server's LlamaTree; this one keeps where it goes among the
+    /// others, its project, and what it was last seen as (shown while the server can't be reached).
+    /// </summary>
+    public string? Server { get; set; }
+    /// <summary>The session's id on <see cref="Server"/>.</summary>
+    public string? RemoteId { get; set; }
 }
 
 internal sealed partial class ProjectInfo

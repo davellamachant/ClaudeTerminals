@@ -491,6 +491,13 @@ body.no-anim .tile, body.no-anim .surface { transition: none !important; }
 }
 .tile.expanded .tile-header { cursor: default; }
 .tile-name { font-weight: 600; white-space: nowrap; }
+/* A session on a server: which one (see serverTag). Dimmed and struck through while it can't be reached. */
+.server-tag { display: inline-flex; align-items: center; gap: 3px; padding: 0 6px; height: 18px; border-radius: 9px; font-size: 11px; white-space: nowrap; color: var(--text-dim); background: var(--chrome-3); border: 1px solid var(--border); }
+.server-tag svg.ic { width: 11px; height: 11px; flex: none; }
+.server-tag.down { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 50%, transparent); cursor: pointer; }
+.tab-server { display: inline-flex; color: var(--text-faint); }
+.tab-server svg.ic { width: 11px; height: 11px; }
+.tab-server.down { color: var(--danger); }
 .tile-title { color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
 .chip {
   display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 7px; border-radius: 10px;
