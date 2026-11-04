@@ -28,6 +28,9 @@ internal interface IControlHost
 
     void Stop(string id);
 
+    /// <summary>Stops the session if it's running, and removes it from LlamaTree (its conversation is kept, as when you remove one).</summary>
+    void Remove(string id);
+
     SessionReport? Report(string id);
 }
 
@@ -439,6 +442,24 @@ internal sealed class SessionControl
         if (!child.Running) throw new ControlException($"\"{child.Name}\" isn't running.");
         host.Stop(child.Id);
         AddLog(from, child.Id, "stop", "", true);
+    }
+
+    /// <summary>
+    /// Closes a session <paramref name="from"/> started, its work done: stopped if it's running, and removed from LlamaTree.
+    /// Its conversation is kept (it can be resumed), and a worktree made for it stays: deleting one is the person's call.
+    /// </summary>
+    public void Close(string from, string target)
+    {
+        var child = Child(from, target);
+        var me = Me(from);
+        if (policy.Decide(ControlAbility.Close, me.Id, me.Project).Decision == RelayDecision.Deny)
+        {
+            AddLog(from, child.Id, "close", "not allowed", false);
+            throw new ControlException($"This session isn't allowed to close the sessions it started; stop_session ends \"{child.Name}\", and the person removes it. They can change that in LlamaTree's Permissions.");
+        }
+        host.Remove(child.Id);
+        Forget(child.Id);
+        AddLog(from, child.Id, "close", child.Name, true);
     }
 
     // ---------------------------------------------------------------- helpers

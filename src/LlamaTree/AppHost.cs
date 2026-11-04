@@ -372,6 +372,23 @@ internal sealed partial class AppHost
             app.RunningChanged?.Invoke();
         });
 
+        public void Remove(string id) => OnUi(() =>
+        {
+            if (app.sessions.GetValueOrDefault(id) is { } s)
+            {
+                app.RemoveSession(s);
+                return;
+            }
+            if (app.serverSessions.GetValueOrDefault(id) is not { } x) return;
+            // Removed on its server too, as when you close it (one that can't be reached keeps it, and shows it again).
+            if (app.servers.GetValueOrDefault(x.Info.Server!) is { IsOnline: true } c)
+                _ = c.RequestAsync(new { type = "removeSession", id = x.Info.RemoteId }).ContinueWith(_ => { }, TaskScheduler.Default);
+            app.ForgetServerSession(x);
+            app.ForgetPanels(id);
+            app.SaveSessions();
+            app.Post(app.SessionList());
+        });
+
         public SessionReport? Report(string id)
         {
             // A session on a server: its conversation is there (what it shows comes through its terminal and status).
@@ -654,6 +671,21 @@ internal sealed partial class AppHost
         order.Add(info.Id);
         _ = s.InitGitAsync();
         return s;
+    }
+
+    /// <summary>Removes a session here: its process ends, its panels go with it (its conversation stays, to resume).</summary>
+    private void RemoveSession(TerminalSession s)
+    {
+        CatchUpConversation(s);
+        s.Dispose();
+        sessions.Remove(s.Id);
+        order.Remove(s.Id);
+        tails.Remove(s.Id);
+        repaint.Remove(s.Id);
+        RunningChanged?.Invoke();
+        SaveSessions();
+        ForgetPanels(s.Id);
+        Post(SessionList());
     }
 
     private void SaveSessions() => SessionStore.Save(order.Select(id => sessions.TryGetValue(id, out var s) ? s.Info : serverSessions[id].Info));
@@ -966,19 +998,8 @@ internal sealed partial class AppHost
                 return null;
             }
             case "removeSession":
-            {
-                var s = Get(msg);
-                s.Dispose();
-                sessions.Remove(s.Id);
-                order.Remove(s.Id);
-                tails.Remove(s.Id);
-                repaint.Remove(s.Id);
-                RunningChanged?.Invoke();
-                SaveSessions();
-                ForgetPanels(s.Id);   // its panels go with it
-                Post(SessionList());
+                RemoveSession(Get(msg));
                 return null;
-            }
             case "panels.scope":
                 panelStore.SetScope(Str(msg, "owner"), Str(msg, "id"), Str(msg, "scope"));
                 return null;
@@ -1042,6 +1063,7 @@ internal sealed partial class AppHost
                 {
                     "spawn" => ControlAbility.Spawn,
                     "answer" => ControlAbility.Answer,
+                    "close" => ControlAbility.Close,
                     var a => throw new ArgumentException($"There's no ability \"{a}\"."),
                 }, Str(msg, "scope"), ParseDecision(Str(msg, "decision")));
                 return null;

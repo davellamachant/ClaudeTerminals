@@ -170,7 +170,7 @@ internal sealed class PanelMcp(PanelStore store, Relay.RelayHub? relay = null, R
             {
                 var (id, dir) = await c.StartAsync(session, Arg("name") ?? "", Arg("prompt") ?? "", Arg("directory"), Arg("branch"), cancel);
                 return $"Started session \"{Arg("name")?.Trim()}\" (id {id}) in {dir}, on its first prompt. " +
-                       "Call wait_for_session to wait for it to finish, then get_session or send_prompt; stop_session when its work is done.";
+                       "Call wait_for_session to wait for it to finish, then get_session or send_prompt; stop_session when its work is done, or close_session to remove it once you have what you need.";
             }
             case "send_prompt":
                 c.Prompt(session, Target(), Arg("prompt") ?? "");
@@ -194,7 +194,10 @@ internal sealed class PanelMcp(PanelStore store, Relay.RelayHub? relay = null, R
                 return "Pressed Esc: it has stopped what it was doing and waits for a prompt.";
             case "stop_session":
                 c.Stop(session, Target());
-                return "Stopped. The session stays in LlamaTree, stopped, for the person to look at or remove.";
+                return "Stopped. The session stays in LlamaTree, stopped, for the person to look at or remove; close_session removes it.";
+            case "close_session":
+                c.Close(session, Target());
+                return "Closed: the session is stopped and gone from LlamaTree. Its conversation is kept, and a worktree made for it is left for the person.";
             default:
                 return null;
         }
@@ -205,7 +208,7 @@ internal sealed class PanelMcp(PanelStore store, Relay.RelayHub? relay = null, R
     {
         var mine = control!.Children(session);
         if (mine.Count == 0) return "";
-        return "\n\nSessions this one started (drive them with send_prompt, get_session, wait_for_session, answer_prompt, interrupt_session, stop_session):\n" +
+        return "\n\nSessions this one started (drive them with send_prompt, get_session, wait_for_session, answer_prompt, interrupt_session, stop_session, close_session):\n" +
             string.Join('\n', mine.Select(m => $"- \"{m.Session.Name}\" (id {m.Session.Id}, in {m.Session.Directory}): " + m.Status switch
             {
                 Relay.SessionControl.Working => "working",
@@ -483,7 +486,7 @@ internal sealed class PanelMcp(PanelStore store, Relay.RelayHub? relay = null, R
     private const string ControlToolsJson = """
           {
             "name": "start_session",
-            "description": "Starts a new session in LlamaTree: another agent like this one (same agent and options), working on its own, which this session can then drive with send_prompt, get_session, wait_for_session, answer_prompt, interrupt_session and stop_session. Use it to hand off a separate piece of work to run in parallel. The person may be asked first (the call then waits up to 110 seconds for their answer). Limits: 5 running sessions started by one session, 10 in all.",
+            "description": "Starts a new session in LlamaTree: another agent like this one (same agent and options), working on its own, which this session can then drive with send_prompt, get_session, wait_for_session, answer_prompt, interrupt_session, stop_session and close_session. Use it to hand off a separate piece of work to run in parallel. The person may be asked first (the call then waits up to 110 seconds for their answer). Limits: 5 running sessions started by one session, 10 in all.",
             "inputSchema": {
               "type": "object",
               "properties": {
@@ -544,6 +547,11 @@ internal sealed class PanelMcp(PanelStore store, Relay.RelayHub? relay = null, R
           {
             "name": "stop_session",
             "description": "Ends the agent of a session this session started, when its work is done. The session stays in LlamaTree for the person to look at; its conversation is kept.",
+            "inputSchema": { "type": "object", "properties": { "session": { "type": "string", "description": "Its name or id." } }, "required": ["session"] }
+          },
+          {
+            "name": "close_session",
+            "description": "Closes a session this session started, once its work is done and you have what you need from it: stops it if it's running and removes it from LlamaTree, so finished helpers don't pile up. Its conversation is kept (the person can resume it), and a worktree made for it is left in place. Prefer stop_session when the person may want to look at what it did.",
             "inputSchema": { "type": "object", "properties": { "session": { "type": "string", "description": "Its name or id." } }, "required": ["session"] }
           }
         """;

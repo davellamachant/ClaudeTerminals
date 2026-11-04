@@ -29,6 +29,7 @@ public class SessionControlTests
         public void TypePrompt(string id, string text) => Typed.Add((id, text));
         public void SendKeys(string id, string keys) => Keys.Add((id, keys));
         public void Stop(string id) => Stopped.Add(id);
+        public void Remove(string id) => List.RemoveAll(s => s.Id == id);
         public SessionReport? Report(string id) => new("do it", "done it", Pending);
     }
 
@@ -142,6 +143,29 @@ public class SessionControlTests
         policy.Set(ControlAbility.Spawn, "s", RelayDecision.Allow);
         if (expected == null) await Assert.ThrowsAsync<ControlException>(() => control.StartAsync("s", "Helper", "go", given, null));
         else Assert.Equal(expected, (await control.StartAsync("s", "Helper", "go", given, null)).Directory);
+    }
+
+    [Fact]
+    public async Task A_session_closes_the_sessions_it_started_unless_told_not_to()
+    {
+        policy.Set(ControlAbility.Spawn, "a", RelayDecision.Allow);
+        var child = (await control.StartAsync("a", "Helper", "go", null, null)).Id;
+        var other = (await control.StartAsync("a", "Second", "go", null, null)).Id;
+
+        // Not one it didn't start, and not when its rule says no.
+        Assert.Throws<ControlException>(() => control.Close("b", child));
+        policy.Set(ControlAbility.Close, "a", RelayDecision.Deny);
+        Assert.Throws<ControlException>(() => control.Close("a", "Helper"));
+        Assert.Contains(host.List, s => s.Id == child);
+
+        // With no rule it may: by name or id, and then it's gone (closing it again finds nothing).
+        policy.Set(ControlAbility.Close, "a", RelayDecision.Ask);
+        control.Close("a", "Helper");
+        control.Close("a", other);
+        Assert.DoesNotContain(host.List, s => s.Id == child || s.Id == other);
+        Assert.Throws<ControlException>(() => control.Close("a", "Helper"));
+        Assert.Contains(control.Log(), e => e.Action == "close" && e.Target == child && e.Ok);
+        Assert.Contains(control.Log(), e => e.Action == "close" && !e.Ok);
     }
 
     [Fact]

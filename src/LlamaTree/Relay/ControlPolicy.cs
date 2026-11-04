@@ -12,6 +12,9 @@ internal enum ControlAbility
 
     /// <summary>Answer the permission prompts of the sessions it started. With no rule, it may.</summary>
     Answer,
+
+    /// <summary>Close (remove from LlamaTree) the sessions it started, once their work is done. With no rule, it may.</summary>
+    Close,
 }
 
 /// <summary>

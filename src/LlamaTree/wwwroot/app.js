@@ -7733,6 +7733,7 @@ function permsControl(s) {
   return [
     row('spawn', 'Start sessions', s.startedBy ? 'It was started by another session, so it goes only by this rule: with none, you’re asked.' : 'With no rule, you’re asked each time.'),
     row('answer', 'Answer its sessions’ permission prompts', 'Approve or decline what the sessions it started ask to do. With no rule, it may.'),
+    row('close', 'Close its sessions', 'Remove the sessions it started once their work is done (their conversations are kept, and a worktree made for one stays). With no rule, it may.'),
     children.length > 0 && h('div', { class: 'perms-row dim' }, `It started: ${children.map((c) => c.name).join(', ')}`),
   ];
 }
@@ -7747,9 +7748,11 @@ function permsControlGlobal() {
     h('header', {}, h('b', {}, 'Agents starting sessions'), h('span', { class: 'dim' }, 'An agent can start sessions of its own and drive them. Its own rule (on its card) comes first, then its project’s, then these.')),
     row('spawn', '*', 'All sessions: starting sessions', 'ask'),
     row('answer', '*', 'All sessions: answering their sessions’ permission prompts', 'allow'),
+    row('close', '*', 'All sessions: closing the sessions they started', 'allow'),
     ...state.projects.flatMap((p) => [
       row('spawn', 'project:' + p.id, `${p.name}: starting sessions`, controlRule('spawn', '*') === 'ask' ? 'ask' : controlRule('spawn', '*')),
       row('answer', 'project:' + p.id, `${p.name}: answering their sessions’ prompts`, controlRule('answer', '*') === 'ask' ? 'allow' : controlRule('answer', '*')),
+      row('close', 'project:' + p.id, `${p.name}: closing the sessions they started`, controlRule('close', '*') === 'ask' ? 'allow' : controlRule('close', '*')),
     ]));
 }
 
