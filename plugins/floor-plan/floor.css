@@ -1,0 +1,152 @@
+/* The Floor plan plugin: the repository as a city. Its colours follow Claude Terminals' theme: the app sends its own colours
+   and font with the theme message (see dress in floor.js); these dark and light sets stand in until it does. */
+:root {
+  --bg: #1e1e1e; --chrome: #181818; --panel: #252526; --border: #3e3e42; --border-soft: #333337; --hover: #37373d;
+  --text: #e0e0e0; --text-dim: #9d9d9d; --text-faint: #6f6f6f; --card-bg: #2b2b2e; --card-border: #45454a;
+  --focus: #3794ff; --attention: #f0a030; --ok: #4ec9b0; --working: #3794ff; --accent: #7160e8; --line: #8b7ff0;
+  --read: #3794ff; --edit: #f0a030;
+  --s1: #3987e5; --s2: #199e70; --s3: #9085e9; --s4: #d55181; --s5: #d95926; --s6: #c98500; --s7: #e66767; --s8: #008300;
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  --bg: #ffffff; --chrome: #e6e6e6; --panel: #f7f7f7; --border: #c4c4c8; --border-soft: #d8d8dc; --hover: #d6d6db;
+  --text: #1e1e1e; --text-dim: #5c5c5c; --text-faint: #858585; --card-bg: #ffffff; --card-border: #cfcfd4;
+  --focus: #0066bf; --attention: #c27500; --ok: #12805c; --working: #0066bf; --accent: #6a5ae0; --line: #5b4bd6;
+  --read: #0066bf; --edit: #c27500;
+  --s1: #2a78d6; --s2: #1baf7a; --s3: #6250d6; --s4: #e87ba4; --s5: #eb6834; --s6: #eda100; --s7: #e34948; --s8: #008300;
+  color-scheme: light;
+}
+/* The city's materials, mixed from the theme: glass from the panel colour tinted by the accent, edges from the accent. */
+:root {
+  --glass: color-mix(in srgb, var(--panel) 93%, var(--line)); --glass-top: color-mix(in srgb, var(--panel) 84%, var(--line));
+  --glass-side: color-mix(in srgb, var(--panel) 72%, black); --edge: color-mix(in srgb, var(--line) 55%, var(--border));
+  --street: color-mix(in srgb, var(--line) 14%, transparent); --warn-bg: color-mix(in srgb, var(--attention) 14%, var(--panel)); --warn-border: color-mix(in srgb, var(--attention) 40%, var(--panel));
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+.hint { color: var(--text-faint); margin-top: 8px; font-size: 12px; }
+html, body { height: 100%; margin: 0; }
+body { display: flex; flex-direction: column; background: var(--bg); color: var(--text); font: 12px "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; overflow: hidden; }
+:root[data-glow] body { text-shadow: 0 0 6px color-mix(in srgb, var(--line) 30%, transparent); }   /* a theme with a glow (the app says) */
+:root[data-glow] :is(input, select, textarea, svg) { text-shadow: none; }
+button, select, input { font: inherit; color: inherit; }
+.btn { height: 26px; padding: 0 12px; border-radius: 4px; border: 1px solid var(--border); background: var(--panel); cursor: pointer; white-space: nowrap; }
+.btn:hover { background: var(--hover); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+select { height: 26px; border-radius: 4px; border: 1px solid var(--border); background: var(--panel); padding: 0 6px; max-width: 220px; }
+
+.bar { display: flex; align-items: center; gap: 10px; padding: 6px 14px; border-bottom: 1px solid var(--border-soft); background: var(--panel); flex: none; flex-wrap: wrap; }
+#live.on { color: var(--ok); }
+.summary { display: flex; gap: 14px; }
+.summary b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.summary span::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
+.summary .n::before { background: var(--attention); } .summary .d::before { background: var(--ok); } .summary .w::before { background: var(--working); }
+.legend { display: flex; gap: 12px; color: var(--text-faint); font-size: 11px; margin-left: auto; white-space: nowrap; }
+.legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; vertical-align: -1px; margin-right: 4px; }
+.legend .read { background: var(--read); } .legend .edit { background: var(--edit); } .legend .two { border: 1.5px solid var(--text); }
+
+main { flex: 1; min-height: 0; overflow: auto; padding: 10px 14px 20px; outline: none; display: flex; flex-direction: column; gap: 10px; }
+.message { color: var(--text-dim); padding: 30px 10px; text-align: center; font-size: 13px; }
+.message .btn { margin-top: 12px; }
+.attn:empty { display: none; }
+.attn { display: grid; gap: 8px; }
+.ask { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; background: var(--warn-bg); border: 1px solid var(--warn-border); border-radius: 8px; padding: 9px 12px; }
+.ask .fl-av { width: 32px; height: 32px; font-size: 13px; }
+.ask .who { font-size: 11px; color: var(--attention); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+.ask .q { font-size: 14px; margin-top: 2px; line-height: 1.35; }
+.main { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 12px; align-items: start; }
+@media (max-width: 760px) { .main { grid-template-columns: 1fr; } }
+
+/* ---- the city */
+.floor { position: relative; width: min(100%, calc((100vh - 170px) * 1000 / 600)); justify-self: center; aspect-ratio: 1000 / 600; background: var(--chrome); border: 1px solid var(--border-soft); border-radius: 8px; overflow: hidden; }
+.fl-stage { position: absolute; inset: 0; transform-origin: 0 0; transition: transform .55s cubic-bezier(.2, .7, .2, 1); }
+.fl-stage svg { display: block; width: 100%; height: 100%; }
+.fl-ground line { stroke: var(--street); stroke-width: 1; }
+.fl-bld { transition: opacity .3s; }
+.fl-bld.dim { opacity: .4; }
+.fl-bld .face { stroke: var(--edge); stroke-width: 1; transition: stroke .3s; cursor: pointer; }
+.fl-bld:hover .top { stroke: var(--text-dim); }
+.fl-bld .left { fill: var(--glass-side); } .fl-bld .right { fill: var(--glass); } .fl-bld .top { fill: var(--glass-top); }
+.fl-bld.active .top { stroke: var(--line); stroke-width: 1.4; }
+.fl-bld.hall .face { fill: color-mix(in srgb, var(--glass-side) 70%, transparent); stroke-dasharray: 3 3; }
+.fl-bld.hall .fl-cell { opacity: .75; filter: none; }   /* the plaza's paving glows less than a window */
+.fl-floor { fill: none; stroke: var(--edge); stroke-width: .6; opacity: .7; }   /* the slab between two floors */
+.fl-storey { fill: var(--text); font-weight: 600; letter-spacing: .04em; paint-order: stroke; stroke: var(--chrome); stroke-width: 2.5px; stroke-linejoin: round; }
+.fl-dark { fill: rgba(255, 255, 255, .06); }
+:root[data-theme="light"] .fl-dark { fill: rgba(0, 0, 0, .07); }
+.fl-cell { fill: var(--read); cursor: pointer; transition: fill .3s; filter: drop-shadow(0 0 3px var(--read)); }
+.fl-cell.edit { fill: var(--edit); filter: drop-shadow(0 0 3px var(--edit)); }
+.fl-cell.shared { stroke: var(--text); stroke-width: .8; }
+.fl-cell.dim { opacity: .25; filter: none; }
+.fl-name { fill: var(--text-dim); font-size: 9.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; pointer-events: none; paint-order: stroke; stroke: var(--chrome); stroke-width: 3px; stroke-linejoin: round; }
+.fl-n { fill: var(--text-faint); font: 8.5px "Cascadia Mono", Consolas, monospace; pointer-events: none; paint-order: stroke; stroke: var(--chrome); stroke-width: 3px; stroke-linejoin: round; }
+.fl-name.dim, .fl-n.dim { opacity: .3; }
+.fl-files { pointer-events: none; }
+.fl-lead { stroke: var(--text-faint); stroke-width: .5; }
+.fl-file { fill: var(--text); font-family: "Cascadia Mono", Consolas, monospace; paint-order: stroke; stroke: var(--chrome); stroke-width: 2.5px; stroke-linejoin: round; }
+.fl-file.edit { fill: var(--edit); } .fl-file.read { fill: var(--read); }
+.fl-trail { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 2 6; opacity: .55; }
+.fl-trail.busy { stroke-dasharray: 12 8; opacity: .85; animation: ride 1.2s linear infinite; }
+.fl-trail.off, .fl-trail.idle { opacity: .3; }
+.fl-trail.dim { opacity: .1; animation: none; }
+@keyframes ride { to { stroke-dashoffset: -40; } }
+.fl-person { cursor: pointer; transition: transform .5s cubic-bezier(.2, .7, .2, 1), opacity .3s; }
+.fl-person.dim, .fl-person.off { opacity: .35; }
+.fl-person .glow { opacity: .35; filter: blur(4px); }
+.fl-person .ring { fill: none; stroke: var(--attention); stroke-width: 2; opacity: 0; }
+.fl-person.needs .ring { opacity: 1; animation: pulse 1.6s ease-in-out infinite; }
+.fl-person.done .ring { opacity: 1; stroke: var(--ok); }
+.fl-person.busy .glow { animation: breathe 1.6s ease-in-out infinite; }
+.fl-person .ini { font-size: 9px; font-weight: 700; fill: #0a0a0f; pointer-events: none; }
+.fl-person .badge { fill: var(--attention); opacity: 0; } .fl-person .badge-t { font-size: 8px; font-weight: 700; fill: #0a0a0f; opacity: 0; pointer-events: none; }
+.fl-person.needs .badge, .fl-person.needs .badge-t, .fl-person.done .badge, .fl-person.done .badge-t { opacity: 1; }
+.fl-person.done .badge { fill: var(--ok); }
+.fl-person .bubble { font-size: 11px; font-weight: 600; fill: var(--text); paint-order: stroke; stroke: var(--chrome); stroke-width: 4px; stroke-linejoin: round; opacity: 0; transition: opacity .2s; pointer-events: none; }
+.fl-person.needs .bubble, .fl-person:hover .bubble, .fl-person.focus .bubble { opacity: 1; }
+.fl-person.needs .bubble { fill: var(--attention); }
+.unzoom { position: absolute; left: 8px; top: 8px; z-index: 3; }
+.fl-empty { fill: var(--text-faint); font-size: 14px; }
+.fl-av { position: relative; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-size: 11px; font-weight: 700; }
+@keyframes pulse { 0%, 100% { r: 10; opacity: 1; } 50% { r: 15; opacity: .4; } }
+@keyframes breathe { 0%, 100% { opacity: .35; } 50% { opacity: .7; } }
+
+.tip { position: fixed; z-index: 100; pointer-events: none; background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 6px; padding: 6px 9px; font-size: 12px; max-width: 320px; box-shadow: 0 4px 16px rgba(0, 0, 0, .35); }
+.tip .p { font: 11px "Cascadia Mono", Consolas, monospace; color: var(--text-dim); word-break: break-all; }
+.tip .w { color: var(--text-faint); margin-top: 2px; }
+
+.rail { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 8px 11px 9px; min-width: 0; cursor: pointer; transition: border-color .2s; }
+.card:hover { border-color: var(--text-faint); }
+.card.focus { border-color: var(--focus); }
+.card.off { opacity: .6; }
+.card:focus-visible { outline: 1px solid var(--focus); }
+.ch { display: flex; align-items: center; gap: 8px; }
+.ch .fl-av { width: 22px; height: 22px; font-size: 9.5px; border-width: 0; box-shadow: none; }
+.cname { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.chip { margin-left: auto; font-size: 11px; white-space: nowrap; color: var(--text-faint); }
+.chip.needs { color: var(--attention); font-weight: 600; } .chip.done { color: var(--ok); font-weight: 600; } .chip.busy { color: var(--working); }
+.now { margin-top: 5px; font-size: 13px; line-height: 1.35; overflow-wrap: anywhere; }
+.f { font-family: "Cascadia Mono", Consolas, monospace; font-size: 11.5px; }
+.ago { color: var(--text-faint); font-size: 11px; margin-top: 2px; }
+.turns { margin: 8px 0 0; padding: 8px 0 0; border-top: 1px solid var(--border-soft); display: flex; flex-direction: column; gap: 8px; }
+.turn { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 0 8px; }
+.turn time { font: 11px "Cascadia Mono", Consolas, monospace; color: var(--text-faint); padding-top: 2px; }
+.turn .you { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.turn .did { color: var(--text-dim); font-size: 11.5px; }
+.turn .out { font-size: 11.5px; margin-top: 1px; }
+.turn .out.needs { color: var(--attention); } .turn .out.done { color: var(--ok); }
+.shared { margin-top: 8px; font-size: 11.5px; color: var(--attention); }
+.card .go { margin-top: 8px; }
+
+.time { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px 6px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 6px 12px; align-items: center; }
+.lab { font: 11px "Cascadia Mono", Consolas, monospace; color: var(--text-faint); white-space: nowrap; }
+.lanes { position: relative; height: 30px; }
+.lanes canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.lanes input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.playhead { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--text); pointer-events: none; transform: translateX(-1px); }
+.days { grid-column: 2; display: flex; justify-content: space-between; color: var(--text-faint); font: 10.5px "Cascadia Mono", Consolas, monospace; }
+
+@media (prefers-reduced-motion: reduce) {
+  .fl-stage, .fl-person, .fl-cell, .fl-bld .face, .fl-person .bubble { transition: none; }
+  .fl-trail.busy, .fl-person.needs .ring, .fl-person.busy .glow { animation: none; }
+}

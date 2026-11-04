@@ -1,0 +1,10 @@
+{
+  "title": "Floor plan",
+  "description": "A project's sessions on a city of its code: each top-level folder a building with a floor per sub-folder, lit where files were read and edited, each session a beacon where it's working",
+  "version": "1.0.0",
+  "entry": "index.html",
+  "access": ["sessions"],
+  "menu": [
+    { "label": "Floor plan", "command": "show", "where": ["project", "session", "sessionTab"] }
+  ]
+}
