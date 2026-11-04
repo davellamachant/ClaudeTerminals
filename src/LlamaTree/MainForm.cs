@@ -168,6 +168,90 @@ internal sealed class MainForm : Form
     /// <summary>Your answers about plugins (see PluginGrants), kept in plugin-grants.json.</summary>
     private readonly PluginGrants grants = new(Path.Combine(SessionStore.AppDataFolder, "plugin-grants.json"));
 
+    /// <summary>Sessions starting and driving others (start_session and the rest); what each may do is kept in control.json.</summary>
+    private SessionControl? control;
+
+    private SessionControl Driving => control ??= new SessionControl(
+        new ControlPolicy(Path.Combine(SessionStore.AppDataFolder, "control.json")), new ControlHost(this), () => relay.Policy.Paused);
+
+    /// <summary>What may be done, what's being asked, and the log's version, as the page reads them.</summary>
+    private object ControlState() => new
+    {
+        rules = Driving.Policy.Rules().Select(r => new { ability = r.Ability.ToString().ToLowerInvariant(), scope = r.Scope, decision = r.Decision.ToString().ToLowerInvariant() }),
+        pending = Driving.Pending().Select(SpawnAsk),
+        logVersion = Driving.LogVersion,
+    };
+
+    private static object SpawnAsk(SpawnRequest r) => new { id = r.Id, from = r.From, name = r.Name, directory = r.Directory, branch = r.Branch, prompt = r.Prompt };
+
+    /// <summary>The app's sessions as <see cref="SessionControl"/> sees and changes them; it calls from the panel server's threads.</summary>
+    private sealed class ControlHost(MainForm form) : IControlHost
+    {
+        private T OnUi<T>(Func<T> f) => form.InvokeRequired ? (T)form.Invoke(f) : f();
+
+        private Task<T> OnUiAsync<T>(Func<Task<T>> f) => OnUi(f);
+
+        public IReadOnlyList<ControlSession> Sessions() => OnUi(() => form.order.Select(id => form.sessions[id]).Select(s => new ControlSession(
+            s.Id, s.Info.Name.Length > 0 ? s.Info.Name : s.Id, s.Info.Directory, s.Info.Project, s.Info.StartedBy, s.Agent != null, s.IsRunning)).ToList());
+
+        public Task<string> StartAsync(string parent, string name, string directory, string prompt) => OnUiAsync(() =>
+        {
+            var p = form.sessions.GetValueOrDefault(parent) ?? throw new ControlException("That session isn't in LlamaTree any more.");
+            if (!Directory.Exists(directory)) throw new ControlException($"{directory} doesn't exist.");
+            // The starter's own agent and options, never a command of the agent's choosing; a conversation of its own.
+            var command = TerminalSession.StripContinue(TerminalSession.TakeConversation(p.Info.Command).Command);
+            var info = new SessionInfo { Name = name, Directory = directory, Command = command, Project = p.Info.Project, StartedBy = parent };
+            if (TerminalSession.NeedsOwnConversation(info)) info.Conversation = Guid.NewGuid().ToString();
+            var added = form.AddSessionRuntime(info);
+            added.FirstPromptOnce = prompt;
+            form.SaveSessions();
+            form.Post(form.SessionList());
+            form.Post(new { type = "control.start", id = info.Id });   // the page starts it, at its tile's size
+            return Task.FromResult(info.Id);
+        });
+
+        public Task<string> AddWorktreeAsync(string parent, string branch) => OnUiAsync(async () =>
+        {
+            var p = form.sessions.GetValueOrDefault(parent) ?? throw new ControlException("That session isn't in LlamaTree any more.");
+            var root = await GitService.GetTopLevelAsync(p.RepoRoot ?? p.Info.Directory)
+                ?? throw new ControlException("This session's folder isn't in a Git repository, so there's no worktree to make; give a folder instead.");
+            root = root.Replace('/', '\\').TrimEnd('\\');
+            var slug = System.Text.RegularExpressions.Regex.Replace(branch, "[^A-Za-z0-9._-]+", "-").Trim('-', '.');
+            var path = $"{root}-{(slug.Length > 0 ? slug : "worktree")}";
+            for (var i = 2; Directory.Exists(path) || File.Exists(path); i++) path = $"{root}-{slug}-{i}";
+            var result = await GitService.AddWorktreeAsync(root, path, branch, null);
+            if (!result.Ok) throw new ControlException(string.IsNullOrWhiteSpace(result.Error) ? "git couldn't make the worktree." : result.Error.Trim());
+            return path;
+        });
+
+        public void TypePrompt(string id, string text) => form.RunOnUi(() => form.Post(new { type = "control.prompt", id, text }));
+
+        public void SendKeys(string id, string keys) => form.RunOnUi(() => form.sessions.GetValueOrDefault(id)?.Write(keys));
+
+        public void Stop(string id) => form.RunOnUi(() =>
+        {
+            if (form.sessions.GetValueOrDefault(id) is not { } s) return;
+            form.CatchUpConversation(s);
+            if (!s.Stop()) return;
+            form.FlushOutput();
+            form.Post(new { type = "exited", id, code = (int?)null });
+        });
+
+        public SessionReport? Report(string id)
+        {
+            // The session's process is read on the UI thread, as everywhere; its conversation file off it.
+            var (s, running, pids) = OnUi(() => form.sessions.GetValueOrDefault(id) is { } x ? ((TerminalSession?)x, x.IsRunning, (int[]?)x.ProcessIds()) : (null, false, null));
+            var agent = s?.Agent;
+            if (s == null || agent == null) return null;
+            var conv = (running && pids != null ? agent.ReadConversation(s, pids) : null) ?? agent.ReadSavedConversation(s);
+            if (conv?.Turns.LastOrDefault() is not { } turn) return null;
+            var said = turn.Items.Where(i => i.Kind == "text").Select(i => i.Text).ToList();
+            var last = turn.Items.LastOrDefault();
+            return new SessionReport(turn.Prompt, said.Count > 0 ? string.Join("\n\n", said) : null,
+                last?.Kind == "tool" ? $"{last.Tool}: {last.Text}" : null);
+        }
+    }
+
     private List<RelayPeer> RelayPeers()
     {
         // A session counts in a project only while that project exists (as the page shows it), for plugins' projects too.
@@ -255,7 +339,12 @@ internal sealed class MainForm : Form
         relay.Delivered += m => RunOnUi(() => Post(new { type = "relay.message", to = m.To, from = m.From, unread = relay.Unread(m.To) }));
         relay.Changed += () => RunOnUi(() => Post(new { type = "relay", state = RelayState() }));
         relay.Policy.Changed += () => RunOnUi(() => Post(new { type = "relay", state = RelayState() }));
-        var mcp = new PanelMcp(panelStore, relay);
+        Driving.Policy.Keep(sessions.Keys, projects.Select(p => p.Id));
+        Driving.Asked += r => RunOnUi(() => Post(new { type = "control.ask", request = SpawnAsk(r) }));
+        Driving.Settled += id => RunOnUi(() => Post(new { type = "control.settled", id }));
+        Driving.Changed += () => RunOnUi(() => Post(new { type = "control", state = ControlState() }));
+        Driving.Policy.Changed += () => RunOnUi(() => Post(new { type = "control", state = ControlState() }));
+        var mcp = new PanelMcp(panelStore, relay, Driving);
         // A first prompt that couldn't go on the command line is typed once Claude is up (it connects as it starts).
         mcp.Initialized += id => RunOnUi(async () =>
         {
@@ -303,6 +392,8 @@ internal sealed class MainForm : Form
         panelServer?.Forget(sessionId);
         panelStore.KeepOwners(sessions.Keys);
         relay.Policy.KeepSessions(sessions.Keys);
+        Driving.Policy.Keep(sessions.Keys, projects.Select(p => p.Id));
+        Driving.Forget(sessionId);
         try { File.Delete(Path.Combine(PanelConfigFolder, $"mcp-{sessionId}.json")); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
@@ -541,6 +632,7 @@ internal sealed class MainForm : Form
             directory = s.Info.Directory,
             command = s.Info.Command,
             project = s.Info.Project,
+            startedBy = s.Info.StartedBy,
             conversation = s.Info.Conversation,
             running = s.IsRunning,
         }),
@@ -860,6 +952,28 @@ internal sealed class MainForm : Form
                 }
                 return null;
             }
+            // ---- sessions starting and driving others (SessionControl)
+            case "control.state":
+                return ControlState();
+            case "control.status":
+                Driving.SetStatus(Str(msg, "id"), Str(msg, "status"));
+                return null;
+            case "control.answer":
+                Driving.AnswerSpawn(Str(msg, "id"), Bool(msg, "allow"), OptStr(msg, "scope") ?? "once");
+                return null;
+            case "control.set":
+                Driving.Policy.Set(Str(msg, "ability") switch
+                {
+                    "spawn" => ControlAbility.Spawn,
+                    "answer" => ControlAbility.Answer,
+                    var a => throw new ArgumentException($"There's no ability \"{a}\"."),
+                }, Str(msg, "scope"), ParseDecision(Str(msg, "decision")));
+                return null;
+            case "control.log":
+                return Driving.Log().Select(e => new { at = e.At, from = e.From, target = e.Target, action = e.Action, detail = e.Detail, ok = e.Ok });
+            case "control.clearLog":
+                Driving.ClearLog();
+                return null;
             case "relay.pause":
                 relay.Policy.Paused = Bool(msg, "paused");
                 return null;

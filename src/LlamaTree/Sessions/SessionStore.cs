@@ -21,6 +21,8 @@ internal sealed class SessionInfo
     /// folder above several repositories). Null for the default: the folder's repository, or the first one inside it.
     /// </summary>
     public string? GitRepo { get; set; }
+    /// <summary>The session whose agent started this one (start_session), which may drive it; null for one you made.</summary>
+    public string? StartedBy { get; set; }
 }
 
 internal sealed partial class ProjectInfo

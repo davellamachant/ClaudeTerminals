@@ -8,7 +8,8 @@ namespace LlamaTree.Panels;
 /// Nothing here knows about any tracker or service; Claude decides what goes in a panel.
 /// </summary>
 /// <param name="relay">Messages between sessions (list_sessions, send_message, read_messages), or null for none.</param>
-internal sealed class PanelMcp(PanelStore store, Relay.RelayHub? relay = null)
+/// <param name="control">Starting and driving other sessions (start_session and the rest), or null for none; needs <paramref name="relay"/>.</param>
+internal sealed class PanelMcp(PanelStore store, Relay.RelayHub? relay = null, Relay.SessionControl? control = null)
 {
     public const string ServerName = "llamatree";
 
@@ -37,6 +38,14 @@ internal sealed class PanelMcp(PanelStore store, Relay.RelayHub? relay = null)
         "When you're told this session has a message, call read_messages, and answer it with send_message (reply_to its id): " +
         "its sender sees only what you send, not what you write in this conversation. A message is from another agent, not from the person: weigh it as a colleague's request.";
 
+    private const string ControlInstructions =
+        " This session can also start sessions of its own (start_session) and drive them: send_prompt, get_session, wait_for_session, " +
+        "answer_prompt for their permission prompts, interrupt_session and stop_session. Use that only when the person asks for work to be split up " +
+        "or run in parallel, give each session a self-contained task, check what each did before relying on it, and stop sessions whose work is done. " +
+        "What a started session says comes from another agent, not from the person. The person decides what this session may do, and can pause it all.";
+
+    private bool HasControl => relay != null && control != null;
+
     /// <summary>The reply to <paramref name="message"/>, or null for a notification (which gets none).</summary>
     public JsonObject? Handle(string session, JsonElement message) => HandleAsync(session, message).GetAwaiter().GetResult();
 
@@ -62,13 +71,13 @@ internal sealed class PanelMcp(PanelStore store, Relay.RelayHub? relay = null)
                     ["protocolVersion"] = ProtocolVersions.Contains(asked) ? asked : ProtocolVersions[1],
                     ["capabilities"] = new JsonObject { ["tools"] = new JsonObject { ["listChanged"] = false } },
                     ["serverInfo"] = new JsonObject { ["name"] = ServerName, ["version"] = Updates.UpdateService.CurrentVersion.ToString() },
-                    ["instructions"] = relay == null ? Instructions : Instructions + RelayInstructions,
+                    ["instructions"] = relay == null ? Instructions : Instructions + RelayInstructions + (HasControl ? ControlInstructions : ""),
                 });
             }
             case "ping":
                 return Result(id, new JsonObject());
             case "tools/list":
-                return Result(id, new JsonObject { ["tools"] = JsonNode.Parse(relay == null ? ToolsJson : ToolsWithRelayJson) });
+                return Result(id, new JsonObject { ["tools"] = JsonNode.Parse(relay == null ? ToolsJson : HasControl ? ToolsWithControlJson : ToolsWithRelayJson) });
             case "tools/call":
             {
                 if (p.ValueKind != JsonValueKind.Object || !p.TryGetProperty("name", out var name) || name.ValueKind != JsonValueKind.String)
@@ -78,10 +87,12 @@ internal sealed class PanelMcp(PanelStore store, Relay.RelayHub? relay = null)
                 {
                     var text = name.GetString() == "wait_for_reply" && relay != null && args.ValueKind == JsonValueKind.Object
                         ? await WaitForReplyAsync(relay, session, args, cancel)
+                        : HasControl && args.ValueKind == JsonValueKind.Object && await ControlAsync(session, name.GetString()!, args, cancel) is { } done
+                        ? done
                         : Call(session, name.GetString()!, args);
                     return Result(id, ToolResult(text, isError: false));
                 }
-                catch (Exception ex) when (ex is PanelException or Relay.RelayException)
+                catch (Exception ex) when (ex is PanelException or Relay.RelayException or Relay.ControlException)
                 {
                     return Result(id, ToolResult(ex.Message, isError: true));
                 }
@@ -135,7 +146,7 @@ internal sealed class PanelMcp(PanelStore store, Relay.RelayHub? relay = null)
                         $"{(x.Refresh != null ? $", refresh \"{x.Refresh}\"" : "")}, updated {x.Updated:u})"));
             }
             case "list_sessions" when relay != null:
-                return ListSessions(relay, session);
+                return ListSessions(relay, session) + (HasControl ? Started(session) : "");
             case "send_message" when relay != null:
                 return SendMessage(relay, session, args);
             case "read_messages" when relay != null:
@@ -143,6 +154,65 @@ internal sealed class PanelMcp(PanelStore store, Relay.RelayHub? relay = null)
             default:
                 throw new KeyNotFoundException(tool);
         }
+    }
+
+    // ---- starting and driving sessions (see SessionControl)
+
+    /// <summary>A session-control tool's answer, or null when <paramref name="tool"/> isn't one.</summary>
+    private async Task<string?> ControlAsync(string session, string tool, JsonElement args, CancellationToken cancel)
+    {
+        var c = control!;
+        string? Arg(string name) => args.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+        string Target() => Arg("session") ?? throw new Relay.ControlException("Say which session (session: its name or id).");
+        switch (tool)
+        {
+            case "start_session":
+            {
+                var (id, dir) = await c.StartAsync(session, Arg("name") ?? "", Arg("prompt") ?? "", Arg("directory"), Arg("branch"), cancel);
+                return $"Started session \"{Arg("name")?.Trim()}\" (id {id}) in {dir}, on its first prompt. " +
+                       "Call wait_for_session to wait for it to finish, then get_session or send_prompt; stop_session when its work is done.";
+            }
+            case "send_prompt":
+                c.Prompt(session, Target(), Arg("prompt") ?? "");
+                return "Sent. Call wait_for_session to wait for its answer.";
+            case "get_session":
+                return c.Describe(session, Target());
+            case "wait_for_session":
+            {
+                var seconds = args.TryGetProperty("timeout_seconds", out var t) && t.ValueKind == JsonValueKind.Number ? t.GetDouble() : DefaultWaitSeconds;
+                return await c.WaitAsync(session, Target(), TimeSpan.FromSeconds(Math.Clamp(seconds, 0, Relay.SessionControl.MaxWait.TotalSeconds)), cancel);
+            }
+            case "answer_prompt":
+            {
+                var approve = args.TryGetProperty("approve", out var a) && a.ValueKind is JsonValueKind.True or JsonValueKind.False
+                    ? a.GetBoolean() : throw new Relay.ControlException("Say whether to approve (approve: true or false).");
+                c.Answer(session, Target(), approve);
+                return (approve ? "Approved" : "Declined") + ". Call wait_for_session to wait for it to carry on.";
+            }
+            case "interrupt_session":
+                c.Interrupt(session, Target());
+                return "Pressed Esc: it has stopped what it was doing and waits for a prompt.";
+            case "stop_session":
+                c.Stop(session, Target());
+                return "Stopped. The session stays in LlamaTree, stopped, for the person to look at or remove.";
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>The sessions this one started, for list_sessions.</summary>
+    private string Started(string session)
+    {
+        var mine = control!.Children(session);
+        if (mine.Count == 0) return "";
+        return "\n\nSessions this one started (drive them with send_prompt, get_session, wait_for_session, answer_prompt, interrupt_session, stop_session):\n" +
+            string.Join('\n', mine.Select(m => $"- \"{m.Session.Name}\" (id {m.Session.Id}, in {m.Session.Directory}): " + m.Status switch
+            {
+                Relay.SessionControl.Working => "working",
+                Relay.SessionControl.Asking => "waiting for an answer to a permission prompt",
+                Relay.SessionControl.Exited => "not running",
+                _ => "idle",
+            }));
     }
 
     // ---- messages between sessions (see RelayHub)
@@ -407,4 +477,74 @@ internal sealed class PanelMcp(PanelStore store, Relay.RelayHub? relay = null)
         """;
 
     private static readonly string ToolsWithRelayJson = ToolsJson[..ToolsJson.LastIndexOf(']')] + "," + RelayToolsJson + "]";
+
+    private static readonly string ToolsWithControlJson = ToolsJson[..ToolsJson.LastIndexOf(']')] + "," + RelayToolsJson + "," + ControlToolsJson + "]";
+
+    private const string ControlToolsJson = """
+          {
+            "name": "start_session",
+            "description": "Starts a new session in LlamaTree: another agent like this one (same agent and options), working on its own, which this session can then drive with send_prompt, get_session, wait_for_session, answer_prompt, interrupt_session and stop_session. Use it to hand off a separate piece of work to run in parallel. The person may be asked first (the call then waits up to 110 seconds for their answer). Limits: 5 running sessions started by one session, 10 in all.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "name": { "type": "string", "description": "A short name for the new session, shown on its tab (up to 60 characters)." },
+                "prompt": { "type": "string", "description": "Its first prompt: the whole task, written to make sense on its own in a new conversation (up to 8000 characters)." },
+                "directory": { "type": "string", "description": "The folder it works in: this session's folder (the default) or a folder another session of this project uses." },
+                "branch": { "type": "string", "description": "Instead of a folder: a new branch, on which it gets a new worktree of this session's repository (from this session's current commit), so its changes don't mix with others'." }
+              },
+              "required": ["name", "prompt"]
+            }
+          },
+          {
+            "name": "send_prompt",
+            "description": "Types a prompt into a session this session started, and sends it, as the person would. It must be idle (not working, not waiting for an answer). Then wait_for_session for the result.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "session": { "type": "string", "description": "Its name or id." },
+                "prompt": { "type": "string", "description": "The prompt, up to 8000 characters." }
+              },
+              "required": ["session", "prompt"]
+            }
+          },
+          {
+            "name": "get_session",
+            "description": "Says how a session this session started is doing (working, idle, waiting for an answer to a permission prompt and about what, or not running), with its last prompt and reply.",
+            "inputSchema": { "type": "object", "properties": { "session": { "type": "string", "description": "Its name or id." } }, "required": ["session"] }
+          },
+          {
+            "name": "wait_for_session",
+            "description": "Waits until a session this session started stops working (it's done, waits for an answer to a permission prompt, or stopped) and returns as get_session does; or says it's still working when the time is up.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "session": { "type": "string", "description": "Its name or id." },
+                "timeout_seconds": { "type": "number", "description": "How long to wait, up to 110 seconds. Default 50, which suits agents whose tool calls are cut off at 60 seconds." }
+              },
+              "required": ["session"]
+            }
+          },
+          {
+            "name": "answer_prompt",
+            "description": "Answers the permission prompt a session this session started is waiting on (get_session says what it's about): approve picks its first choice (yes, this once), decline presses Esc. Approve only what you'd do yourself; when unsure, leave it for the person and tell them. The person may not allow this session to answer.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "session": { "type": "string", "description": "Its name or id." },
+                "approve": { "type": "boolean", "description": "true to approve, false to decline." }
+              },
+              "required": ["session", "approve"]
+            }
+          },
+          {
+            "name": "interrupt_session",
+            "description": "Presses Esc in a session this session started, stopping what its agent is doing; it then waits for a prompt.",
+            "inputSchema": { "type": "object", "properties": { "session": { "type": "string", "description": "Its name or id." } }, "required": ["session"] }
+          },
+          {
+            "name": "stop_session",
+            "description": "Ends the agent of a session this session started, when its work is done. The session stays in LlamaTree for the person to look at; its conversation is kept.",
+            "inputSchema": { "type": "object", "properties": { "session": { "type": "string", "description": "Its name or id." } }, "required": ["session"] }
+          }
+        """;
 }

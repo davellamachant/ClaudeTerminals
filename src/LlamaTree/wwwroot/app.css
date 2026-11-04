@@ -1324,3 +1324,16 @@ svg.sparkline circle { fill: var(--accent); }
 .update-what { color: var(--text-dim); }
 .update-status { margin-top: 8px; }
 .update-status.error { color: var(--danger); }
+
+/* Sessions started by agents: the mark on their tile, and the dialog asking you first */
+.chip.started-by { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip.started-by svg.ic { width: 12px; height: 12px; flex: none; }
+.spawn-ask { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 8px 0 10px; }
+.spawn-ask .k, .k.dim { color: var(--text-dim); }
+.spawn-ask span:not(.k) { word-break: break-all; }
+.spawn-prompt {
+  max-height: 180px; overflow: auto; margin: 4px 0 10px; padding: 8px; white-space: pre-wrap; word-break: break-word; user-select: text;
+  background: var(--chrome-2); border: 1px solid var(--border); border-radius: 4px; font: inherit;
+}
+.spawn-warn { padding: 6px 8px; border-radius: 4px; background: var(--info-bg); border: 1px solid var(--info-border); }
+.spawn-ask code { word-break: break-all; }

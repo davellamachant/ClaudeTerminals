@@ -47,6 +47,7 @@ const PATHS = {
   markDeny: 'M8 2a6 6 0 1 0 0 12A6 6 0 1 0 8 2M3.8 3.8l8.4 8.4',         // Permissions: not allowed
   git: 'M5 3v10M5 11a2 2 0 1 0 0 .01M5 3a1.6 1.6 0 1 0 0 .01M11 3a1.6 1.6 0 1 0 0 .01M11 4.6C11 8 5 7 5 10',
   branch: 'M5 2.5v8M5 12a1.5 1.5 0 1 0 0 .01M11 4a1.5 1.5 0 1 0 0 .01M11 5.5c0 3-6 2.5-6 5',
+  agent: 'M4 5.5h8v7H4zM8 5.5V3M8 2.5h.01M6.5 8.5h.01M9.5 8.5h.01M6.5 10.5h3M2.5 8v2M13.5 8v2',   // a robot head: a session an agent started
   chevR: 'M6 4l4 4-4 4',
   chevL: 'M10 4l-4 4 4 4',
   chevD: 'M4 6l4 4 4-4',
@@ -155,6 +156,11 @@ host.addEventListener('message', (e) => {
     case 'relay': relayChanged(m.state); break;
     case 'relay.ask': askRelay(m.from, m.to); break;
     case 'relay.message': onRelayMessage(m); break;
+    case 'control': controlChanged(m.state); break;
+    case 'control.ask': askSpawn(m.request); break;
+    case 'control.settled': spawnSettled(m.id); break;
+    case 'control.start': { const s = state.byId.get(m.id); if (s && !s.started) startSession(s); break; }
+    case 'control.prompt': controlPrompt(m.id, m.text); break;
     case 'plugins.grants': applyGrants(m.grants); break;
   }
 });
@@ -167,6 +173,13 @@ host.addEventListener('message', (e) => {
  * sessions to tell they have messages once they're idle. Up here, as tile code reads it.
  */
 const relay = { paused: false, rules: [], waiting: [], unread: {}, logVersion: 0, told: {}, from: {}, asks: [], asking: null };
+
+/**
+ * Sessions starting and driving others (SessionControl on the host): the rules ({ ability: 'spawn' | 'answer', scope:
+ * a session id, 'project:<id>' or '*', decision }), the requests to start a session waiting for your answer, and the
+ * state of each session last told to the host.
+ */
+const control = { rules: [], pending: [], logVersion: 0, asking: null, told: {} };
 
 const state = {
   sessions: [],              // ordered session objects
@@ -848,6 +861,7 @@ function syncSessions(list, projects) {
       Object.assign(s, { name: info.name, directory: info.directory, command: info.command, conversation: info.conversation });
     }
     s.project = info.project || null;
+    s.startedBy = info.startedBy || null;   // the session whose agent started this one (start_session)
     s.running = info.running || s.running;
   }
   for (const s of [...state.byId.values()]) {
@@ -1093,6 +1107,7 @@ function setAttention(s, on) {
   if (s.attention === on) return;
   s.attention = on;
   renderTileState(s);
+  syncControlStatus(s);
   renderDocTabs();
 }
 
@@ -1100,6 +1115,7 @@ function setAsking(s, on) {
   if (s.asking === on) return;
   s.asking = on;
   renderTileState(s);
+  syncControlStatus(s);
   renderDocTabs();
 }
 
@@ -1233,6 +1249,7 @@ function renderTileHeader(s) {
     h('span', { class: 'tile-name', title: conversationLine(s) }, s.name),
     projectTag(s),
     relayTileMark(s),
+    startedByMark(s),
     h('span', { class: 'tile-title', title: s.title }, s.title),
     gs && h(gitTabOn('changes') ? 'button' : 'span', {
       class: 'chip', title: `${gs.count} changed file(s) on ${gs.branch}${gitTabOn('changes') ? ' — show in Git Changes' : ''}`,
@@ -1244,6 +1261,7 @@ function renderTileHeader(s) {
   s.exitedBadge.hidden = s.running || !(s.started || s.startsOnOpen);
   s.exitedBadge.textContent = s.startsOnOpen ? 'Starts when you open it' : s.exitCode === null ? 'Not running' : `Exited (${s.exitCode})`;
   renderTileState(s);
+  syncControlStatus(s);
 }
 
 function sessionTabTitle(s) {
@@ -6360,9 +6378,9 @@ function permsChoice(id, kind, name) {
 }
 
 function renderPermissions() {
-  fill($('#permsBy'), [['plugin', 'By plugin'], ['session', 'By session'], ['messages', 'Messages']].map(([by, label]) =>
+  fill($('#permsBy'), [['plugin', 'By plugin'], ['session', 'By session'], ['messages', 'Messages'], ['agents', 'Agents']].map(([by, label]) =>
     h('button', { class: 'seg-btn' + (permsView.by === by ? ' active' : ''), role: 'tab', 'aria-selected': String(permsView.by === by), onclick: () => setPermsBy(by) }, label)));
-  fill($('#permsBody'), permsView.by === 'session' ? permsBySession() : permsView.by === 'messages' ? permsMessages() : permsByPlugin());
+  fill($('#permsBody'), permsView.by === 'session' ? permsBySession() : permsView.by === 'messages' ? permsMessages() : permsView.by === 'agents' ? permsAgents() : permsByPlugin());
 }
 
 // ---- the Messages tab: what sessions sent each other, and what became of each message
@@ -6416,6 +6434,42 @@ function permsMessages() {
             : h('span', { class: 'chip' }, st.word)),
         h('pre', { class: 'log-full' }, e.text));
     })),
+  ];
+}
+
+// ---- the Agents tab: what sessions did to the sessions they started (SessionControl's log)
+
+const CONTROL_ACTION = { start: 'started', prompt: 'sent a prompt to', approve: 'approved a prompt of', decline: 'declined a prompt of', interrupt: 'interrupted', stop: 'stopped' };
+
+async function loadControlLog() {
+  if (permsView.ctlLoading || permsView.ctlVersion === control.logVersion) return;
+  permsView.ctlLoading = true;
+  try {
+    const version = control.logVersion;
+    permsView.ctlLog = await request('control.log');
+    permsView.ctlVersion = version;
+  } catch (e) { toast(e.message, true); }
+  finally { permsView.ctlLoading = false; }
+  permissionsChanged();
+}
+
+function permsAgents() {
+  if (permsView.ctlVersion !== control.logVersion) loadControlLog();
+  const entries = permsView.ctlLog ?? [];
+  return [
+    h('div', { class: 'log-bar' },
+      h('span', { class: 'dim' }, `${entries.length} action${entries.length === 1 ? '' : 's'}, the latest 300 are kept (until LlamaTree closes)`),
+      h('span', { class: 'spacer' }),
+      h('button', { class: 'btn', onclick: () => request('control.clearLog').catch((e) => toast(e.message, true)) }, 'Clear')),
+    !entries.length ? h('p', { class: 'perms-empty' }, permsView.ctlLog ? 'No session has started or driven another yet.' : 'Loading…')
+    : h('section', { class: 'perms-card log-list' }, entries.map((e) => h('details', { class: 'log-row' },
+      h('summary', {},
+        decisionMark(e.ok ? 'allow' : 'deny', e.ok ? 'Done' : 'Refused or failed'),
+        h('span', { class: 'log-time', title: new Date(e.at).toLocaleString() }, new Date(e.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })),
+        h('b', {}, relayName(e.from)), h('span', { class: 'dim' }, e.ok ? CONTROL_ACTION[e.action] ?? e.action : `tried to ${e.action === 'start' ? 'start a session' : e.action}`),
+        e.target && h('b', {}, relayName(e.target)),
+        h('span', { class: 'log-text' }, e.detail.split('\n')[0].slice(0, 160))),
+      h('pre', { class: 'log-full' }, e.detail)))),
   ];
 }
 
@@ -6573,6 +6627,7 @@ function permsBySession() {
   return [
     h('p', { class: 'perms-note dim' }, 'Rules go one way: one session may message another without the other being able to answer, except to reply to a message it was sent (for an hour). A message reaches the other agent as a message from a session, not as your prompt. The most specific rule decides; one set to Default leaves it to the next.'),
     permsGlobal(),
+    permsControlGlobal(),
     ...sessions.map((s) => {
       const agent = agentOf(s.command);
       const unread = relay.unread[s.id] ?? 0;
@@ -6581,6 +6636,7 @@ function permsBySession() {
           unread > 0 && h('span', { class: 'chip', title: 'Messages it hasn’t read yet' }, `${unread} unread`),
           ownRelayRules(s).length > 0 && h('button', { class: 'link-btn perms-reset', title: 'Clear its own messaging rules, so All sessions’ rules decide', onclick: () => confirmResetSession(s) }, 'Reset')),
         agent ? permsMessaging(s) : h('div', { class: 'perms-row dim' }, 'Not a coding agent, so it can’t send or read messages.'),
+        agent && permsControl(s),
         h('div', { class: 'perms-row' }, h('div', { class: 'perms-what' }, h('b', {}, 'Plugins'), h('span', { class: 'dim' }, 'Click one to hide this session from it, or show it again.')),
           h('div', { class: 'perms-who' }, pluginChips(s))));
     }),
@@ -6622,7 +6678,7 @@ function relayFallback(levels) {
 
 /** What a message from → to gets, as RelayPolicy decides it: { decision, by: 'pair' or null, label }. */
 function relayDecide(from, to) {
-  if (relay.paused) return { decision: 'deny', by: null, label: 'Pause messages' };
+  if (relay.paused) return { decision: 'deny', by: null, label: 'Pause agents' };
   const pair = relay.rules.find((r) => r.from === from && r.to === to);
   if (pair) return { decision: pair.decision, by: 'pair', label: null };
   const a = state.byId.get(from), b = state.byId.get(to);
@@ -6732,14 +6788,178 @@ setInterval(() => {
   for (const s of state.sessions) relayNotify(s);
 }, 3000);
 
+// ---- sessions starting and driving other sessions (SessionControl on the host)
+
+/** The host's control state changed: redraw, and ask about any request to start a session not asked yet (after a reload, say). */
+function controlChanged(st) {
+  if (!st) return;
+  Object.assign(control, st);
+  for (const r of control.pending) askSpawn(r);
+  for (const s of state.sessions) renderTileHeader(s);
+  permissionsChanged();
+}
+
+/** The decision of the control rule for ability and scope ('ask' when there's none). */
+const controlRule = (ability, scope) => control.rules.find((r) => r.ability === ability && r.scope === scope)?.decision ?? 'ask';
+
+/** What a session gets for an ability, as ControlPolicy decides it: { decision, by: 'session' | 'project' | 'all' | null }. */
+function controlDecide(ability, s) {
+  const fallback = ability === 'spawn' ? 'ask' : 'allow';
+  if (relay.paused) return { decision: 'deny', by: 'paused' };
+  const own = control.rules.find((r) => r.ability === ability && r.scope === s.id);
+  if (own) return { decision: own.decision, by: 'session' };
+  // A session another started goes by its own rule for starting sessions, so they don't multiply unasked.
+  if (ability === 'spawn' && s.startedBy) return { decision: fallback, by: null };
+  const project = s.project && control.rules.find((r) => r.ability === ability && r.scope === 'project:' + s.project);
+  if (project) return { decision: project.decision, by: 'project' };
+  const all = control.rules.find((r) => r.ability === ability && r.scope === '*');
+  return all ? { decision: all.decision, by: 'all' } : { decision: fallback, by: null };
+}
+
+function setControlRule(ability, scope, decision) {
+  request('control.set', { ability, scope, decision }).catch((e) => toast(e.message, true));
+}
+
+/** Tells the host each session's state when it changes, for wait_for_session and the rest. */
+function syncControlStatus(s) {
+  const st = statusClass(s);
+  if (control.told[s.id] === st) return;
+  control.told[s.id] = st;
+  post({ type: 'control.status', id: s.id, status: st });
+}
+setInterval(() => { for (const s of state.sessions) syncControlStatus(s); }, 1000);
+
+/**
+ * Types a prompt a session sent this one (send_prompt) and sends it, as relayNotify does: not while you're typing in
+ * it (it waits for a pause of a few seconds, for at most half a minute).
+ */
+function controlPrompt(id, text, tries = 0) {
+  const s = state.byId.get(id);
+  if (!s?.running || !text) return;
+  if (performance.now() - s.act.lastIn < 5000) {
+    // Never over what you're typing: after five minutes of it, the prompt is dropped instead.
+    if (tries < 300) setTimeout(() => controlPrompt(id, text, tries + 1), 1000);
+    else toast(`A prompt from “${relayName(s.startedBy)}” to “${s.name}” was dropped: you were typing in it.`, true);
+    return;
+  }
+  // The host refuses control characters already; this keeps a paste from ever carrying keys of its own.
+  text = text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '');
+  s.term.paste(text);
+  setTimeout(() => post({ type: 'input', id, data: '\r' }), 150);
+}
+
+/** The tile's mark for a session another started: who, opening the starter. */
+function startedByMark(s) {
+  if (!s.startedBy) return null;
+  const by = state.byId.get(s.startedBy);
+  return h('button', {
+    class: 'chip started-by', title: by ? `Started by “${by.name}”, whose agent can send it prompts, answer its prompts and stop it: show “${by.name}”` : 'Started by a session since removed',
+    onclick: () => by && (state.expandedId ? expand(by.id) : showGit(by.id)),
+  }, iconEl('agent'), by ? by.name : 'removed session');
+}
+
+/** A session asks to start another, and no rule says: you're asked, one at a time; it waits for your answer. */
+function askSpawn(r) {
+  if (!r || control.asking?.id === r.id || (control.queue ??= []).some((q) => q.id === r.id)) return;
+  control.queue.push(r);
+  showSpawnAsk();
+}
+
+function spawnSettled(id) {
+  control.queue = (control.queue ?? []).filter((q) => q.id !== id);
+  if (control.asking?.id === id) { control.asking = null; closeModal(); }
+}
+
+function showSpawnAsk() {
+  if (control.asking || !$('#modalHost').hidden) return;   // after the dialog that's open (see the interval below)
+  const r = control.queue?.shift();
+  if (!r) return;
+  const a = state.byId.get(r.from);
+  if (!a) { showSpawnAsk(); return; }
+  control.asking = r;
+  const project = projectOf(a);
+  let scope = 'once';
+  const choice = (value, label, tip) => h('label', { class: 'perms-radio', title: tip },
+    h('input', { type: 'radio', name: 'spawnScope', value, checked: value === scope, onchange: () => { scope = value; } }), label);
+  let answered = false;
+  const answer = (allow) => {
+    answered = true;
+    request('control.answer', { id: r.id, allow, scope }).catch((e) => toast(e.message, true));
+    control.asking = null;
+    closeModal();
+  };
+  const agent = agentOf(a.command)?.name ?? 'The agent';
+  openModal(`Let “${a.name}” start a session?`, h('div', {},
+    h('p', {}, `${agent} in “${a.name}” wants to start a new session, which it can then send prompts to and stop. It waits for your answer.`),
+    controlDecide('answer', a).decision === 'allow' && h('p', { class: 'spawn-warn' },
+      `It can also approve the new session’s permission prompts (editing files, running commands) without you. To keep those for yourself, set “Answer its sessions’ permission prompts” to Not allowed in Permissions.`),
+    h('div', { class: 'spawn-ask' },
+      h('span', { class: 'k' }, 'Name'), h('span', {}, r.name),
+      h('span', { class: 'k' }, 'Folder'), h('span', {}, r.directory),
+      h('span', { class: 'k' }, 'Runs'), h('code', {}, ownOptionsOnly(a.command))),
+    h('div', { class: 'k dim' }, 'Its first prompt'),
+    h('pre', { class: 'spawn-prompt' }, r.prompt),
+    h('div', { class: 'perms-radios' },
+      choice('once', 'Just this once'),
+      choice('session', `Whenever “${a.name}” starts a session`, 'A rule on its card in Permissions'),
+      project && !a.startedBy && choice('project', `Whenever a session in ${project.name} starts one`, 'A rule for the project in Permissions; sessions started by agents still ask')),
+    h('p', { class: 'dim' }, 'Pause agents in Permissions stops every session starting or driving others.')), [
+    h('button', { class: 'btn', 'data-autofocus': true, onclick: () => answer(false) }, 'Don’t allow'),
+    h('button', { class: 'btn primary', onclick: () => answer(true) }, 'Allow'),
+  ]);
+  // Closed without an answer: that's a no, this once; the agent is waiting on it.
+  onModalClose = () => {
+    if (!answered) request('control.answer', { id: r.id, allow: false, scope: 'once' }).catch(() => {});
+    control.asking = null;
+    setTimeout(showSpawnAsk, 300);
+  };
+}
+setInterval(showSpawnAsk, 1000);
+
+/** Each session card's rows: whether it may start sessions, and answer their permission prompts. */
+function permsControl(s) {
+  const row = (ability, what, help) => {
+    const d = controlDecide(ability, s);
+    const own = controlRule(ability, s.id);
+    const by = { project: `as ${projectOf(s)?.name ?? 'its project'}’s rule says`, all: 'as All sessions’ rule says', paused: 'agents are paused' }[d.by];
+    const fallbackWord = ability === 'spawn' ? 'Ask first' : 'Allowed';
+    return h('div', { class: 'perms-row ' + d.decision },
+      h('div', { class: 'perms-what' }, h('b', {}, what), h('span', { class: 'dim' }, by ? `${help} Now: ${RELAY_CHOICE[d.decision].toLowerCase()}, ${by}.` : help)),
+      segChoice(own, [['allow', 'Allowed', ''], ['ask', own === 'ask' && d.by === null ? fallbackWord : 'Default', 'As the rules above say'], ['deny', 'Not allowed', '']],
+        (v) => setControlRule(ability, s.id, v), `${s.name}: ${what.toLowerCase()}`));
+  };
+  const children = state.sessions.filter((c) => c.startedBy === s.id);
+  return [
+    row('spawn', 'Start sessions', s.startedBy ? 'It was started by another session, so it goes only by this rule: with none, you’re asked.' : 'With no rule, you’re asked each time.'),
+    row('answer', 'Answer its sessions’ permission prompts', 'Approve or decline what the sessions it started ask to do. With no rule, it may.'),
+    children.length > 0 && h('div', { class: 'perms-row dim' }, `It started: ${children.map((c) => c.name).join(', ')}`),
+  ];
+}
+
+/** All sessions' and each project's rules for starting sessions and answering their prompts. */
+function permsControlGlobal() {
+  const row = (ability, scope, what, fallback) => h('div', { class: 'perms-row ' + (controlRule(ability, scope) === 'ask' ? fallback : controlRule(ability, scope)) },
+    h('div', { class: 'perms-what' }, h('b', {}, what)),
+    segChoice(controlRule(ability, scope), [['allow', 'Allowed', ''], ['ask', fallback === 'ask' ? 'Ask first' : 'Default', ''], ['deny', 'Not allowed', '']],
+      (v) => setControlRule(ability, scope, v), what));
+  return h('section', { class: 'perms-card' },
+    h('header', {}, h('b', {}, 'Agents starting sessions'), h('span', { class: 'dim' }, 'An agent can start sessions of its own and drive them. Its own rule (on its card) comes first, then its project’s, then these.')),
+    row('spawn', '*', 'All sessions: starting sessions', 'ask'),
+    row('answer', '*', 'All sessions: answering their sessions’ permission prompts', 'allow'),
+    ...state.projects.flatMap((p) => [
+      row('spawn', 'project:' + p.id, `${p.name}: starting sessions`, controlRule('spawn', '*') === 'ask' ? 'ask' : controlRule('spawn', '*')),
+      row('answer', 'project:' + p.id, `${p.name}: answering their sessions’ prompts`, controlRule('answer', '*') === 'ask' ? 'allow' : controlRule('answer', '*')),
+    ]));
+}
+
 /** The Pause button on the Permissions view's toolbar. */
 function renderPermsPause() {
   const b = $('#permsPause');
   if (!b) return;
   b.classList.toggle('active', relay.paused);
   b.setAttribute('aria-pressed', String(relay.paused));
-  b.textContent = relay.paused ? 'Messages paused: resume' : 'Pause messages';
-  b.title = relay.paused ? 'Sessions can’t message each other until you resume' : 'Stop every session messaging another, whatever the rules say, until you resume';
+  b.textContent = relay.paused ? 'Agents paused: resume' : 'Pause agents';
+  b.title = relay.paused ? 'Sessions can’t message, start or drive each other until you resume' : 'Stop every session messaging, starting or driving another, whatever the rules say, until you resume';
 }
 $('#permsPause')?.addEventListener('click', () => setRelayPaused(!relay.paused));
 
@@ -6866,6 +7086,7 @@ addEventListener('message', (e) => {
 // Side panel plugins kept from last time show once the folder has been read.
 loadPlugins().then(() => renderGit());
 request('relay.state').then(relayChanged).catch(() => {});
+request('control.state').then(controlChanged).catch(() => {});
 loadThemes();
 
 // ------------------------------------------------------------------ boot
