@@ -48,6 +48,7 @@ internal sealed partial class AppHost
         if (Remote != null) throw new InvalidOperationException("A window showing a server's sessions can't add sessions from other servers.");
         c = new ServerConnection(target, RunOnUi);
         c.PageMessage += OnServerMessage;
+        c.ToolCall += OnServerToolCall;
         c.StateChanged += _ => Post(new { type = "servers", servers = ServersState() });
         servers[target] = c;
         c.Connect();
@@ -93,6 +94,7 @@ internal sealed partial class AppHost
                     // Removed there too. A server that can't be reached keeps it, and shows it again once it can be.
                     if (c.IsOnline) await ForwardAsync(c, msg, ss.Info.RemoteId);
                     ForgetServerSession(ss);
+                    ForgetPanels(ss.Info.Id);
                     SaveSessions();
                     Post(SessionList());
                     return (true, null);
@@ -154,6 +156,27 @@ internal sealed partial class AppHost
             ? p.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!).ToArray() : [];
         if (c.State == "connecting") await c.WhenSettledAsync(TimeSpan.FromSeconds(30));
         return await ServerFiles.UploadAsync(paths, m => c.RequestAsync(m), c.Send);
+    }
+
+    /// <summary>
+    /// A server session's call to a tool (show_panel, send_message…), answered here as for a session here: its panels
+    /// show here, and its messages go to and from the sessions here.
+    /// </summary>
+    private async void OnServerToolCall(ServerConnection c, int id, string remoteId, JsonElement message)
+    {
+        JsonObject? reply;
+        try
+        {
+            reply = FindServerSession(c.Target, remoteId) is { } ss && mcp != null
+                ? await mcp.HandleAsync(ss.Info.Id, message)
+                : Panels.PanelMcp.Error(message.TryGetProperty("id", out var rid) ? JsonNode.Parse(rid.GetRawText()) : null, -32603, "LlamaTree doesn't know this session.");
+        }
+        catch (Exception ex)
+        {
+            reply = Panels.PanelMcp.Error(null, -32603, ex.Message);
+        }
+        try { c.Send(JsonSerializer.Serialize(new { type = "tools.reply", id, reply }, JsonOptions)); }
+        catch (InvalidOperationException) { /* the connection went: the server answers it itself */ }
     }
 
     private ServerSession? FindServerSession(string server, string? remoteId) =>

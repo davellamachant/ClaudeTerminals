@@ -220,10 +220,14 @@ internal sealed partial class AppHost
     private List<RelayPeer> RelayPeers()
     {
         // A session counts in a project only while that project exists (as the page shows it), for plugins' projects too.
-        string? ProjectOf(TerminalSession s) => projects.Any(p => p.Id == s.Info.Project) ? s.Info.Project : null;
+        string? ProjectOf(SessionInfo s) => projects.Any(p => p.Id == s.Project) ? s.Project : null;
         var list = order.Where(sessions.ContainsKey).Select(id => sessions[id]).Where(s => s.Agent != null).Select(s => new RelayPeer(
-            s.Id, s.Info.Name.Length > 0 ? s.Info.Name : s.Id, ProjectOf(s), projects.FirstOrDefault(p => p.Id == s.Info.Project)?.Name,
+            s.Id, s.Info.Name.Length > 0 ? s.Info.Name : s.Id, ProjectOf(s.Info), projects.FirstOrDefault(p => p.Id == s.Info.Project)?.Name,
             s.Agent?.Name, s.IsRunning)).ToList();
+        // Sessions on servers too: their tool calls are answered here while their server is connected (AppHost.Servers).
+        list.AddRange(order.Where(serverSessions.ContainsKey).Select(id => serverSessions[id]).Where(x => Agents.For(x.Info.Command) != null).Select(x => new RelayPeer(
+            x.Info.Id, x.Info.Name.Length > 0 ? x.Info.Name : x.Info.Id, ProjectOf(x.Info), projects.FirstOrDefault(p => p.Id == x.Info.Project)?.Name,
+            Agents.For(x.Info.Command)?.Name, x.Running)));
         // Plugins allowed to message sessions take part too, as "plugin:<id>" (see PluginGrants.RelayGate).
         list.AddRange(plugins.Values.Where(p => p.Access.Contains("message") && grants.State(p.Id, "message") == "allow")
             .Select(p => new RelayPeer(PluginGrants.PeerPrefix + p.Id, p.Title, null, null, "Plugin", true, p.Inbox)));
@@ -258,6 +262,7 @@ internal sealed partial class AppHost
         _ => throw new ArgumentException($"There's no decision \"{s}\"."),
     };
     private PanelServer? panelServer;
+    private PanelMcp? mcp;   // the tools sessions call (panels, messages), here and on servers (see AppHost.Servers)
 
     private static string PanelConfigFolder => Path.Combine(SessionStore.AppDataFolder, "panels");
 
@@ -291,9 +296,9 @@ internal sealed partial class AppHost
 
     private void StartPanels()
     {
-        panelStore.KeepOwners(sessions.Keys);
+        panelStore.KeepOwners(order);
         panelStore.Changed += change => RunOnUi(() => Post(PanelsMessage(change)));
-        relay.Policy.KeepSessions(sessions.Keys);
+        relay.Policy.KeepSessions(order);
         relay.Gate = grants.RelayGate;
         relay.SetPeers(RelayPeers());
         // Answers about plugins change which plugins take part in messages, so the peers are read again too.
@@ -303,7 +308,7 @@ internal sealed partial class AppHost
         relay.Delivered += m => RunOnUi(() => Post(new { type = "relay.message", to = m.To, from = m.From, unread = relay.Unread(m.To) }));
         relay.Changed += () => RunOnUi(() => Post(new { type = "relay", state = RelayState() }));
         relay.Policy.Changed += () => RunOnUi(() => Post(new { type = "relay", state = RelayState() }));
-        var mcp = new PanelMcp(panelStore, relay);
+        mcp = new PanelMcp(panelStore, relay);
         // A first prompt that couldn't go on the command line is typed once Claude is up (it connects as it starts).
         mcp.Initialized += id => RunOnUi(async () =>
         {
@@ -314,6 +319,8 @@ internal sealed partial class AppHost
         });
         try { panelServer = PanelServer.TryStart(mcp); }
         catch (Exception) { /* sessions start without panels */ }
+        // Shown among another computer's sessions: its window answers the sessions' tool calls while it's attached.
+        if (panelServer != null) panelServer.ForwardToolCall = (session, m) => Remote != null ? window.ForwardToolCall(session, m) : null;
     }
 
     private object PanelsMessage(PanelChange? change = null) => new
@@ -349,8 +356,8 @@ internal sealed partial class AppHost
     private void ForgetPanels(string sessionId)
     {
         panelServer?.Forget(sessionId);
-        panelStore.KeepOwners(sessions.Keys);
-        relay.Policy.KeepSessions(sessions.Keys);
+        panelStore.KeepOwners(order);
+        relay.Policy.KeepSessions(order);
         try { File.Delete(Path.Combine(PanelConfigFolder, $"mcp-{sessionId}.json")); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }

@@ -52,6 +52,9 @@ internal sealed class ServerConnection : IDisposable
     /// <summary>The server's host told its page something (a session's output, its session list…): the JSON, on the app thread.</summary>
     public event Action<ServerConnection, string>? PageMessage;
 
+    /// <summary>A server session's call to a tool (its id there, the JSON-RPC message), to answer with <see cref="Send"/>: { type: "tools.reply", id, reply }.</summary>
+    public event Action<ServerConnection, int, string, JsonElement>? ToolCall;
+
     /// <summary><see cref="State"/> changed, or the host came back (the page should be told again what its sessions show).</summary>
     public event Action<ServerConnection>? StateChanged;
 
@@ -106,8 +109,9 @@ internal sealed class ServerConnection : IDisposable
         };
         channel.Start();
         // To the server's host this is a window on another computer: it opens nothing on its own desktop, sending files
-        // here instead, and sends no plugins (this host doesn't show a server's plugins).
-        channel.Send(LinkKind.Hello, JsonSerializer.Serialize(new { pid = (int?)null, plugins = (object?)null, remote = Environment.MachineName }, JsonOptions));
+        // here instead, and sends no plugins (this host doesn't show a server's plugins). Its sessions' tool calls
+        // (panels, messages) are answered here, so they show and reach sessions here too (see ToolCall).
+        channel.Send(LinkKind.Hello, JsonSerializer.Serialize(new { pid = (int?)null, plugins = (object?)null, remote = Environment.MachineName, tools = true }, JsonOptions));
         runOnUi(() => { if (mine == attempt && !disposed) pending = channel; else channel.Close(); });
     }
 
@@ -140,6 +144,10 @@ internal sealed class ServerConnection : IDisposable
                     State = "elsewhere";
                     Problem = "Another LlamaTree window is showing this server's sessions.";
                     channel.Close();
+                    break;
+                case "tools":
+                    if (link == channel && op.TryGetProperty("id", out var callId) && callId.TryGetInt32(out var call) && op.TryGetProperty("message", out var message))
+                        ToolCall?.Invoke(this, call, Str(op, "session"), message.Clone());
                     break;
                 case "file":
                     if (copies.FilePart(Str(op, "token"), Str(op, "name"), Str(op, "data"), Int(op, "index"), op.TryGetProperty("last", out var l) && l.ValueKind == JsonValueKind.True) is { } opened)
