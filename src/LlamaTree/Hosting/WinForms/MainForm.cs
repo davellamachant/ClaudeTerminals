@@ -23,7 +23,7 @@ internal sealed class MainForm : Form, HostLink.IWindow
 
     public MainForm()
     {
-        Text = AppHost.Title;   // shown in the taskbar and Alt+Tab
+        Text = HostLink.WindowTitle;   // shown in the taskbar and Alt+Tab
         BackColor = Color.FromArgb(0x1f, 0x1f, 0x1f);
         StartPosition = FormStartPosition.CenterScreen;
         Size = new Size(1600, 1000);

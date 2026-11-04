@@ -211,7 +211,10 @@ host.addEventListener('message', (e) => {
     case 'output': onOutput(m.id, m.data); break;
     case 'replay': onReplay(m.id, m.data); break;
     case 'closeRequested': onCloseRequested(); break;
-    case 'host.failed': onHostFailed(); break;
+    case 'host.failed': onHostFailed(m); break;
+    case 'host.reconnecting': onReconnecting(m); break;
+    case 'machine': onMachine(m); break;
+    case 'files.browse': browseServerFolder(m.path, m.select); break;
     case 'exited': onExited(m.id, m.code); break;
     case 'git.status': onGitStatus(m); break;
     case 'panels': onPanels(m); break;
@@ -1740,7 +1743,7 @@ function sessionMenu(s, x, y, from = 'session') {
     { label: 'Move to project…', action: () => showEditDialog(s, 'project') },
     { label: s.running ? 'Restart session' : 'Start session', action: () => (s.running ? confirmRestart(s) : restartSession(s)) },
     s.running && { label: 'Stop session', action: () => confirmStop(s) },
-    { label: `Open folder in ${IS_MAC || IS_LINUX ? FILE_MANAGER : 'Explorer'}`, action: () => request('openFolder', { id: s.id }) },
+    { label: machine ? 'Browse the folder' : `Open folder in ${IS_MAC || IS_LINUX ? FILE_MANAGER : 'Explorer'}`, action: () => request('openFolder', { id: s.id }) },
     '-',
     { label: 'Move left', action: () => moveSession(s, -1) },
     { label: 'Move right', action: () => moveSession(s, 1) },
@@ -2058,7 +2061,7 @@ function showAddDialog(mode = 'new', from = null) {
   // previous default rather than a choice, so it gives way to the new one.
   const remembered = store.get('lastCommand', null);
   const lastCommand = !remembered || remembered === 'claude --continue' ? DEFAULT_COMMAND : remembered;
-  const dir = h('input', { value: from?.directory ?? '', placeholder: 'D:\\Source\\MyRepo', spellcheck: 'false' });
+  const dir = h('input', { value: from?.directory ?? '', placeholder: machine || IS_LINUX ? '/home/you/my-repo' : IS_MAC ? '/Users/you/my-repo' : 'D:\\Source\\MyRepo', spellcheck: 'false' });
   const name = h('input', { value: from?.name ?? '', placeholder: '(Session Name)', spellcheck: 'false' });
   const command = h('input', { value: lastCommand, spellcheck: 'false' });
   const wtHost = h('div', { class: 'field', hidden: true });
@@ -2094,8 +2097,19 @@ function showAddDialog(mode = 'new', from = null) {
   }, 250);
   dir.addEventListener('input', loadWorktrees);
 
+  // A server's folders are browsed in the page (this computer's folder picker can't reach them), below the folder box.
+  const browserHost = h('div', { class: 'field', hidden: true });
   const browse = h('button', {
-    class: 'btn', onclick: async () => {
+    class: 'btn',
+    onclick: async () => {
+      if (machine) {
+        browserHost.hidden = !browserHost.hidden;
+        if (!browserHost.hidden) browserHost.replaceChildren(serverBrowser({
+          path: dir.value.trim() || lastDir,
+          onPick: (p) => { dir.value = p; browserHost.hidden = true; loadWorktrees(); dir.focus(); },
+        }));
+        return;
+      }
       const picked = await request('pickFolder', { initial: dir.value || lastDir });
       if (picked) { dir.value = picked; loadWorktrees(); }
     },
@@ -2202,6 +2216,7 @@ function showAddDialog(mode = 'new', from = null) {
     !firstPrompt && h('div', { class: 'seg' }, segNew, segResume),
     pickerHost,
     field('Folder (repository or worktree)', h('div', { class: 'inline' }, dir, browse)),
+    browserHost,
     field('Name', name, 'Leave it empty to use the folder\'s name.'),
     firstPrompt && field('First prompt', firstPrompt, 'From the panel. Starts a new conversation in this session; edit it first if you like.'),
     field('Command', h('div', { class: 'combo' }, command, suggest), commandNote),
@@ -3493,7 +3508,7 @@ function fileSection(s, kind, title, files) {
           : { label: 'Stage', action: () => gitOp(s, 'git.stage', folderFiles.map((f) => f.path)) },
         undoableInFolder.length && { label: 'Undo Changes…', danger: true, action: () => confirmUndo(s, kind, undoableInFolder, folder) },
         '-',
-        { label: `Open in ${FILE_MANAGER}`, action: () => request('git.openFolder', { id: s.id, path: folder }) },
+        { label: machine ? 'Browse the folder' : `Open in ${FILE_MANAGER}`, action: () => request('git.openFolder', { id: s.id, path: folder }) },
       ]);
     })];
 }
@@ -5786,7 +5801,175 @@ async function onCloseRequested() {
 }
 
 /** The window couldn't reach a session host, nor start one. */
-function onHostFailed() {
+// ------------------------------------------------------------------ servers
+
+/**
+ * Whose sessions this window shows: null for this computer's; for a server's (a window opened with Connect to a
+ * server…), { remote: the SSH target, machine, version: the server's LlamaTree, windowVersion: this one's }.
+ */
+let machine = null;
+
+function onMachine(m) {
+  if (!m.remote) return;
+  machine = m;
+  document.body.classList.add('remote');
+  $('#remoteBadge')?.remove();
+  $('#appVersion').before(h('span', { id: 'remoteBadge', class: 'remote-badge', title: `These sessions run on ${m.machine || m.remote}, reached over SSH as ${m.remote}. They keep running there when this window closes or the connection drops.` },
+    iconEl('terminal'), m.remote));
+  if (m.version && m.windowVersion && m.version !== m.windowVersion)
+    toast(`${m.remote} has LlamaTree ${m.version}, and this computer ${m.windowVersion}. If something doesn’t work, update the older one.`, true);
+}
+
+/** The connection to the server dropped: its sessions run on there, and the window is trying to reach them again. */
+function onReconnecting(m) {
+  openModal(`Reconnecting to ${m.remote}…`, [
+    h('p', {}, 'The connection to the server dropped. Your sessions keep running there, and LlamaTree is trying to reach them again.'),
+    h('p', {}, 'They’ll show here as soon as it does.'),
+  ], [h('div', { class: 'spacer' }), h('button', { class: 'btn primary', onclick: closeModal }, 'OK')]);
+}
+
+/** Opens a window for a server's sessions: ssh to it, using your keys or ssh-agent. */
+function connectToServerDialog() {
+  const recent = store.get('servers', []);
+  const target = h('input', { placeholder: 'user@server', spellcheck: 'false', value: recent[0] ?? '', list: 'recentServers' });
+  const error = h('div', { class: 'form-error', hidden: true });
+  const connect = async () => {
+    const t = target.value.trim();
+    if (!t) return;
+    try {
+      await request('app.openRemote', { target: t });
+      store.set('servers', [t, ...recent.filter((r) => r !== t)].slice(0, 8));
+      closeModal();
+      toast(`Opening a window for ${t}…`);
+    } catch (err) {
+      error.textContent = err.message;
+      error.hidden = false;
+    }
+  };
+  target.addEventListener('keydown', (e) => { if (e.key === 'Enter') connect(); });
+  openModal('Connect to a server', [
+    field('Server', target, 'As user@server, ssh://user@server:port, or a Host from your SSH config.'),
+    h('datalist', { id: 'recentServers' }, recent.map((r) => h('option', { value: r }))),
+    h('p', { class: 'help' }, 'Its sessions open in a window of their own, and keep running on the server when the window closes or the connection drops. LlamaTree signs in with ssh using your keys or ssh-agent (it can’t ask for a password), and LlamaTree must be installed on the server.'),
+    error,
+  ], [h('div', { class: 'spacer' }), h('button', { class: 'btn', onclick: closeModal }, 'Cancel'), h('button', { class: 'btn primary', onclick: connect }, 'Connect')]);
+}
+
+/**
+ * A server's folders and files, for a window showing a server's sessions (this computer's file manager and folder
+ * picker can't reach them). Double-clicking a folder (or Enter) goes into it; a file opens on this computer, from a
+ * copy the server sends (fs.open). With onPick it chooses a folder: its button picks the folder selected, else the one
+ * shown. `select` names an entry to select once the folder is shown. Returns the element.
+ */
+function serverBrowser({ path = '', select = null, onPick = null } = {}) {
+  let shown = null;   // the folder's listing (fs.list): { path, parent, home, separator, entries, more }
+  let showHidden = store.get('browser.hidden', false);
+  const where = h('input', { class: 'fb-path', spellcheck: 'false', title: 'A folder on the server: type a path and press Enter' });
+  const list = h('div', { class: 'fb-list', tabindex: '0' });
+  const status = h('span', { class: 'fb-status' });
+  const pick = onPick && h('button', { class: 'btn primary', onclick: () => onPick(selectedEntry()?.folder ? full(selectedEntry().name) : shown?.path) }, 'Use this folder');
+  const full = (name) => shown.path.replace(/[\\/]+$/, '') + shown.separator + name;
+  const rows = () => [...list.querySelectorAll('.fb-item')];
+  const selectedEntry = () => { const r = list.querySelector('.fb-item.selected'); return r ? r._entry : null; };
+  const choose = (row) => {
+    for (const r of rows()) r.classList.toggle('selected', r === row);
+    row?.scrollIntoView({ block: 'nearest' });
+    if (pick) pick.textContent = row?._entry.folder ? `Use ${row._entry.name}` : 'Use this folder';
+  };
+  const go = async (p, sel = null) => {
+    try {
+      shown = await request('fs.list', { path: p });
+    } catch (err) {
+      status.textContent = err.message;
+      status.classList.add('form-error');
+      if (!shown) where.value = p;
+      return;
+    }
+    status.classList.remove('form-error');
+    where.value = shown.path;
+    draw(sel);
+  };
+  const open = (e) => {
+    if (e.folder) { go(full(e.name)); return; }
+    toast(`Opening ${e.name}…`);
+    request('fs.open', { path: full(e.name) }).catch((err) => toast(err.message, true));
+  };
+  const up = () => { if (shown?.parent) go(shown.parent, shown.path.replace(/[\\/]+$/, '').split(/[\\/]/).pop()); };
+  const draw = (sel) => {
+    const entries = shown.entries.filter((e) => showHidden || !e.hidden);
+    list.replaceChildren(...entries.map((e) => {
+      const row = h('div', { class: 'fb-item' + (e.hidden ? ' hidden-entry' : ''), title: e.name, onclick: () => choose(row), ondblclick: () => open(e) },
+        iconEl(e.folder ? 'folder' : 'file'), h('span', { class: 'name' }, e.name), !e.folder && h('span', { class: 'size' }, sizeText(e.size)));
+      row._entry = e;
+      return row;
+    }));
+    if (!entries.length) list.append(h('div', { class: 'fb-empty' }, 'This folder is empty.'));
+    const folders = entries.filter((e) => e.folder).length;
+    const hiddenCount = shown.entries.length - entries.length;
+    const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+    status.textContent = `${plural(folders, 'folder')}, ${plural(entries.length - folders, 'file')}` +
+      (hiddenCount ? ` (${hiddenCount} hidden)` : '') + (shown.more ? ', and more not listed' : '');
+    choose(rows().find((r) => r._entry.name === sel) ?? null);
+    if (!sel) list.scrollTop = 0;
+  };
+  where.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); go(where.value); } });
+  list.addEventListener('keydown', (e) => {
+    const all = rows();
+    const at = all.findIndex((r) => r.classList.contains('selected'));
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      choose(all[Math.max(0, Math.min(all.length - 1, at + (e.key === 'ArrowDown' ? 1 : -1)))]);
+    } else if (e.key === 'Enter' && at >= 0) {
+      e.preventDefault(); e.stopPropagation();
+      open(all[at]._entry);
+    } else if (e.key === 'Backspace') {
+      e.preventDefault();
+      up();
+    }
+  });
+  const hiddenBox = h('input', { type: 'checkbox', checked: showHidden, onchange: () => { showHidden = hiddenBox.checked; store.set('browser.hidden', showHidden); if (shown) draw(selectedEntry()?.name); } });
+  go(path, select);
+  return h('div', { class: 'file-browser' },
+    h('div', { class: 'fb-bar' },
+      h('button', { class: 'icon-btn', title: 'Up a folder (Backspace)', onclick: up }, iconEl('up')),
+      h('button', { class: 'icon-btn', title: 'Home folder', onclick: () => go('~') }, iconEl('folder')),
+      where),
+    list,
+    h('div', { class: 'fb-foot' }, status, h('label', { class: 'fb-hidden' }, hiddenBox, 'Show hidden'), pick));
+}
+
+/** A size in bytes, as KB, MB or GB. */
+function sizeText(n) {
+  if (n == null) return '';
+  if (n < 1024) return `${n} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let v = n / 1024, i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${units[i]}`;
+}
+
+/** A server's folder, in a dialog of its own: what "open the folder" does for a window showing a server's sessions. */
+function browseServerFolder(path, select) {
+  const browser = serverBrowser({ path, select });
+  openModal(`Files on ${machine?.machine || machine?.remote || 'the server'}`, [browser], [
+    h('button', { class: 'btn', onclick: () => navigator.clipboard.writeText(browser.querySelector('.fb-path').value) }, 'Copy path'),
+    h('div', { class: 'spacer' }),
+    h('button', { class: 'btn primary', onclick: closeModal }, 'Close'),
+  ]);
+  $('#modalHost .modal').classList.add('wide');
+  setTimeout(() => browser.querySelector('.fb-list').focus(), 30);
+}
+
+function onHostFailed(m = {}) {
+  if (m.remote) {
+    openModal(`Couldn’t reach ${m.remote}`, [
+      h('p', {}, 'LlamaTree couldn’t connect to the server’s sessions.'),
+      m.message && h('pre', { class: 'host-error' }, m.message),
+      h('p', { class: 'help' }, 'It signs in with ssh using your keys or ssh-agent, without asking for a password, and needs LlamaTree installed on the server (the llamatree command). Check that ssh ' + m.remote + ' works from a terminal.'),
+    ], [h('div', { class: 'spacer' }), h('button', { class: 'btn', onclick: closeModal }, 'Close'),
+      h('button', { class: 'btn primary', onclick: () => { closeModal(); request('app.reconnect').catch(() => {}); } }, 'Try again')]);
+    return;
+  }
   openModal('LlamaTree couldn’t start', [
     h('p', {}, 'The part of LlamaTree that runs your sessions didn’t start, so no sessions can be shown.'),
     h('p', {}, 'Close LlamaTree and open it again. If it keeps happening, restart your computer.'),
@@ -5795,19 +5978,24 @@ function onHostFailed() {
 
 function versionMenu(x, y) {
   showMenu(x, y, [
-    { icon: 'refresh', label: 'Check for updates', action: () => checkForUpdates(true) },
-    { icon: 'down', label: 'Check for updates automatically', checked: updates.auto, action: () => {
-      updates.auto = !updates.auto;
-      store.set('autoUpdateCheck', updates.auto);
-      if (updates.auto) checkForUpdates();
-    } },
+    // A server's LlamaTree is updated on the server, as its other packages are.
+    ...(machine ? [] : [
+      { icon: 'refresh', label: 'Check for updates', action: () => checkForUpdates(true) },
+      { icon: 'down', label: 'Check for updates automatically', checked: updates.auto, action: () => {
+        updates.auto = !updates.auto;
+        store.set('autoUpdateCheck', updates.auto);
+        if (updates.auto) checkForUpdates();
+      } },
+    ]),
     { icon: 'bulb', label: 'Show tips and offers', checked: notices.tips, action: () => setShowTips(!notices.tips) },
     { icon: 'gift', label: 'Tips and offers…', action: showNoticesDialog },
     '-',
     { header: 'Closing the window with sessions running' },
     ...[['ask', 'Ask each time'], ['keep', 'Keep them running'], ['stop', 'Stop them']].map(([value, label]) =>
       ({ label, checked: closeChoice() === value, action: () => store.set('closeChoice', value) })),
-    { label: 'Quit and stop all sessions', action: () => request('app.close', { stop: true }) },
+    { label: machine ? `Quit and stop all sessions on ${machine.remote}` : 'Quit and stop all sessions', action: () => request('app.close', { stop: true }) },
+    '-',
+    { icon: 'terminal', label: 'Connect to a server…', action: connectToServerDialog },
     '-',
     { icon: 'info', label: `LlamaTree ${updates.current ?? ''}`.trim() + ' · release notes',
       action: () => request('openUrl', { uri: 'https://github.com/LlamachantTechnology/LlamaTree/releases' }) },

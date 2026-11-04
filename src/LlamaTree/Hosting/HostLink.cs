@@ -1,13 +1,21 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using LlamaTree.Hosting.Link;
+using LlamaTree.Platform;
 
 namespace LlamaTree.Hosting;
 
 /// <summary>
 /// The window's side of the session host (see <see cref="SessionHost"/>): connects to this profile's host, starting
 /// one if none is running, passes the app page's messages to it and its messages to the page, and does what only the
-/// window can (the folder picker, the clipboard, the title bar's colours, serving plugins' pages, closing).
+/// window can (the folder picker, the clipboard, the title bar's colours, opening web pages, serving plugins' pages,
+/// closing).
+/// <para>
+/// A window started with --remote shows the sessions of a host on another computer instead, reached over SSH (see
+/// <see cref="HostBridge"/>). Losing the connection then leaves those sessions running there; the window keeps trying
+/// to reconnect.
+/// </para>
 /// <para>
 /// Closing the window asks the page first: with sessions running, it asks whether to keep them running without the
 /// window or stop them (see the page's closeRequested). A page that doesn't answer leaves them running, as nothing is
@@ -47,15 +55,36 @@ internal sealed class HostLink
         void ApplyTheme(bool light, string? background);
     }
 
+    /// <summary>The SSH target (user@server, or a Host from ~/.ssh/config) whose sessions this window shows, or null for this computer's.</summary>
+    public static string? Remote { get; set; }
+
+    /// <summary>The window's title: the app's, and which computer's sessions it shows when they aren't this one's.</summary>
+    public static string WindowTitle => Remote is { } r ? $"{AppHost.Title} — {r}" : AppHost.Title;
+
+    /// <summary>What's run on the server: LlamaTree's bridge to its session host. LLAMATREE_REMOTE_COMMAND overrides it.</summary>
+    private static string RemoteCommand =>
+        Environment.GetEnvironmentVariable("LLAMATREE_REMOTE_COMMAND") is { Length: > 0 } c ? c : "llamatree --attach";
+
+    /// <summary>Waits between attempts to reach a server again, the last repeated.</summary>
+    private static readonly int[] RetrySeconds = [2, 5, 10, 20, 30];
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly IWindow window;
     private readonly List<string> waiting = [];   // the page's messages from before the host answered
     private LinkChannel? channel;
+    private volatile LinkChannel? latest;          // the connection being made or in use
+    private StringBuilder sshErrors = new();
+    private Task sshErrorsDone = Task.CompletedTask;
     private bool pageUp;
     private bool closing;
     private bool closeAcknowledged;
     private int reconnects;
+    private bool welcomed;      // this connection's host has said who it is
+    private bool everWelcomed;  // some host has: the page has shown sessions
+    private bool announced;
+    private string? hostVersion, hostMachine;
+    private string? failure;   // a host.failed message the page hasn't been sent yet
 
     public HostLink(IWindow window)
     {
@@ -66,32 +95,50 @@ internal sealed class HostLink
     /// <summary>The window is closing for good: no question, and losing the host is expected.</summary>
     public bool Closing => closing;
 
+    /// <summary>Whether <paramref name="target"/> can be handed to ssh as where to connect: never an option, a space or a control character.</summary>
+    public static bool IsValidTarget(string? target) =>
+        target is { Length: > 0 and <= 255 } && target[0] != '-' && !target.Any(c => char.IsWhiteSpace(c) || char.IsControl(c));
+
     private async Task ConnectAsync(bool reload)
     {
-        var stream = await HostEndpoint.ConnectAsync(TimeSpan.FromMilliseconds(300));
-        if (stream == null && StartHost())
-            for (var i = 0; i < 60 && stream == null; i++) stream = await HostEndpoint.ConnectAsync(TimeSpan.FromMilliseconds(250));
+        Stream? stream;
+        string? failure = null;
+        if (Remote == null)
+        {
+            stream = await HostEndpoint.ConnectAsync(TimeSpan.FromMilliseconds(300));
+            if (stream == null && SessionHost.StartDetached())
+                for (var i = 0; i < 60 && stream == null; i++) stream = await HostEndpoint.ConnectAsync(TimeSpan.FromMilliseconds(250));
+        }
+        else
+        {
+            (stream, failure) = StartSsh();
+        }
         if (stream == null)
         {
-            window.RunOnUi(() => window.PostJson(JsonSerializer.Serialize(new { type = "host.failed" }, JsonOptions)));
+            window.RunOnUi(() => Failed(failure));
             return;
         }
         var link = new LinkChannel(stream);
-        link.Received += OnHostMessage;
+        latest = link;
+        link.Received += (kind, json) => OnHostMessage(link, kind, json);
         link.Closed += () => window.RunOnUi(() => OnLost(link));
         link.Start();
         link.Send(LinkKind.Hello, JsonSerializer.Serialize(new
         {
-            pid = Environment.ProcessId,
+            // A window on another computer: the host can't wait for its process (and sends it its plugins' files to serve).
+            pid = Remote == null ? Environment.ProcessId : (int?)null,
             plugins = new { origin = window.Plugins.Origin, key = window.Plugins.Key },
+            remote = Remote,
         }, JsonOptions));
         window.RunOnUi(() =>
         {
+            if (link != latest || !link.IsOpen) return;   // already lost: OnLost has it
             channel = link;
             if (reload)
             {
                 waiting.Clear();
                 pageUp = false;
+                announced = false;
                 window.ReloadPage();
                 return;
             }
@@ -100,34 +147,89 @@ internal sealed class HostLink
         });
     }
 
-    /// <summary>Starts this profile's session host (this program, with --host), detached so it outlives the window.</summary>
-    private static bool StartHost()
+    /// <summary>Runs ssh to the server's bridge; its output and input are the connection. Its errors are kept, to show if it fails.</summary>
+    private (Stream?, string?) StartSsh()
     {
+        var errors = new StringBuilder();
+        var errorsDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        sshErrors = errors;
+        sshErrorsDone = errorsDone.Task;
+        // LLAMATREE_SSH: another ssh program, for one that isn't on the PATH.
+        var program = Environment.GetEnvironmentVariable("LLAMATREE_SSH") is { Length: > 0 } p ? p : "ssh";
+        var psi = new ProcessStartInfo(program)
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        // No password prompts (there's no terminal to type one in): a key, or ssh-agent. Keep-alives notice a dead
+        // connection within about 45 seconds.
+        foreach (var a in new[] { "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "--", Remote!, RemoteCommand })
+            psi.ArgumentList.Add(a);
+        Process? ssh;
         try
         {
-            var psi = new ProcessStartInfo(Environment.ProcessPath ?? throw new InvalidOperationException("No program path."))
-            {
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                WorkingDirectory = AppContext.BaseDirectory,
-            };
-            psi.ArgumentList.Add("--host");
-            Process.Start(psi)?.Dispose();
-            return true;
+            ssh = Process.Start(psi);
         }
-        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        catch (System.ComponentModel.Win32Exception)
         {
-            return false;
+            return (null, "ssh isn't installed on this computer (or isn't on the PATH). LlamaTree uses it to reach the server.");
         }
+        if (ssh == null) return (null, "ssh didn't start.");
+        ssh.ErrorDataReceived += (_, e) =>
+        {
+            if (e.Data == null)
+            {
+                errorsDone.TrySetResult();   // ssh has ended
+                return;
+            }
+            lock (errors) { if (errors.Length < 4000) errors.AppendLine(e.Data); }
+        };
+        ssh.BeginErrorReadLine();
+        return (new DuplexStream(ssh.StandardOutput.BaseStream, ssh.StandardInput.BaseStream, () =>
+        {
+            try { if (!ssh.HasExited) ssh.Kill(); } catch (Exception) { }
+            ssh.Dispose();
+        }), null);
+    }
+
+    /// <summary>No host could be reached: the page says why, and can ask to try again. Kept until the page is there (ssh can fail before it has loaded).</summary>
+    private void Failed(string? why)
+    {
+        failure = JsonSerializer.Serialize(new { type = "host.failed", remote = Remote, message = why }, JsonOptions);
+        if (pageUp) TellFailure();
+    }
+
+    private void TellFailure()
+    {
+        if (failure == null) return;
+        window.PostJson(failure);
+        failure = null;
     }
 
     /// <summary>A message from the app page (the window has made sure it came from the page).</summary>
     public void Receive(string json)
     {
         pageUp = true;
+        TellFailure();
+        Announce();
         if (TryHandleHere(json)) return;
         if (channel is { IsOpen: true } c) c.Send(LinkKind.Page, json);
         else waiting.Add(json);
+    }
+
+    /// <summary>Tells the page whose sessions it shows, once the host has said and the page is there to hear it.</summary>
+    private void Announce()
+    {
+        if (announced || !pageUp || !welcomed) return;
+        announced = true;
+        window.PostJson(JsonSerializer.Serialize(new
+        {
+            type = "machine", remote = Remote, machine = hostMachine, version = hostVersion,
+            windowVersion = Updates.UpdateService.CurrentVersion.ToString(),
+        }, JsonOptions));
     }
 
     /// <summary>The page's requests only the window can answer.</summary>
@@ -148,16 +250,30 @@ internal sealed class HostLink
             return true;   // not a message: dropped
         }
 
-        object? result;
+        object? result = null;
         try
         {
             switch (type)
             {
                 case "pickFolder":
                 {
+                    if (Remote != null) throw new InvalidOperationException("This computer's folder picker can't browse the server's folders.");
                     var initial = Str(msg, "initial");
                     result = window.PickFolder("Choose the folder (worktree) for the session", Directory.Exists(initial) ? initial : null);
                     break;
+                }
+                case "clipboard.files" when Remote != null:
+                {
+                    // Files and pictures pasted into a server's session are copied there first: their paths there are pasted.
+                    var paths = window.ClipboardFiles();
+                    var link = channel ?? throw new InvalidOperationException($"Not connected to {Remote}.");
+                    _ = UploadAsync(link, paths).ContinueWith(t => window.RunOnUi(() =>
+                    {
+                        if (reqId == null) return;
+                        if (t.IsCompletedSuccessfully) Reply(reqId.Value, true, t.Result, null);
+                        else Reply(reqId.Value, false, null, t.Exception?.InnerException?.Message ?? "The files couldn't be copied to the server.");
+                    }), TaskScheduler.Default);
+                    return true;
                 }
                 case "clipboard.files":
                     result = window.ClipboardFiles();
@@ -167,11 +283,28 @@ internal sealed class HostLink
                     break;
                 case "theme":
                     window.ApplyTheme(msg.TryGetProperty("light", out var l) && l.ValueKind == JsonValueKind.True, Str(msg, "background") is { Length: > 0 } b ? b : null);
-                    result = null;
+                    break;
+                case "openUrl":
+                    // A web page opens where the person is: on this computer, whichever computer the sessions are on.
+                    if (Uri.TryCreate(Str(msg, "uri"), UriKind.Absolute, out var u) && (u.Scheme == Uri.UriSchemeHttp || u.Scheme == Uri.UriSchemeHttps))
+                        Desktop.OpenExternal(u.AbsoluteUri);
+                    break;
+                case "app.openRemote":
+                {
+                    // Another window, for a server's sessions (this one stays as it is).
+                    var target = Str(msg, "target").Trim();
+                    if (!IsValidTarget(target)) throw new InvalidOperationException("Enter a server as user@server, or a Host from your SSH config.");
+                    var psi = new ProcessStartInfo(Environment.ProcessPath ?? throw new InvalidOperationException("No program path.")) { UseShellExecute = false };
+                    psi.ArgumentList.Add("--remote");
+                    psi.ArgumentList.Add(target);
+                    Process.Start(psi)?.Dispose();
+                    break;
+                }
+                case "app.reconnect":
+                    if (channel == null && latest is not { IsOpen: true }) _ = ConnectAsync(reload: everWelcomed);
                     break;
                 case "window.closing":
                     closeAcknowledged = true;   // the page is asking you (see AskToClose)
-                    result = null;
                     break;
                 default:
                     return false;
@@ -189,42 +322,179 @@ internal sealed class HostLink
     private void Reply(int reqId, bool ok, object? result, string? error) =>
         window.PostJson(JsonSerializer.Serialize(new { type = "reply", reqId, ok, result, error }, JsonOptions));
 
-    private void OnHostMessage(char kind, string json)
+    // ---------------------------------------------------------------- the window's own requests to the host
+
+    /// <summary>The window's own requests to the host have negative ids, so their replies are told from the page's.</summary>
+    private int ownRequests;
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<int, TaskCompletionSource<JsonElement>> ownReplies = new();
+    private const string OwnReplyStart = """{"type":"reply","reqId":-""";
+
+    /// <summary>Sends the host a request of the window's own; the task ends with its result.</summary>
+    private Task<JsonElement> RequestAsync(LinkChannel link, object message)
     {
-        if (kind == LinkKind.Page) window.RunOnUi(() => window.PostJson(json));
-        else if (kind == LinkKind.Window) window.RunOnUi(() => DoWindowOp(json));
+        var id = Interlocked.Decrement(ref ownRequests);
+        var reply = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
+        ownReplies[id] = reply;
+        var json = JsonSerializer.SerializeToNode(message, JsonOptions)!.AsObject();
+        json["reqId"] = id;
+        link.Send(LinkKind.Page, json.ToJsonString());
+        return reply.Task.WaitAsync(TimeSpan.FromMinutes(2)).ContinueWith(t =>
+        {
+            ownReplies.TryRemove(id, out _);
+            if (!link.IsOpen && !t.IsCompletedSuccessfully) throw new InvalidOperationException($"The connection to {Remote} ended.");
+            return t.GetAwaiter().GetResult();
+        }, TaskScheduler.Default);
     }
 
-    private void DoWindowOp(string json)
+    /// <summary>A reply to one of the window's own requests (see <see cref="RequestAsync"/>): true if it was one.</summary>
+    private bool TakeOwnReply(string json)
     {
+        if (!json.StartsWith(OwnReplyStart, StringComparison.Ordinal)) return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var m = doc.RootElement;
+            if (!ownReplies.TryRemove(m.GetProperty("reqId").GetInt32(), out var reply)) return true;
+            if (m.TryGetProperty("ok", out var ok) && ok.ValueKind == JsonValueKind.True)
+                reply.TrySetResult(m.TryGetProperty("result", out var r) ? r.Clone() : default);
+            else reply.TrySetException(new InvalidOperationException(Str(m, "error")));
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException or KeyNotFoundException or FormatException) { }
+        return true;
+    }
+
+    /// <summary>
+    /// Copies files from this computer to the server, a part at a time, for pasting into a session there: their paths
+    /// there. Every few parts it waits for the host to have written the ones before, so a big file isn't all held in
+    /// memory waiting to go.
+    /// </summary>
+    private async Task<List<string>> UploadAsync(LinkChannel link, string[] paths)
+    {
+        var copied = new List<string>();
+        foreach (var path in paths)
+        {
+            if (Directory.Exists(path)) throw new InvalidOperationException($"{Path.GetFileName(path)} is a folder: only files can be pasted into a session on a server.");
+            var size = new FileInfo(path).Length;
+            if (size > ServerFiles.MaxFile) throw new InvalidOperationException($"{Path.GetFileName(path)} is too big to paste ({size >> 20} MB; at most {ServerFiles.MaxFile >> 20} MB).");
+        }
+        foreach (var path in paths)
+        {
+            var token = Guid.NewGuid().ToString("N");
+            await RequestAsync(link, new { type = "upload.begin", token, name = Path.GetFileName(path) });
+            await using var f = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1, useAsync: true);
+            var buffer = new byte[ServerFiles.PartSize];
+            Task? written = null;
+            for (var part = 1; ; part++)
+            {
+                var n = await f.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: false);
+                if (n == 0) break;
+                var data = Convert.ToBase64String(buffer, 0, n);
+                if (part % 8 != 0) link.Send(LinkKind.Page, JsonSerializer.Serialize(new { type = "upload.data", token, data }, JsonOptions));
+                else
+                {
+                    if (written != null) await written;
+                    written = RequestAsync(link, new { type = "upload.data", token, data });
+                }
+                if (n < buffer.Length) break;
+            }
+            if (written != null) await written;
+            copied.Add((await RequestAsync(link, new { type = "upload.end", token })).GetString() ?? throw new InvalidOperationException("The server didn't say where the file went."));
+        }
+        return copied;
+    }
+
+    private void OnHostMessage(LinkChannel link, char kind, string json)
+    {
+        if (kind == LinkKind.Page && TakeOwnReply(json)) return;
+        if (kind == LinkKind.Page) window.RunOnUi(() => window.PostJson(json));
+        else if (kind == LinkKind.Window) window.RunOnUi(() => DoWindowOp(link, json));
+    }
+
+    private void DoWindowOp(LinkChannel link, string json)
+    {
+        if (link != latest) return;
         try
         {
             using var doc = JsonDocument.Parse(json);
             var op = doc.RootElement;
             switch (Str(op, "op"))
             {
+                case "welcome":
+                    welcomed = everWelcomed = true;
+                    if (Remote != null) reconnects = 0;   // back after a dropped connection: the waits start short again
+                    hostVersion = Str(op, "version");
+                    hostMachine = Str(op, "machine");
+                    Announce();
+                    break;
                 case "close":
                     closing = true;
                     window.CloseNow();
                     break;
                 case "serve":
-                    window.ServePlugin(Str(op, "id"), Str(op, "folder"));
+                {
+                    // A server's plugin is served from the copy of its folder it has just sent (see ServerCopies).
+                    var id = Str(op, "id");
+                    if (Remote == null) window.ServePlugin(id, Str(op, "folder"));
+                    else if (Plugins.PluginCatalog.IsValidId(id) && Directory.Exists(Copies.PluginFolder(id))) window.ServePlugin(id, Copies.PluginFolder(id));
                     break;
+                }
                 case "unserve":
                     window.StopServingPlugin(Str(op, "id"));
+                    break;
+                // A server's files: one to open here, or a plugin's.
+                case "file" when Remote != null:
+                    if (Copies.FilePart(Str(op, "token"), Str(op, "name"), Str(op, "data"), Int(op, "index"), Bool(op, "last")) is { } opened)
+                        _ = Task.Run(() => Desktop.OpenFileForViewing(opened));
+                    break;
+                case "plugin.begin" when Remote != null:
+                    Copies.PluginBegin(Str(op, "id"));
+                    break;
+                case "plugin.file" when Remote != null:
+                    Copies.PluginPart(Str(op, "id"), Str(op, "path"), Str(op, "data"), Int(op, "index"), Bool(op, "last"));
                     break;
             }
         }
         catch (JsonException) { }
     }
 
-    /// <summary>The host went away without the window closing (it crashed, or was ended): start a new one and reload the page.</summary>
+    /// <summary>
+    /// The connection ended without the window closing. This computer's host crashed or was ended: start a new one and
+    /// reload the page. A server's connection dropped: its sessions run on there, and the window keeps trying to reach
+    /// them. A server never reached says why.
+    /// </summary>
     private void OnLost(LinkChannel link)
     {
-        if (link != channel || closing) return;
+        if (link != latest || closing) return;
         channel = null;
-        if (++reconnects > 3) return;   // something keeps ending it: don't loop
-        _ = ConnectAsync(reload: true);
+        foreach (var id in ownReplies.Keys)
+            if (ownReplies.TryRemove(id, out var reply)) reply.TrySetException(new InvalidOperationException($"The connection to {Remote ?? "LlamaTree"} ended."));
+        copies?.DropAll();
+        var reached = welcomed;
+        welcomed = false;
+        if (Remote == null)
+        {
+            if (++reconnects > 3) return;   // something keeps ending it: don't loop
+            _ = ConnectAsync(reload: true);
+            return;
+        }
+        if (!everWelcomed)
+        {
+            // Its output can end a moment before ssh has finished saying why: wait for that (briefly).
+            var errors = sshErrors;
+            _ = Task.WhenAny(sshErrorsDone, Task.Delay(2000)).ContinueWith(_ => window.RunOnUi(() =>
+            {
+                string why;
+                lock (errors) why = errors.ToString().Trim();
+                Failed(why.Length > 0 ? why : "The connection ended before LlamaTree answered on the server.");
+            }), TaskScheduler.Default);
+            return;
+        }
+        if (reached) window.PostJson(JsonSerializer.Serialize(new { type = "host.reconnecting", remote = Remote }, JsonOptions));
+        var wait = RetrySeconds[Math.Min(reconnects++, RetrySeconds.Length - 1)];
+        _ = Task.Delay(TimeSpan.FromSeconds(wait)).ContinueWith(_ => window.RunOnUi(() =>
+        {
+            if (!closing && channel == null && latest == link) _ = ConnectAsync(reload: true);
+        }));
     }
 
     /// <summary>
@@ -251,8 +521,25 @@ internal sealed class HostLink
     {
         closing = true;
         channel?.Close();
+        latest?.Close();
     }
 
     private static string Str(JsonElement e, string name) =>
         e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : "";
+
+    private static int Int(JsonElement e, string name) =>
+        e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var i) ? i : -1;
+
+    private static bool Bool(JsonElement e, string name) => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.True;
+
+    /// <summary>
+    /// A short name for the server this window shows, for its own single-instance lock and its folder of copies: the
+    /// same however the target's letters are cased.
+    /// </summary>
+    public static string RemoteKey(string remote) =>
+        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(remote.ToLowerInvariant())))[..16];
+
+    /// <summary>This window's copies of the server's files (see <see cref="ServerCopies"/>).</summary>
+    private ServerCopies Copies => copies ??= new ServerCopies(Path.Combine(AppProfile.CustomFolder ?? AppProfile.LocalFolder, "servers", RemoteKey(Remote!)));
+    private ServerCopies? copies;
 }
