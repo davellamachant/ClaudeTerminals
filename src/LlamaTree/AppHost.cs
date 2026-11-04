@@ -49,6 +49,16 @@ internal sealed class AppHost
     /// <summary>The app should end: the sessions were stopped on the way out, or an update is about to install.</summary>
     public event Action? QuitRequested;
 
+    /// <summary>
+    /// How the window reached this host when it's on another computer (its SSH target), else null. Then what would open
+    /// on this machine's desktop is refused (no one is looking at it), and this copy isn't updated from the window: a
+    /// server updates its LlamaTree as it does its other packages.
+    /// </summary>
+    public string? Remote { get; set; }
+
+    /// <summary>Requests that open something on this machine's desktop.</summary>
+    private static readonly HashSet<string> OpensHere = ["openFolder", "terminal.openPath", "openFile", "git.openFolder", "plugins.openFolder", "themes.openFolder"];
+
     /// <summary>Each session's conversation, noted just before an update restarts the app (see <see cref="TerminalSession.ResumeOnce"/>).</summary>
     private static string ResumeFile => Path.Combine(SessionStore.AppDataFolder, "resume-after-update.json");
 
@@ -530,6 +540,8 @@ internal sealed class AppHost
 
     private async Task<object?> HandleAsync(string type, JsonElement msg)
     {
+        if (Remote != null && OpensHere.Contains(type))
+            throw new InvalidOperationException($"That's on {Environment.MachineName}, and LlamaTree can't open files or folders from a server yet.");
         switch (type)
         {
             case "ready":
@@ -963,12 +975,6 @@ internal sealed class AppHost
                 var c = await Task.Run(() => s.Agent?.FindConversation(id, s.Info.Directory));
                 return new { id, saved = c != null, title = c?.Title, started = c?.Started, modified = c?.Modified };
             }
-            case "openUrl":
-            {
-                if (Uri.TryCreate(Str(msg, "uri"), UriKind.Absolute, out var u) && (u.Scheme == Uri.UriSchemeHttp || u.Scheme == Uri.UriSchemeHttps))
-                    Desktop.OpenExternal(u.AbsoluteUri);
-                return null;
-            }
             case "openFolder":
                 Desktop.OpenExternal(Get(msg).Info.Directory);
                 return null;
@@ -978,6 +984,7 @@ internal sealed class AppHost
                 // underline as links. Off the UI thread: a mapped drive can be slow to answer.
                 var dir = Get(msg).Info.Directory;
                 var texts = msg.GetProperty("paths").EnumerateArray().Select(p => p.GetString() ?? "").Take(200).ToArray();
+                if (Remote != null) return texts.Select(_ => (object?)null).ToArray();   // no links: they'd open on the server
                 return await Task.Run(() => texts.Select(t => TerminalPaths.Resolve(t, dir) is { } f ? new { path = f.Path, folder = f.IsFolder } : null).ToArray());
             }
             case "terminal.openPath":
@@ -1157,6 +1164,7 @@ internal sealed class AppHost
             case "update.check":
             {
                 // The page decides when to ask (at start, then every 15 minutes, or from the menu).
+                if (Remote != null) return new { current = UpdateService.CurrentVersion.ToString(), available = false };
                 update = await UpdateService.CheckAsync();
                 return new
                 {

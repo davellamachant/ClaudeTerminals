@@ -23,6 +23,9 @@ internal static class HostEndpoint
         return Path.Combine(folder, name.ToLowerInvariant() + ".sock");
     }
 
+    /// <summary>Whether a window can still find the host: on macOS and Linux, whether the socket file is still there.</summary>
+    public static bool IsListening => OperatingSystem.IsWindows() || File.Exists(Name);
+
     /// <summary>A server end, waiting for a window. More can be made, so a new window can connect while one is still attached.</summary>
     public static NamedPipeServerStream Listen()
     {

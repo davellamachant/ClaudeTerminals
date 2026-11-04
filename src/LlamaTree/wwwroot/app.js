@@ -211,7 +211,9 @@ host.addEventListener('message', (e) => {
     case 'output': onOutput(m.id, m.data); break;
     case 'replay': onReplay(m.id, m.data); break;
     case 'closeRequested': onCloseRequested(); break;
-    case 'host.failed': onHostFailed(); break;
+    case 'host.failed': onHostFailed(m); break;
+    case 'host.reconnecting': onReconnecting(m); break;
+    case 'machine': onMachine(m); break;
     case 'exited': onExited(m.id, m.code); break;
     case 'git.status': onGitStatus(m); break;
     case 'panels': onPanels(m); break;
@@ -2095,7 +2097,8 @@ function showAddDialog(mode = 'new', from = null) {
   dir.addEventListener('input', loadWorktrees);
 
   const browse = h('button', {
-    class: 'btn', onclick: async () => {
+    class: 'btn', hidden: !!machine,   // a server's folders are typed: this computer's picker can't browse them
+    onclick: async () => {
       const picked = await request('pickFolder', { initial: dir.value || lastDir });
       if (picked) { dir.value = picked; loadWorktrees(); }
     },
@@ -5786,7 +5789,70 @@ async function onCloseRequested() {
 }
 
 /** The window couldn't reach a session host, nor start one. */
-function onHostFailed() {
+// ------------------------------------------------------------------ servers
+
+/**
+ * Whose sessions this window shows: null for this computer's; for a server's (a window opened with Connect to a
+ * server…), { remote: the SSH target, machine, version: the server's LlamaTree, windowVersion: this one's }.
+ */
+let machine = null;
+
+function onMachine(m) {
+  if (!m.remote) return;
+  machine = m;
+  document.body.classList.add('remote');
+  $('#remoteBadge')?.remove();
+  $('#appVersion').before(h('span', { id: 'remoteBadge', class: 'remote-badge', title: `These sessions run on ${m.machine || m.remote}, reached over SSH as ${m.remote}. They keep running there when this window closes or the connection drops.` },
+    iconEl('terminal'), m.remote));
+  if (m.version && m.windowVersion && m.version !== m.windowVersion)
+    toast(`${m.remote} has LlamaTree ${m.version}, and this computer ${m.windowVersion}. If something doesn’t work, update the older one.`, true);
+}
+
+/** The connection to the server dropped: its sessions run on there, and the window is trying to reach them again. */
+function onReconnecting(m) {
+  openModal(`Reconnecting to ${m.remote}…`, [
+    h('p', {}, 'The connection to the server dropped. Your sessions keep running there, and LlamaTree is trying to reach them again.'),
+    h('p', {}, 'They’ll show here as soon as it does.'),
+  ], [h('div', { class: 'spacer' }), h('button', { class: 'btn primary', onclick: closeModal }, 'OK')]);
+}
+
+/** Opens a window for a server's sessions: ssh to it, using your keys or ssh-agent. */
+function connectToServerDialog() {
+  const recent = store.get('servers', []);
+  const target = h('input', { placeholder: 'user@server', spellcheck: 'false', value: recent[0] ?? '', list: 'recentServers' });
+  const error = h('div', { class: 'form-error', hidden: true });
+  const connect = async () => {
+    const t = target.value.trim();
+    if (!t) return;
+    try {
+      await request('app.openRemote', { target: t });
+      store.set('servers', [t, ...recent.filter((r) => r !== t)].slice(0, 8));
+      closeModal();
+      toast(`Opening a window for ${t}…`);
+    } catch (err) {
+      error.textContent = err.message;
+      error.hidden = false;
+    }
+  };
+  target.addEventListener('keydown', (e) => { if (e.key === 'Enter') connect(); });
+  openModal('Connect to a server', [
+    field('Server', target, 'As user@server, ssh://user@server:port, or a Host from your SSH config.'),
+    h('datalist', { id: 'recentServers' }, recent.map((r) => h('option', { value: r }))),
+    h('p', { class: 'help' }, 'Its sessions open in a window of their own, and keep running on the server when the window closes or the connection drops. LlamaTree signs in with ssh using your keys or ssh-agent (it can’t ask for a password), and LlamaTree must be installed on the server.'),
+    error,
+  ], [h('div', { class: 'spacer' }), h('button', { class: 'btn', onclick: closeModal }, 'Cancel'), h('button', { class: 'btn primary', onclick: connect }, 'Connect')]);
+}
+
+function onHostFailed(m = {}) {
+  if (m.remote) {
+    openModal(`Couldn’t reach ${m.remote}`, [
+      h('p', {}, 'LlamaTree couldn’t connect to the server’s sessions.'),
+      m.message && h('pre', { class: 'host-error' }, m.message),
+      h('p', { class: 'help' }, 'It signs in with ssh using your keys or ssh-agent, without asking for a password, and needs LlamaTree installed on the server (the llamatree command). Check that ssh ' + m.remote + ' works from a terminal.'),
+    ], [h('div', { class: 'spacer' }), h('button', { class: 'btn', onclick: closeModal }, 'Close'),
+      h('button', { class: 'btn primary', onclick: () => { closeModal(); request('app.reconnect').catch(() => {}); } }, 'Try again')]);
+    return;
+  }
   openModal('LlamaTree couldn’t start', [
     h('p', {}, 'The part of LlamaTree that runs your sessions didn’t start, so no sessions can be shown.'),
     h('p', {}, 'Close LlamaTree and open it again. If it keeps happening, restart your computer.'),
@@ -5795,19 +5861,24 @@ function onHostFailed() {
 
 function versionMenu(x, y) {
   showMenu(x, y, [
-    { icon: 'refresh', label: 'Check for updates', action: () => checkForUpdates(true) },
-    { icon: 'down', label: 'Check for updates automatically', checked: updates.auto, action: () => {
-      updates.auto = !updates.auto;
-      store.set('autoUpdateCheck', updates.auto);
-      if (updates.auto) checkForUpdates();
-    } },
+    // A server's LlamaTree is updated on the server, as its other packages are.
+    ...(machine ? [] : [
+      { icon: 'refresh', label: 'Check for updates', action: () => checkForUpdates(true) },
+      { icon: 'down', label: 'Check for updates automatically', checked: updates.auto, action: () => {
+        updates.auto = !updates.auto;
+        store.set('autoUpdateCheck', updates.auto);
+        if (updates.auto) checkForUpdates();
+      } },
+    ]),
     { icon: 'bulb', label: 'Show tips and offers', checked: notices.tips, action: () => setShowTips(!notices.tips) },
     { icon: 'gift', label: 'Tips and offers…', action: showNoticesDialog },
     '-',
     { header: 'Closing the window with sessions running' },
     ...[['ask', 'Ask each time'], ['keep', 'Keep them running'], ['stop', 'Stop them']].map(([value, label]) =>
       ({ label, checked: closeChoice() === value, action: () => store.set('closeChoice', value) })),
-    { label: 'Quit and stop all sessions', action: () => request('app.close', { stop: true }) },
+    { label: machine ? `Quit and stop all sessions on ${machine.remote}` : 'Quit and stop all sessions', action: () => request('app.close', { stop: true }) },
+    '-',
+    { icon: 'terminal', label: 'Connect to a server…', action: connectToServerDialog },
     '-',
     { icon: 'info', label: `LlamaTree ${updates.current ?? ''}`.trim() + ' · release notes',
       action: () => request('openUrl', { uri: 'https://github.com/LlamachantTechnology/LlamaTree/releases' }) },

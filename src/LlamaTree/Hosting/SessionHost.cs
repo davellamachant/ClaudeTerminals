@@ -23,6 +23,9 @@ internal sealed class SessionHost : IHostWindow
     /// <summary>How long a host waits for its first window, and lingers once nothing needs it (a window may be reopening).</summary>
     private static readonly TimeSpan FirstWindowWait = TimeSpan.FromSeconds(30), Linger = TimeSpan.FromSeconds(5);
 
+    /// <summary>How often a host checks that its socket file is still there (macOS and Linux).</summary>
+    private static readonly TimeSpan SocketCheck = TimeSpan.FromSeconds(5);
+
     private readonly BlockingCollection<Action> queue = new();
     private readonly ManualResetEventSlim ended = new();
     private readonly Context context;
@@ -39,7 +42,7 @@ internal sealed class SessionHost : IHostWindow
     /// <summary>Runs the host until it ends. Returns at once if this profile's host is already running.</summary>
     public static int Run()
     {
-        using var mutex = new Mutex(true, MutexName + AppProfile.InstanceSuffix, out var first);
+        using var mutex = InstanceLock.Take(MutexName + AppProfile.InstanceSuffix, out var first);
         if (!first) return 0;
         var signals = new List<PosixSignalRegistration>();
         if (!OperatingSystem.IsWindows())
@@ -89,7 +92,24 @@ internal sealed class SessionHost : IHostWindow
             try
             {
                 server = HostEndpoint.Listen();
-                await server.WaitForConnectionAsync();
+                var waiting = server.WaitForConnectionAsync();
+                // On macOS and Linux the socket is a file, which can be removed under a running host: Linux empties the
+                // runtime folder when the user's last login ends (an SSH session, say), and old files in /tmp get
+                // tidied. Then it's listened for again, so the next window still finds this host.
+                var gone = false;
+                while (await Task.WhenAny(waiting, Task.Delay(SocketCheck)) != waiting)
+                {
+                    if (HostEndpoint.IsListening) continue;
+                    gone = true;
+                    break;
+                }
+                if (gone)
+                {
+                    _ = waiting.ContinueWith(t => _ = t.Exception, TaskScheduler.Default);   // ends once the stream is disposed
+                    await server.DisposeAsync();
+                    continue;
+                }
+                await waiting;
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ObjectDisposedException)
             {
@@ -117,6 +137,11 @@ internal sealed class SessionHost : IHostWindow
             window = channel;
             everAttached = true;
             ReadHello(json);
+            // Which LlamaTree this is: a window on another computer may be a different version.
+            channel.Send(LinkKind.Window, JsonSerializer.Serialize(new
+            {
+                op = "welcome", version = Updates.UpdateService.CurrentVersion.ToString(), machine = Environment.MachineName,
+            }));
             app.Attached();
         }
         else if (kind == LinkKind.Page && channel == window)
@@ -131,7 +156,9 @@ internal sealed class SessionHost : IHostWindow
         {
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
-            windowPid = root.TryGetProperty("pid", out var pid) && pid.TryGetInt32(out var p) ? p : null;
+            // Null for a window on another computer (TryGetInt32 throws on anything but a number).
+            windowPid = root.TryGetProperty("pid", out var pid) && pid.ValueKind == JsonValueKind.Number && pid.TryGetInt32(out var p) ? p : null;
+            app.Remote = root.TryGetProperty("remote", out var r) && r.ValueKind == JsonValueKind.String ? r.GetString() : null;
             plugins = root.TryGetProperty("plugins", out var pl) && pl.ValueKind == JsonValueKind.Object &&
                       pl.TryGetProperty("origin", out var o) && o.ValueKind == JsonValueKind.String &&
                       pl.TryGetProperty("key", out var k) && k.ValueKind == JsonValueKind.String
@@ -140,7 +167,43 @@ internal sealed class SessionHost : IHostWindow
         }
         catch (JsonException)
         {
-            (windowPid, plugins) = (null, PluginAddressing.VirtualHosts);
+            (windowPid, plugins, app.Remote) = (null, PluginAddressing.VirtualHosts, null);
+        }
+    }
+
+    /// <summary>
+    /// Starts this profile's session host (this program, with --host), detached so it outlives what started it: a
+    /// window, or an SSH connection's bridge (see <see cref="HostBridge"/>). On macOS and Linux it's left no terminal or
+    /// SSH channel to hold on to, so the connection can end without waiting for it.
+    /// </summary>
+    public static bool StartDetached()
+    {
+        var unix = !OperatingSystem.IsWindows();
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo(Environment.ProcessPath ?? throw new InvalidOperationException("No program path."))
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WorkingDirectory = AppContext.BaseDirectory,
+                RedirectStandardInput = unix,
+                RedirectStandardOutput = unix,
+                RedirectStandardError = unix,
+            };
+            psi.ArgumentList.Add("--host");
+            using var host = System.Diagnostics.Process.Start(psi);
+            if (host != null && unix)
+            {
+                // Nothing reads them: closed, so the host's input is empty and anything it writes goes nowhere.
+                host.StandardInput.Close();
+                host.StandardOutput.Close();
+                host.StandardError.Close();
+            }
+            return host != null;
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            return false;
         }
     }
 
