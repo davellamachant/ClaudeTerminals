@@ -611,7 +611,7 @@ body.dock-dragging iframe, body.tab-dragging iframe { pointer-events: none; }
 .tw-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--working); flex: none; }
 textarea.skill-text {
   width: 100%; height: 340px; resize: vertical; margin-top: 8px; padding: 8px; border-radius: 4px; border: 1px solid var(--border);
-  background: var(--code-bg); color: var(--text); font: 12px/1.5 "Cascadia Mono", Consolas, monospace; white-space: pre; user-select: text;
+  background: var(--code-bg); color: var(--text); font: 12px/1.5 "Cascadia Mono", Consolas, Menlo, "DejaVu Sans Mono", monospace; white-space: pre; user-select: text;
 }
 .tw-tab.drop-before { box-shadow: inset 3px 0 0 var(--accent); }
 .tw-tab.drop-after { box-shadow: inset -3px 0 0 var(--accent); }
@@ -666,7 +666,7 @@ textarea.commit-msg { resize: vertical; min-height: 54px; height: 54px; user-sel
 .row .chev { width: 16px; display: flex; justify-content: center; color: var(--text-dim); flex: none; }
 .row .label { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .row .hint { color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.row .status { margin-left: auto; width: 14px; text-align: center; font-weight: 600; flex: none; font-family: Consolas, monospace; }
+.row .status { margin-left: auto; width: 14px; text-align: center; font-weight: 600; flex: none; font-family: Consolas, Menlo, "DejaVu Sans Mono", monospace; }
 .row .row-actions { display: none; margin-left: auto; }
 .row:hover .row-actions { display: flex; }
 .row:hover .row-actions + .status { margin-left: 4px; }
@@ -729,7 +729,7 @@ textarea.commit-msg { resize: vertical; min-height: 54px; height: 54px; user-sel
 .diff-summary { margin-right: 8px; color: var(--text-dim); }
 .diff-summary .add { color: var(--st-a); }
 .diff-summary .del { color: var(--st-d); }
-.diff-labels { display: flex; height: 24px; background: var(--panel); border-bottom: 1px solid var(--border-soft); flex: none; font-family: Consolas, monospace; }
+.diff-labels { display: flex; height: 24px; background: var(--panel); border-bottom: 1px solid var(--border-soft); flex: none; font-family: Consolas, Menlo, "DejaVu Sans Mono", monospace; }
 .diff-labels div { flex: 1; padding: 4px 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-dim); }
 .diff-labels div + div { border-left: 1px solid var(--border-soft); }
 #diffDoc.inline .diff-labels div + div { display: none; }
@@ -822,7 +822,7 @@ img.plugin-ic { width: 16px; height: 16px; flex: none; object-fit: contain; }
 /* ---------------------------------------------------------------- undo changes */
 .undo-confirm { display: flex; flex-direction: column; gap: 10px; }
 .undo-list { border: 1px solid var(--border); border-radius: 4px; background: var(--chrome-2); padding: 4px 0; max-height: 240px; overflow: auto; user-select: text; }
-.undo-file { display: flex; gap: 8px; padding: 2px 10px; font-family: Consolas, monospace; white-space: nowrap; }
+.undo-file { display: flex; gap: 8px; padding: 2px 10px; font-family: Consolas, Menlo, "DejaVu Sans Mono", monospace; white-space: nowrap; }
 .undo-file .status { width: 12px; font-weight: 600; flex: none; }
 .undo-note { color: var(--text-dim); }
 
@@ -1023,7 +1023,7 @@ body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; user-selec
 .chat-tool { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 1px 0; }
 .chat-tool::before { content: '● '; color: var(--ok); }
 .chat-tool-name { color: var(--text); font-weight: 600; }
-.chat-tool-detail { font-family: "Cascadia Mono", Consolas, monospace; font-size: 11.5px; }
+.chat-tool-detail { font-family: "Cascadia Mono", Consolas, Menlo, "DejaVu Sans Mono", monospace; font-size: 11.5px; }
 
 /* Claude's Markdown */
 .md > :first-child { margin-top: 0; }
@@ -1032,9 +1032,9 @@ body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; user-selec
 .md li > ul, .md li > ol { margin: 2px 0; }
 .md .md-h { font-weight: 600; margin: 12px 0 6px; color: var(--text-strong); }
 .md .md-h1 { font-size: 17px; } .md .md-h2 { font-size: 15px; } .md .md-h3, .md .md-h4, .md .md-h5, .md .md-h6 { font-size: 13.5px; }
-.md code.md-inline { font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; padding: 1px 4px; border-radius: 3px; background: var(--bubble); color: var(--code-fg); }
+.md code.md-inline { font-family: "Cascadia Mono", Consolas, Menlo, "DejaVu Sans Mono", monospace; font-size: 12px; padding: 1px 4px; border-radius: 3px; background: var(--bubble); color: var(--code-fg); }
 .md pre.md-code { padding: 8px 10px; border-radius: 6px; background: var(--code-bg); border: 1px solid var(--border-soft); overflow-x: auto; }
-.md pre.md-code code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; white-space: pre; }
+.md pre.md-code code { font-family: "Cascadia Mono", Consolas, Menlo, "DejaVu Sans Mono", monospace; font-size: 12px; white-space: pre; }
 .md blockquote { padding-left: 10px; border-left: 3px solid var(--border); color: var(--text-dim); }
 .md table { border-collapse: collapse; display: block; overflow-x: auto; }
 .md th, .md td { border: 1px solid var(--border); padding: 3px 8px; text-align: left; vertical-align: top; }
@@ -1150,7 +1150,7 @@ button.chip.relay-tile { color: var(--attention); }
 .pv-row:focus-visible { outline: 1px solid var(--focus); outline-offset: -1px; }
 .pv-row .dot { justify-self: center; }
 .pv-branch { min-width: 0; display: grid; gap: 1px; }
-.pv-branch b { font-weight: 500; font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pv-branch b { font-weight: 500; font-family: "Cascadia Mono", Consolas, Menlo, "DejaVu Sans Mono", monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pv-branch span { color: var(--text-faint); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pv-session { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pv-none { color: var(--text-faint); font-style: italic; }
@@ -1176,7 +1176,7 @@ button.chip.relay-tile { color: var(--attention); }
 .pv-turn .t { color: var(--text-faint); font-size: 11px; padding-top: 2px; white-space: nowrap; }
 .pv-turn .you { color: var(--text); font-weight: 500; white-space: pre-wrap; }
 .pv-turn .cl { color: var(--text-dim); }
-.pv-files { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; }
+.pv-files { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; font-family: "Cascadia Mono", Consolas, Menlo, "DejaVu Sans Mono", monospace; font-size: 12px; }
 .pv-files li { display: flex; gap: 8px; align-items: center; min-width: 0; }
 .pv-files .s { width: 12px; text-align: center; font-weight: 600; flex: none; }
 .pv-files .s.M { color: var(--st-m); } .pv-files .s.A, .pv-files .s.\? { color: var(--st-a); } .pv-files .s.D { color: var(--st-d); } .pv-files .s.R { color: var(--st-r); }
@@ -1189,7 +1189,7 @@ button.chip.relay-tile { color: var(--attention); }
 .pv-overlap:hover { color: var(--text); }
 .pv-overlap.none:empty { display: none; }
 .pv-overlap .pv-tri { color: var(--attention); }
-.pv-overlap code { color: var(--text); font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; }
+.pv-overlap code { color: var(--text); font-family: "Cascadia Mono", Consolas, Menlo, "DejaVu Sans Mono", monospace; font-size: 12px; }
 .pv-legend { color: var(--text-faint); font-size: 12px; display: flex; gap: 14px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
 .pv-legend span { display: inline-flex; align-items: center; gap: 5px; }
 
@@ -1202,7 +1202,7 @@ button.chip.relay-tile { color: var(--attention); }
 .panel-md { padding: 10px 12px; }
 .panel-item { display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border-bottom: 1px solid var(--border-soft); }
 .panel-item-top { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.panel-key { font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; font-weight: 600; }
+.panel-key { font-family: "Cascadia Mono", Consolas, Menlo, "DejaVu Sans Mono", monospace; font-size: 12px; font-weight: 600; }
 .panel-item-top a { color: var(--link); text-decoration: none; }
 .panel-item-top a:hover, .panel-item-title a:hover { text-decoration: underline; }
 .panel-item-title { font-weight: 600; word-break: break-word; }

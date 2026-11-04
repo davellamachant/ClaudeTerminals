@@ -10,7 +10,7 @@ namespace LlamaTree.Terminal;
 /// A child process attached to a Windows pseudo console (ConPTY). Output is raised as decoded
 /// UTF-8 text on a background thread; the process tree is bound to a job object so it dies with us.
 /// </summary>
-internal sealed class PseudoConsoleProcess : IDisposable
+internal sealed class PseudoConsoleProcess : IPtyProcess
 {
     private readonly object writeLock = new();
     private IntPtr hPC;
@@ -28,6 +28,10 @@ internal sealed class PseudoConsoleProcess : IDisposable
 
     public int ProcessId { get; private set; }
 
+    public void Start(string command, string workingDirectory, IReadOnlyDictionary<string, string> environment, int cols, int rows) =>
+        Start(CommandLineResolver.Resolve(command, environment), workingDirectory, SessionEnvironment.ToBlock(environment), cols, rows);
+
+    /// <summary>Starts a CreateProcess command line with an environment block (see <see cref="SessionEnvironment.ToBlock"/>).</summary>
     public void Start(string commandLine, string workingDirectory, string environmentBlock, int cols, int rows)
     {
         if (!CreatePipe(out var inputRead, out var inputWrite, IntPtr.Zero, 0) ||

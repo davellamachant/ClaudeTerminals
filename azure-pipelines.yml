@@ -107,6 +107,12 @@ steps:
       targetPath: 'artifacts/LlamaTree-Setup-$(AppVersion).exe'
       artifact: 'installer'
 
+  - task: PublishPipelineArtifact@1
+    displayName: 'Keep the Linux packages on the run'
+    inputs:
+      targetPath: 'artifacts/linux'
+      artifact: 'linux'
+
   # Left out of a trial run entirely, so trying the signing doesn't need the GitHub connection.
   - ${{ if parameters.createRelease }}:
     - task: GitHubRelease@1
@@ -124,5 +130,8 @@ steps:
         assets: |
           artifacts/LlamaTree-Setup-$(AppVersion).exe
           artifacts/ClaudeTerminals-Setup-$(AppVersion).exe
+          artifacts/linux/llamatree_$(AppVersion)_amd64.deb
+          artifacts/linux/llamatree-$(AppVersion)-1.x86_64.rpm
+          artifacts/linux/LlamaTree-$(AppVersion)-linux-x64.tar.gz
         isDraft: true
         addChangeLog: false

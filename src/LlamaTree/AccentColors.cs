@@ -14,6 +14,7 @@ internal static class AccentColors
     /// </summary>
     public static string[]? Read()
     {
+        if (!OperatingSystem.IsWindows()) return null;
         try
         {
             using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Explorer\Accent");
@@ -38,6 +39,7 @@ internal static class AccentColors
     /// <summary>Windows' "Choose your app mode": true for Light, false for Dark, null when it isn't set.</summary>
     public static bool? AppsUseLightTheme()
     {
+        if (!OperatingSystem.IsWindows()) return null;   // the page follows prefers-color-scheme
         try
         {
             using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");

@@ -5,6 +5,8 @@ artifacts/
 
 # Front-end packages (restored with `npm ci` in web/)
 web/node_modules/
+# Copied from web/node_modules into the build output, never into the source
+src/LlamaTree/wwwroot/lib/
 
 # IDE / OS
 .vs/

@@ -101,7 +101,7 @@ public sealed class GitUndoTests : IDisposable
         Assert.Equal("", repo.Git("status", "--porcelain"));
     }
 
-    [Fact]
+    [WindowsFact]
     public async Task Case_only_rename_is_undone_without_recycling_the_file()
     {
         repo.Commit(("a.txt", "keep me"));
@@ -409,7 +409,7 @@ public sealed class GitUndoTests : IDisposable
         return "cs";
     }
 
-    [Theory]
+    [WindowsTheory]
     [InlineData("someone else's file")]
     [InlineData("same")]   // identical bytes are still a different file
     public async Task Case_only_rename_in_a_case_sensitive_folder_with_a_file_at_the_old_name_is_refused(string content)
@@ -430,7 +430,7 @@ public sealed class GitUndoTests : IDisposable
         Assert.Empty(recycled);
     }
 
-    [Fact]
+    [WindowsFact]
     public async Task Case_only_rename_in_a_case_sensitive_folder_restores_the_old_name_and_recycles_the_new_one()
     {
         var cs = CaseSensitiveFolder();
@@ -447,7 +447,7 @@ public sealed class GitUndoTests : IDisposable
 
     // ---- The Recycle Bin step refuses anything that really lives outside the repository
 
-    [Fact]
+    [WindowsFact]
     public async Task Recycling_refuses_a_file_reached_through_a_junction_wherever_it_is_in_the_list()
     {
         var outside = Path.Combine(Path.GetTempPath(), "ct-out-" + Guid.NewGuid().ToString("N")[..8]);
@@ -475,7 +475,7 @@ public sealed class GitUndoTests : IDisposable
         }
     }
 
-    [Fact]
+    [WindowsFact]
     public async Task Recycling_refuses_a_differently_cased_sibling_reached_through_a_junction()
     {
         var top = Path.Combine(Path.GetTempPath(), "ct-casepar-" + Guid.NewGuid().ToString("N")[..8]);

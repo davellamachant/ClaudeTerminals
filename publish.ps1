@@ -1,11 +1,15 @@
-# Builds a self-contained release and the Inno Setup installer.
+# Builds a self-contained release and the Inno Setup installer, then the Linux packages.
 #   .\publish.ps1                 -> artifacts\publish\ + artifacts\LlamaTree-Setup-<version>.exe
+#                                    + artifacts\linux\: llamatree_<version>_amd64.deb, llamatree-<version>-1.x86_64.rpm and
+#                                      LlamaTree-<version>-linux-x64.tar.gz (see tools\package-linux.cs)
 #   .\publish.ps1 -SkipInstaller  -> artifacts\publish\ only (portable folder)
+#   .\publish.ps1 -SkipLinux      -> the Windows installer only
 #   .\publish.ps1 -Sign -TimestampServer <url>
 #                                 -> the same, with the app, setup and uninstaller code-signed (on the build agent with
 #                                    the company's certificate; see azure-pipelines.yml)
 param(
     [switch]$SkipInstaller,
+    [switch]$SkipLinux,
     [switch]$Sign,
     # The certificate is picked from the Windows certificate store by subject (on the agent the SafeNet token provides it).
     [string]$CertificateSubject = 'Llamachant Technology Ltd',
@@ -58,7 +62,8 @@ if (-not (Test-Path (Join-Path $root 'web\node_modules\monaco-editor'))) {
 }
 
 if (Test-Path $publishDir) { Remove-Item $publishDir -Recurse -Force }
-dotnet publish $project -c Release -r win-x64 --self-contained true `
+# The Windows build (WinForms + WebView2); the project also builds net10.0 for macOS and Linux.
+dotnet publish $project -f net10.0-windows -c Release -r win-x64 --self-contained true `
     -p:PublishReadyToRun=true -p:DebugType=None -p:DebugSymbols=false -o $publishDir
 if ($LASTEXITCODE) { throw 'dotnet publish failed' }
 
@@ -93,3 +98,15 @@ if ($LASTEXITCODE) { throw 'Inno Setup compile failed' }
 $setup = Join-Path $root "artifacts\LlamaTree-Setup-$version.exe"
 if ($Sign) { Assert-Signed $setup }
 Write-Host "Installer: $setup ($([math]::Round((Get-Item $setup).Length / 1MB, 1)) MB)" -ForegroundColor Green
+
+if ($SkipLinux) { return }
+
+# Linux: the net10.0 build (a Photino window), self-contained, packaged as .deb, .rpm and .tar.gz. Built here on
+# Windows; the packages need no Linux tools to make (see tools\package-linux.cs).
+$linuxDir = Join-Path $root 'artifacts\linux-x64'
+if (Test-Path $linuxDir) { Remove-Item $linuxDir -Recurse -Force }
+dotnet publish $project -f net10.0 -c Release -r linux-x64 --self-contained true -p:DebugType=None -p:DebugSymbols=false -o $linuxDir
+if ($LASTEXITCODE) { throw 'dotnet publish (linux-x64) failed' }
+dotnet run (Join-Path $root 'tools\package-linux.cs') -- $linuxDir $version (Join-Path $root 'artifacts\linux') x64
+if ($LASTEXITCODE) { throw 'Linux packaging failed' }
+Write-Host "Linux packages in artifacts\linux: llamatree_${version}_amd64.deb, llamatree-$version-1.x86_64.rpm, LlamaTree-$version-linux-x64.tar.gz" -ForegroundColor Green

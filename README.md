@@ -60,6 +60,20 @@ Releases are signed by **Llamachant Technology Ltd**. If SmartScreen still warns
 - WebView2 Runtime (built into Windows 11; setup offers the download if it's missing)
 - To build it yourself: .NET 10 SDK and Node.js (for the bundled xterm.js / Monaco packages)
 
+### Linux
+
+Download the package for your distribution from the [latest release](https://github.com/LlamachantTechnology/LlamaTree/releases/latest) and install it; the package manager installs what it needs (WebKitGTK, libnotify) with it. Nothing else is needed: no .NET, no Node.js.
+
+| Distribution | Package | Install |
+|---|---|---|
+| Ubuntu, Debian, Mint, Pop!_OS… | `llamatree_<version>_amd64.deb` | Open it in your software centre, or `sudo apt install ./llamatree_<version>_amd64.deb` |
+| Fedora, openSUSE, RHEL… | `llamatree-<version>-1.x86_64.rpm` | `sudo dnf install ./llamatree-<version>-1.x86_64.rpm` (openSUSE: `sudo zypper install …`) |
+| Anything else | `LlamaTree-<version>-linux-x64.tar.gz` | Install WebKitGTK 4.1 and libnotify, unpack it anywhere and run `LlamaTree` |
+
+Then start **LlamaTree** from your applications menu, or run `llamatree`. It's 64-bit Intel/AMD (x86-64) only for now. It updates itself like the Windows app (see [Updates](#updates)): a package asks for an administrator's password to install the new version; an unpacked `.tar.gz` replaces its own folder. Uninstall with `sudo apt remove llamatree` (or `sudo dnf remove llamatree`); your sessions and settings stay in `~/.config/LlamaTree`.
+
+**macOS:** LlamaTree runs there too, built from source for now (see [macOS and Linux](#macos-and-linux)).
+
 ## Using it
 
 | Action | How |
@@ -86,6 +100,7 @@ Releases are signed by **Llamachant Technology Ltd**. If SmartScreen still warns
 | Terminal font size | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
 | Newline in Claude prompt | `Shift+Enter` |
 | Copy / paste | `Ctrl+C` with a selection / `Ctrl+V` (or right-click when expanded). With an image on the clipboard, such as a screenshot, `Ctrl+V` pastes the path of a PNG saved from it, which Claude Code and Codex attach; files copied in Explorer paste as their paths |
+| Open a file or folder named in the terminal | File and folder paths in the output (absolute, `~/…`, or relative to the session's folder, with or without a `:line`) are underlined on hover once they're found to exist. Click one to open it (a file opens to view or edit, never runs); right-click it for *Open containing folder* and *Copy path*. Network paths are never looked at |
 | Diff tabs | Click a file for a preview tab (italic, reused); double-click to keep it open. Tabs belong to their session's project: switching to a session in another project shows that project's tabs, and yours come back when you return |
 | Terminal ↔ diffs | Click the Terminal tab, `Shift+Esc` from a diff, or `Ctrl+PgUp` / `Ctrl+PgDn` |
 | A tab beside the terminal | Drag a diff, Conversation or plugin tab down into the area, near the edge you want it on (left, right, top or bottom), or right-click it and pick a side; the middle shows it on its own again. Drag the Terminal tab the same way to put the terminal on that side of the tab. While split, the tab you pick goes beside the terminal, `Shift+Esc` goes back to the terminal and leaves it there, and `Ctrl+W` closes the tab only while you're in it. Drag the divider to resize (double-click to even up); the side and size are remembered |
@@ -124,7 +139,7 @@ With Windows' animation effects turned off the dots stay still, and in every sty
 
 **Codex sessions** work the same way, with a few differences: see [Claude Code and Codex](#claude-code-and-codex).
 
-**Closing the app** stops the sessions but loses nothing: Claude keeps every conversation, and the sessions come back with the app. The closing prompt says which pick up where they left off (those that continue or resume) and which start a new conversation.
+**Closing the window** with sessions running asks what to do with them. **Keep running** closes only the window: the sessions carry on in the background, and opening LlamaTree again shows them as they are, with what they printed meanwhile. **Stop sessions** stops them but loses nothing: Claude keeps every conversation, and the sessions come back with the app; the question says which pick up where they left off (those that continue or resume) and which start a new conversation. Tick *Don't ask again* to always do one or the other; the version menu (top right) changes it, and has *Quit and stop all sessions*. With no session running, closing the window ends LlamaTree.
 
 **Starting when opened:** when the app starts, a Claude session it brings back waits until you first open it (its tile says *Starts when you open it*; pressing Enter in it works too). Claude's start-up context, such as hooks, the date and Git status, is then fresh when you use the session, and one you don't open runs nothing. New sessions, and sessions running any other command (a dev server, say), start straight away.
 
@@ -146,7 +161,7 @@ A session's command decides what it runs: `claude` for [Claude Code](https://doc
 | Reopens it when the app or the session restarts | ✓ `--resume <id>` | ✓ `codex resume <id>` | — |
 | Follows you to another conversation | ✓ `/clear`, `/resume` | ✓ `/new`; `/resume` once you send a prompt in it | — |
 | Resume picker | ✓ | ✓ tagged *Codex* | — |
-| Conversation title on hover, and in the closing prompt | ✓ | ✓ | — |
+| Conversation title on hover, and in the closing question | ✓ | ✓ | — |
 | **Conversation rail and tab** | | | |
 | Rail of prompts and the Conversation tab | ✓ | ✓ | — |
 | Works in full-screen mode | ✓ | ✓ | — |
@@ -395,7 +410,7 @@ A theme is only data: the app takes the names above and checks each value, so it
 
 ### Updates
 
-A few seconds after starting, and every 15 minutes, the app checks this repository's latest GitHub release (an anonymous request; nothing about you or your sessions is sent). When there's a newer version, an **Update to x.y.z** button appears in the title bar, showing what's new. *Update and restart* downloads the installer, checks it against the SHA-256 GitHub publishes for it (it won't run a file that doesn't match), closes the app, installs silently and reopens it. Running sessions carry on in the conversations they were in. The version is shown at the top right and in the window title; clicking it offers *Check for updates* and turns the automatic check off.
+A few seconds after starting, and every 15 minutes, the app checks this repository's latest GitHub release (an anonymous request; nothing about you or your sessions is sent). When there's a newer version, an **Update to x.y.z** button appears in the title bar, showing what's new. *Update and restart* downloads the installer, checks it against the SHA-256 GitHub publishes for it (it won't run a file that doesn't match), closes the app, installs silently and reopens it. On Linux, the package you installed from (`.deb` or `.rpm`) is downloaded and checked the same way, then installed with apt, dnf or zypper behind your desktop's administrator password prompt, before the app closes and reopens; a cancelled prompt leaves things as they were. A copy unpacked from the `.tar.gz` into a folder you own is replaced by the new one. On macOS (for now), the button links the release instead. Running sessions carry on in the conversations they were in. The version is shown at the top right and in the window title; clicking it offers *Check for updates* and turns the automatic check off.
 
 ### Tips and offers
 
@@ -435,14 +450,34 @@ Notices are judged as of when they were signed, so they keep showing after the c
 ## Building
 
 ```powershell
-cd web; npm ci; cd ..               # once: xterm.js + Monaco
-dotnet run --project src\LlamaTree
-dotnet test                         # tests
+cd web; npm ci; cd ..                                   # once: xterm.js + Monaco
+dotnet run --project src\LlamaTree -f net10.0-windows   # the Windows app
+dotnet test                                             # tests
 ```
 
-- **Host:** .NET 10 WinForms + WebView2 (`src/LlamaTree`)
-- **Terminals:** real Windows pseudo consoles (ConPTY) rendered with xterm.js; child processes live in a kill-on-close job object
+On macOS and Linux:
+
+```bash
+(cd web && npm ci)                  # once: xterm.js + Monaco
+dotnet run --project src/LlamaTree
+dotnet test
+```
+
+- **Host:** one app with two windows (`src/LlamaTree`). `net10.0-windows` is the Windows app: WinForms + WebView2 (`Hosting/WinForms`). `net10.0` is the macOS and Linux app: a [Photino](https://www.tryphotino.io/) window, which hosts WKWebView on macOS and WebKitGTK on Linux (`Hosting/Photino`); it also runs on Windows (`-f net10.0`, on WebView2) for trying it out. Everything else is shared: `AppHost` holds the sessions, git, panels and plugins, and talks to the same page through either window.
+- **Session host:** `AppHost` runs in a process of its own, the same program started with `--host` (`Hosting/SessionHost.cs`), so sessions can outlive the window. The window starts it if it isn't running and connects through a named pipe (Windows) or a Unix socket (macOS, Linux; in `$XDG_RUNTIME_DIR` or the per-user temp folder) that only the same user can open, one per profile (`Hosting/Link`). The page's messages pass through unchanged; the folder picker, clipboard, title bar colours and plugins' pages stay with the window (`Hosting/HostLink.cs`). The host keeps the end of each session's output for a window that attaches later, and ends once no window is attached and no session is running. An update waits for both processes to end; the installer checks for either (`AppMutex`).
+- **Terminals:** real pseudo terminals rendered with xterm.js: ConPTY on Windows, where child processes live in a kill-on-close job object; a Unix pty on macOS and Linux (`UnixPtyProcess`, started with posix_spawn in a session of its own), where closing a session hangs up its terminal.
 - **Diffs:** Monaco diff editor, with dark and light themes after Visual Studio's
+
+### macOS and Linux
+
+Run from source as above; [GitHub Actions](.github/workflows/build.yml) also builds and tests every push on Windows, Linux and macOS and keeps a self-contained build of each (`LlamaTree-osx-arm64`, `-osx-x64`, `-linux-x64`) on the run for two weeks. Releases carry Linux packages ([Linux](#linux)), made by [`tools/package-linux.cs`](tools/package-linux.cs) from `publish.ps1` (on Windows, with no Linux tools); there's no macOS app bundle yet, and a macOS copy doesn't update itself: *Check for updates* says when a new version is out and links its release.
+
+- **Linux** needs WebKitGTK 4.1 and libnotify (Debian/Ubuntu: `sudo apt install libwebkit2gtk-4.1-0 libnotify4`). Pasting an image or copied files into a terminal uses `wl-paste` (Wayland) or `xclip` (X11) if they're installed.
+- **Sessions get your login shell's environment** (`$SHELL -l -i`, read again after a minute), so `claude`, `codex`, `node` and `git` are found as in a terminal even when the app is started from the Dock or a desktop menu. Commands run through `/bin/sh`, so a session's command is written the way you'd type it in a terminal.
+- **Keys:** on a Mac, ⌘ does what Ctrl does on Windows (⌘1…⌘9, ⌘⇧G, ⌘⇧N, ⌘W, ⌘C/⌘V in the terminal); Ctrl+C and the other Ctrl keys go to the terminal as themselves.
+- **Data** lives in `~/Library/Application Support/LlamaTree` (macOS) or `~/.config/LlamaTree` (Linux); `LLAMATREE_DATA` picks another folder, as on Windows.
+- **The page and plugins** are served from `http://127.0.0.1:<port>/` for this run only (WebView2's virtual hosts don't exist elsewhere). The window's message bridge is reachable from every frame, so the host only acts on messages carrying a token it gives the top-level page; each plugin's files are under a random path made for the run, so one plugin can't load another's page.
+- **Undo Changes** moves files to the Trash (Linux: `gio trash`, else the freedesktop.org trash folder).
 
 ### Installer
 
@@ -466,7 +501,7 @@ Signed releases are built by `azure-pipelines.yml` on the Azure DevOps agent wit
 1. Bump `<Version>` in `LlamaTree.csproj` and merge to `main`.
 2. In Azure DevOps, run the pipeline on `main` (or on a tag `v<version>`) with *Create the GitHub release* ticked. Untick it for a trial run that only builds and signs, keeping the installer on the run's Artifacts.
 3. The pipeline runs `publish.ps1 -Sign`, which signs `LlamaTree.exe`/`.dll`, setup and its uninstaller as *Llamachant Technology Ltd* (picked from the certificate store by subject, as the NuGet signing does), timestamps them with Sectigo's server, and fails unless each carries a valid, timestamped signature from that publisher. It then creates a **draft** GitHub release with the installer.
-4. Write the release notes on the draft and publish it: that's what makes the in-app updater offer the new version. The updater shows everything above the notes' *Install* heading, and needs the installer named `LlamaTree-Setup-<version>.exe` on a `v<version>` tag.
+4. Write the release notes on the draft and publish it: that's what makes the in-app updater offer the new version. The updater shows everything above the notes' *Install* heading, and needs the installer named `LlamaTree-Setup-<version>.exe` on a `v<version>` tag (Linux copies update from the `.deb`, `.rpm` and `.tar.gz` under the names `publish.ps1` gives them).
 
 ## License
 

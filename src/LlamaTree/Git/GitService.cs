@@ -1,3 +1,4 @@
+using LlamaTree.Platform;
 using System.Diagnostics;
 using System.Text;
 using LlamaTree.Terminal;
@@ -338,7 +339,7 @@ internal static class GitService
             var line = raw.TrimEnd('\r');
             if (line.Length == 0)
             {
-                if (path != null) list.Add(new WorktreeInfo(path.Replace('/', '\\'), branch, bare, prunable));
+                if (path != null) list.Add(new WorktreeInfo(OperatingSystem.IsWindows() ? path.Replace('/', '\\') : path, branch, bare, prunable));
                 path = branch = null;
                 bare = prunable = false;
             }
@@ -412,8 +413,7 @@ internal static class GitService
     {
         if (!Path.IsPathFullyQualified(path)) return Failed("The worktree must be given as a full path.");
         var list = await GetWorktreesAsync(repoDir);
-        var full = Path.GetFullPath(path).TrimEnd('\\');
-        var i = list.FindIndex(w => string.Equals(Path.GetFullPath(w.Path).TrimEnd('\\'), full, StringComparison.OrdinalIgnoreCase));
+        var i = list.FindIndex(w => PathText.SamePlace(w.Path, path));
         if (i < 0) return Failed($"{path} isn't a worktree of this repository.");
         if (i == 0) return Failed("This is the repository's main worktree; it can't be removed.");
         if (!Directory.Exists(list[i].Path)) return await RunAsync(repoDir, ["worktree", "prune"]);
@@ -481,7 +481,7 @@ internal static class GitService
             var name = f[0][(remote ? "refs/remotes/" : "refs/heads/").Length..];
             int Count(string word) => f[2].Split(", ").FirstOrDefault(p => p.StartsWith(word + " ")) is { } p && int.TryParse(p[(word.Length + 1)..], out var n) ? n : 0;
             list.Add(new BranchInfo(name, remote, f[1].Length > 0 ? f[1] : null, Count("ahead"), Count("behind"), f[2] == "gone",
-                f[3].Length > 0 ? f[3].Replace('/', '\\') : null));
+                f[3].Length > 0 ? (OperatingSystem.IsWindows() ? f[3].Replace('/', '\\') : f[3]) : null));
         }
         return list;
     }
@@ -893,14 +893,14 @@ internal static class GitService
     /// </summary>
     private static bool SameFile(string root, string a, string b) =>
         FullPathInRepo(root, a) is { } fa && FullPathInRepo(root, b) is { } fb &&
-        Native.FinalPath(fa, followFinalLink: false) is { } finalA &&
-        string.Equals(finalA, Native.FinalPath(fb, followFinalLink: false), StringComparison.Ordinal);
+        PathText.FinalPath(fa, followFinalLink: false) is { } finalA &&
+        string.Equals(finalA, PathText.FinalPath(fb, followFinalLink: false), StringComparison.Ordinal);
 
     /// <summary>Full path of a repository-relative path, or null unless it names something inside <paramref name="root"/>.</summary>
     /// <remarks>Ordinal: a path that leaves the repository and comes back with different casing may be another folder.</remarks>
     public static string? FullPathInRepo(string root, string relativePath)
     {
-        var fullRoot = Path.GetFullPath(root).TrimEnd('\\') + "\\";
+        var fullRoot = PathText.WithSeparator(Path.GetFullPath(root));
         var full = Path.GetFullPath(Path.Combine(fullRoot, relativePath));
         return full.Length > fullRoot.Length && full.StartsWith(fullRoot, StringComparison.Ordinal) ? full : null;
     }
@@ -912,8 +912,8 @@ internal static class GitService
     public static string? ExistingPathInRepo(string root, string relativePath)
     {
         var full = FullPathInRepo(root, relativePath);
-        if (full == null || Native.FinalPath(root) is not { } finalRoot || Native.FinalPath(full) is not { } final) return null;
-        finalRoot = finalRoot.TrimEnd('\\') + "\\";
+        if (full == null || PathText.FinalPath(root) is not { } finalRoot || PathText.FinalPath(full) is not { } final) return null;
+        finalRoot = PathText.WithSeparator(finalRoot);
         // Both paths come back in the file system's own casing, so compare exactly: in a case-sensitive parent,
         // C:\work\Repo is a different folder from C:\work\repo.
         return final.Length > finalRoot.Length && final.StartsWith(finalRoot, StringComparison.Ordinal) ? full : null;
@@ -922,10 +922,8 @@ internal static class GitService
     private static bool ExistsInWorkingTree(string root, string relativePath) =>
         FullPathInRepo(root, relativePath) is { } full && (File.Exists(full) || Directory.Exists(full));
 
-    /// <summary>Moves one file to the Recycle Bin. Replaceable so tests don't fill the real Recycle Bin.</summary>
-    internal static Action<string> SendToRecycleBin = full =>
-        Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(full,
-            Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs, Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
+    /// <summary>Moves one file to the Recycle Bin (the Trash on macOS and Linux). Replaceable so tests don't fill the real one.</summary>
+    internal static Action<string> SendToRecycleBin = PathText.MoveToTrash;
 
     private static bool TryRecycle(string root, string relativePath)
     {
@@ -949,7 +947,7 @@ internal static class GitService
     /// <summary>True if a folder between <paramref name="root"/> and <paramref name="full"/> (a path inside it) is a junction or link.</summary>
     private static bool ThroughLink(string root, string full)
     {
-        var top = Path.GetFullPath(root).TrimEnd('\\');
+        var top = PathText.TrimEnd(Path.GetFullPath(root));
         for (var dir = Path.GetDirectoryName(full); dir != null && dir.Length > top.Length; dir = Path.GetDirectoryName(dir))
         {
             try
@@ -1125,7 +1123,7 @@ internal static class GitService
         var r = await RunAsync(dir, ["rev-parse", "--absolute-git-dir"]);
         if (!r.Ok) return null;
         var gitDir = Path.GetFullPath(r.Text.Trim());
-        var root = Path.GetFullPath(dir).TrimEnd('\\') + "\\";
+        var root = PathText.WithSeparator(Path.GetFullPath(dir));
         return gitDir.StartsWith(root, StringComparison.OrdinalIgnoreCase) ? null : gitDir;
     }
 }

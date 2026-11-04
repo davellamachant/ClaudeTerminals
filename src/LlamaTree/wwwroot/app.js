@@ -119,7 +119,60 @@ function toast(message, isError = false) {
 
 // ------------------------------------------------------------------ host bridge
 
-const host = window.chrome.webview;
+// Windows: WebView2's bridge. macOS and Linux: Photino's (window.external), which every frame can reach, so the host only
+// trusts messages that carry the token it wrote into this page as it served it (taken out of the page straight away).
+const PHOTINO = typeof window.external?.sendMessage === 'function';
+const host = PHOTINO ? photinoBridge() : window.chrome.webview;
+
+function photinoBridge() {
+  const listeners = [];
+  const meta = document.querySelector('meta[name="llamatree-bridge"]');
+  const token = meta?.content ?? '';
+  meta?.remove();
+  window.external.receiveMessage((text) => {
+    const data = JSON.parse(text);
+    for (const fn of listeners) fn({ data });
+  });
+  // A file dropped on the window would otherwise replace the page; the page's own drop targets still get theirs.
+  for (const type of ['dragover', 'drop']) window.addEventListener(type, (e) => e.preventDefault());
+  return {
+    postMessage: (m) => window.external.sendMessage(JSON.stringify({ ...m, bridgeToken: token })),
+    addEventListener: (type, fn) => { if (type === 'message') listeners.push(fn); },
+  };
+}
+
+/** macOS: ⌘ does what Ctrl does elsewhere (app shortcuts, copy and paste); Ctrl still goes to the terminal as itself. */
+const IS_MAC = /Mac/i.test(navigator.platform || navigator.userAgent);
+const IS_LINUX = !IS_MAC && /Linux/i.test(navigator.platform || navigator.userAgent);
+const FILE_MANAGER = IS_MAC ? 'Finder' : IS_LINUX ? 'Files' : 'File Explorer';
+
+// A Mac app gets ⌘C, ⌘V, ⌘X, ⌘A and ⌘Z in text fields from its Edit menu, which a Photino window may not have, so
+// the page does them itself (the terminal has its own, see terminalKey).
+if (IS_MAC && PHOTINO) {
+  document.addEventListener('keydown', (e) => {
+    const field = e.target;
+    if (!e.metaKey || e.ctrlKey || e.altKey || !(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement)) return;
+    if (field.closest('.xterm, .monaco-editor')) return;   // they handle their own
+    const key = e.key.toLowerCase();
+    if (key === 'v') {
+      e.preventDefault();
+      readClipboardText().then((text) => {
+        if (!text) return;
+        field.setRangeText(text, field.selectionStart ?? field.value.length, field.selectionEnd ?? field.value.length, 'end');
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+      }, () => {});
+    } else if (key === 'c' || key === 'x') {
+      e.preventDefault();
+      document.execCommand(key === 'c' ? 'copy' : 'cut');
+    } else if (key === 'a') {
+      e.preventDefault();
+      field.select();
+    } else if (key === 'z') {
+      e.preventDefault();
+      document.execCommand(e.shiftKey ? 'redo' : 'undo');
+    }
+  }, true);
+}
 let reqSeq = 0;
 const pending = new Map();
 const post = (msg) => host.postMessage(msg);
@@ -130,6 +183,11 @@ function request(type, payload = {}) {
     pending.set(reqId, { resolve, reject });
     post({ type, reqId, ...payload });
   });
+}
+
+/** The clipboard's text. On macOS and Linux the app reads it: WebKit asks first (macOS) or refuses (Linux) when a page does. */
+function readClipboardText() {
+  return PHOTINO ? request('clipboard.text').then((text) => text ?? '') : navigator.clipboard.readText();
 }
 
 host.addEventListener('message', (e) => {
@@ -151,6 +209,9 @@ host.addEventListener('message', (e) => {
     }
     case 'sessions': state.agents = m.agents || state.agents; syncSessions(m.sessions, m.projects || []); break;
     case 'output': onOutput(m.id, m.data); break;
+    case 'replay': onReplay(m.id, m.data); break;
+    case 'closeRequested': onCloseRequested(); break;
+    case 'host.failed': onHostFailed(); break;
     case 'exited': onExited(m.id, m.code); break;
     case 'git.status': onGitStatus(m); break;
     case 'panels': onPanels(m); break;
@@ -537,7 +598,7 @@ function rainFrame() {
   if (!ctx) return;
   const w = canvas.clientWidth, hgt = canvas.clientHeight;
   ctx.fillStyle = rain.floor; ctx.globalAlpha = 0.16; ctx.fillRect(0, 0, w, hgt); ctx.globalAlpha = 1;   // the tails fade
-  ctx.font = `${RAIN_CELL - 2}px "MS Gothic", "Cascadia Mono", Consolas, monospace`;
+  ctx.font = `${RAIN_CELL - 2}px "MS Gothic", "Cascadia Mono", Consolas, Menlo, "DejaVu Sans Mono", monospace`;
   ctx.textBaseline = 'top';
   for (let i = 0; i < rain.cols.length; i++) {
     const c = rain.cols[i];
@@ -852,6 +913,8 @@ function syncSessions(list, projects) {
       Object.assign(s, { name: info.name, directory: info.directory, command: info.command, conversation: info.conversation });
     }
     s.project = info.project || null;
+    // Running already: it ran on in the session host while no window was open (its output follows as a replay).
+    if (info.running && !s.running) s.started = true;
     s.running = info.running || s.running;
   }
   for (const s of [...state.byId.values()]) {
@@ -910,7 +973,7 @@ function createSession(info) {
   s.tile = h('div', { class: 'tile', 'data-id': s.id }, s.header, h('div', { class: 'tile-body' }, s.surface, s.rail, s.cover, s.exitedBadge));
 
   const term = new Terminal({
-    fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace',
+    fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, Menlo, "DejaVu Sans Mono", "Courier New", monospace',
     fontSize: state.fontSize,
     lineHeight: 1.0,
     cursorBlink: true,
@@ -927,6 +990,7 @@ function createSession(info) {
   term.loadAddon(new Unicode11Addon.Unicode11Addon());
   term.unicode.activeVersion = '11';
   term.loadAddon(new WebLinksAddon.WebLinksAddon((ev, uri) => request('openUrl', { uri })));
+  term.registerLinkProvider(pathLinkProvider(s));
   term.open(s.surface);
   if (state.byId.size < MAX_WEBGL) {
     try {
@@ -965,7 +1029,16 @@ function createSession(info) {
   }
   s.surface.addEventListener('contextmenu', (e) => {
     e.preventDefault();
-    if (state.expandedId === s.id) terminalMenu(s, e.clientX, e.clientY);
+    const link = s.hoverPath;   // right-clicked on a path link: its own items first
+    if (link) {
+      const shown = state.expandedId === s.id;
+      showMenu(e.clientX, e.clientY, [
+        { label: link.folder ? 'Open folder' : 'Open', action: () => openTermPath(s, link) },
+        { label: 'Open containing folder', action: () => openTermPath(s, link, true) },
+        { label: 'Copy path', action: () => navigator.clipboard.writeText(link.path) },
+        ...(shown ? ['-', ...terminalMenuItems(s)] : []),
+      ]);
+    } else if (state.expandedId === s.id) terminalMenu(s, e.clientX, e.clientY);
   });
   // Ctrl+V with an image or files on the clipboard and no text: xterm would paste nothing, so paste their paths instead.
   s.surface.addEventListener('paste', (e) => {
@@ -1035,6 +1108,18 @@ function onOutput(id, data) {
   // xterm draws written output later, in chunks; the screen is only read for "asking" once this output is on it.
   s.term.write(data, () => { s.act.drawnAt = performance.now(); });
   noteActivity(s);
+}
+
+/**
+ * What a session showed while no window was open (the session host kept the end of it). Written without counting as
+ * activity, so a session isn't marked as working or waiting for you just because the window opened; the host then
+ * has the program redraw its screen at this terminal's size.
+ */
+function onReplay(id, data) {
+  const s = state.byId.get(id);
+  if (!s) return;
+  fitTerm(s);   // at its real size first: the output's cursor moves assume the width it was written at
+  s.term.write(data, () => { s.act.drawnAt = performance.now(); });
 }
 
 function onExited(id, code) {
@@ -1469,11 +1554,14 @@ function setFontSize(size) {
 
 // ------------------------------------------------------------------ keyboard
 
+/** The app's shortcut modifier: ⌘ on a Mac, Ctrl elsewhere. */
+const mod = (e) => (IS_MAC ? e.metaKey : e.ctrlKey);
+
 /** Returns true for app-level shortcuts that should not reach the terminal. */
 function handleShortcut(e) {
   if (e.type !== 'keydown') return false;
   const k = e.key;
-  if (k === 'Escape' && e.shiftKey && !e.ctrlKey && !e.altKey) {
+  if (k === 'Escape' && e.shiftKey && !mod(e) && !e.altKey) {
     if (!$('#modalHost').hidden) closeModal();
     else if (activeTab()) showTerminalDoc();
     else collapse();
@@ -1481,21 +1569,21 @@ function handleShortcut(e) {
   }
   // The physical key, not the character: with some keyboard layouts Ctrl plus a number key doesn't produce "1"…"9".
   const digit = /^(?:Digit|Numpad)([1-9])$/.exec(e.code)?.[1] ?? (/^[1-9]$/.test(k) ? k : null);
-  if (e.ctrlKey && !e.altKey && !e.shiftKey && digit) {
+  if (mod(e) && !e.altKey && !e.shiftKey && digit) {
     const s = visibleSessions()[+digit - 1];   // matches the Ctrl+N hints on the visible tabs
     if (s) expand(s.id);
     return true;
   }
-  if (e.ctrlKey && !e.shiftKey && (k === 'PageUp' || k === 'PageDown')) { cycleDoc(k === 'PageUp' ? -1 : 1); return true; }
-  if (e.ctrlKey && k === 'F4') { if (activeTab()) closeDoc(docs.active); return true; }
+  if (mod(e) && !e.shiftKey && (k === 'PageUp' || k === 'PageDown')) { cycleDoc(k === 'PageUp' ? -1 : 1); return true; }
+  if (mod(e) && k === 'F4') { if (activeTab()) closeDoc(docs.active); return true; }
   // Ctrl+W closes a diff or Conversation tab. On the terminal it isn't taken: it deletes a word in Claude's prompt.
-  if (e.ctrlKey && !e.shiftKey && !e.altKey && (k === 'w' || k === 'W') && activeTab()) { closeDoc(docs.active); return true; }
+  if (mod(e) && !e.shiftKey && !e.altKey && (k === 'w' || k === 'W') && activeTab()) { closeDoc(docs.active); return true; }
   if (e.ctrlKey && k === 'Tab') { cycle(e.shiftKey ? -1 : 1); return true; }
-  if (e.ctrlKey && e.shiftKey && (k === 'G' || k === 'g')) { toggleGit(); return true; }
-  if (e.ctrlKey && e.shiftKey && (k === 'N' || k === 'n')) { showAddDialog(); return true; }
-  if (e.ctrlKey && !e.shiftKey && (k === '=' || k === '+')) { setFontSize(state.fontSize + 1); return true; }
-  if (e.ctrlKey && !e.shiftKey && k === '-') { setFontSize(state.fontSize - 1); return true; }
-  if (e.ctrlKey && !e.shiftKey && k === '0') { setFontSize(14); return true; }
+  if (mod(e) && e.shiftKey && (k === 'G' || k === 'g')) { toggleGit(); return true; }
+  if (mod(e) && e.shiftKey && (k === 'N' || k === 'n')) { showAddDialog(); return true; }
+  if (mod(e) && !e.shiftKey && (k === '=' || k === '+')) { setFontSize(state.fontSize + 1); return true; }
+  if (mod(e) && !e.shiftKey && k === '-') { setFontSize(state.fontSize - 1); return true; }
+  if (mod(e) && !e.shiftKey && k === '0') { setFontSize(14); return true; }
   return false;
 }
 
@@ -1509,6 +1597,17 @@ function terminalKey(s, e) {
     return false;
   }
   if (e.type !== 'keydown') return true;
+  // On a Mac ⌘C, ⌘V and ⌘A copy, paste and select all, and Ctrl+C and Ctrl+V go to the program as themselves.
+  if (IS_MAC) {
+    if (!e.metaKey || e.ctrlKey || e.altKey) return true;
+    const key = e.key.toLowerCase();
+    if (key === 'c') { if (s.term.hasSelection()) navigator.clipboard.writeText(s.term.getSelection()); }
+    else if (key === 'v') pasteClipboard(s);
+    else if (key === 'a') s.term.selectAll();
+    else return true;
+    e.preventDefault();
+    return false;
+  }
   // Ctrl+V pastes. Left to xterm it becomes ^V and the event is cancelled, so the browser's paste never happens; returning
   // false without cancelling lets the native paste reach xterm's paste handler (bracketed paste included).
   if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && (e.key === 'v' || e.key === 'V')) return false;
@@ -1523,6 +1622,7 @@ function terminalKey(s, e) {
     return false;
   }
   if (e.ctrlKey && e.shiftKey && (e.key === 'V' || e.key === 'v')) {
+    e.preventDefault();   // WebKitGTK pastes on Ctrl+Shift+V by itself too, which would paste twice
     pasteClipboard(s);
     return false;
   }
@@ -1531,7 +1631,7 @@ function terminalKey(s, e) {
 
 /** Pastes the clipboard's text or, without text, the paths of the image or files on it (see pasteClipboardFiles). */
 async function pasteClipboard(s) {
-  const text = await navigator.clipboard.readText().catch(() => '');
+  const text = await readClipboardText().catch(() => '');
   if (text) s.term.paste(text);
   else pasteClipboardFiles(s);
 }
@@ -1640,7 +1740,7 @@ function sessionMenu(s, x, y, from = 'session') {
     { label: 'Move to project…', action: () => showEditDialog(s, 'project') },
     { label: s.running ? 'Restart session' : 'Start session', action: () => (s.running ? confirmRestart(s) : restartSession(s)) },
     s.running && { label: 'Stop session', action: () => confirmStop(s) },
-    { label: 'Open folder in Explorer', action: () => request('openFolder', { id: s.id }) },
+    { label: `Open folder in ${IS_MAC || IS_LINUX ? FILE_MANAGER : 'Explorer'}`, action: () => request('openFolder', { id: s.id }) },
     '-',
     { label: 'Move left', action: () => moveSession(s, -1) },
     { label: 'Move right', action: () => moveSession(s, 1) },
@@ -1651,9 +1751,13 @@ function sessionMenu(s, x, y, from = 'session') {
 }
 
 function terminalMenu(s, x, y) {
+  showMenu(x, y, terminalMenuItems(s));
+}
+
+function terminalMenuItems(s) {
   // These leave you in the terminal, ready to type (Enter after Paste, say).
   const inTerminal = (fn) => async () => { await fn(); s.term.focus(); };
-  showMenu(x, y, [
+  return [
     { label: 'Copy', kbd: 'Ctrl+C', action: inTerminal(() => s.term.hasSelection() && navigator.clipboard.writeText(s.term.getSelection())) },
     { label: 'Paste', kbd: 'Ctrl+V', action: inTerminal(() => pasteClipboard(s)) },
     { label: 'Select all', action: inTerminal(() => s.term.selectAll()) },
@@ -1661,7 +1765,99 @@ function terminalMenu(s, x, y) {
     '-',
     { label: 'Show conversation', action: () => openConversation(s) },
     { label: 'Back to all sessions', kbd: 'Shift+Esc', action: collapse },
-  ]);
+  ];
+}
+
+// ---------------------------------------------------------------- file paths in a terminal
+
+// A word that may be a path (no spaces), and a quoted one (which may have spaces): "C:\My Files\a.txt", 'a b/c.md'.
+// Both are looked for, as apostrophes in prose can look like quotes around a path.
+const PATH_WORD = /[^\s"'`<>|,;()[\]{}]+/g;
+const QUOTED_PATH = /"([^"\n]{2,})"|'([^'\n]{2,})'|`([^`\n]{2,})`/g;
+
+/**
+ * The path in a word of terminal output, or null if it can't be one: unless it was quoted, it needs a folder
+ * separator, a file extension or to be ~. Sentence punctuation after it and a :line or :line:column (as compilers and
+ * Claude write them) aren't part of it. Links (anything://), options (-x) and user@host:path aren't paths.
+ */
+function termPathText(word, quoted = false) {
+  if (word === '~') return word;
+  let t = word.replace(/[.,;:!?]+$/, '').replace(/:\d+(?::\d+)?$/, '');
+  if (t.length < 2 || t.length > 1024 || t.includes('://') || t.startsWith('-') || /^[\d.]+$/.test(t)) return null;
+  if (/^[a-z][\w+.@-]*:/i.test(t) && !/^[a-z]:[\\/]/i.test(t)) return null;
+  return quoted || /[\\/]/.test(t) || /\.[A-Za-z][A-Za-z0-9]{0,7}$/.test(t) ? t : null;
+}
+
+/**
+ * Makes the file and folder paths in a terminal's output links, once the host has said they're there (relative ones
+ * are from the session's folder). Click opens one (a file is opened for viewing or editing, never run); its right-click
+ * menu also opens the folder it's in. Paths wrapped onto the next row are found whole.
+ */
+function pathLinkProvider(s) {
+  const cache = new Map();   // path text -> { found, at }: what the host said, rechecked after a while
+  const fresh = (c) => c && performance.now() - c.at < (c.found ? 30000 : 3000);
+  return {
+    provideLinks(y, callback) {
+      const buf = s.term.buffer.active;
+      // The whole logical line this row is part of, with where each character is on screen.
+      let first = y - 1;
+      while (first > 0 && buf.getLine(first)?.isWrapped && y - 1 - first < 8) first--;
+      let text = '';
+      const at = [];
+      for (let row = first; row < first + 16; row++) {
+        const line = buf.getLine(row);
+        if (!line || (row > first && !line.isWrapped)) break;
+        for (let x = 0; x < line.length; x++) {
+          const cell = line.getCell(x);
+          if (!cell || cell.getWidth() === 0) continue;
+          const chars = cell.getChars() || ' ';
+          for (let i = 0; i < chars.length; i++) at.push({ x: x + 1, y: row + 1 });
+          text += chars;
+        }
+      }
+      const words = [];
+      const add = (word, start, quoted = false) => {
+        const path = termPathText(word, quoted);
+        if (!path) return;
+        const end = start + path.length - 1;
+        if (at[start]?.y > y || at[end]?.y < y) return;   // not on this row
+        words.push({ path, start, end });
+      };
+      for (const m of text.matchAll(QUOTED_PATH)) add(m[1] ?? m[2] ?? m[3], m.index + 1, true);
+      for (const m of text.matchAll(PATH_WORD)) add(m[0], m.index);
+      if (!words.length) return callback(undefined);
+      const ask = [...new Set(words.map((w) => w.path).filter((p) => !fresh(cache.get(p))))];
+      const lookup = ask.length ? request('terminal.paths', { id: s.id, paths: ask }) : Promise.resolve([]);
+      lookup.then((found) => {
+        ask.forEach((p, i) => cache.set(p, { found: found?.[i] ?? null, at: performance.now() }));
+        if (cache.size > 500) cache.clear();
+        const real = words.filter((w) => cache.get(w.path)?.found);
+        // Where a quoted path and a word inside it are both there, the longer (the quoted one) is the link.
+        const kept = real.filter((w) => !real.some((o) => o !== w && o.start <= w.start && o.end >= w.end && o.end - o.start > w.end - w.start));
+        callback(kept.map((w) => {
+          const link = cache.get(w.path).found;
+          return {
+            range: { start: at[w.start], end: at[w.end] },
+            text: w.path,
+            decorations: { underline: true, pointerCursor: true },
+            activate: (e) => { if (e.button === 0) openTermPath(s, link); },
+            hover: () => {
+              s.hoverPath = link;
+              s.surface.title = `${link.path}\nClick to open · right-click to open the folder it's in`;
+            },
+            leave: () => {
+              if (s.hoverPath === link) s.hoverPath = null;
+              s.surface.removeAttribute('title');
+            },
+          };
+        }));
+      }, () => callback(undefined));
+    },
+  };
+}
+
+function openTermPath(s, link, inFolder = false) {
+  request('terminal.openPath', { id: s.id, path: link.path, inFolder }).catch((e) => toast(e.message, true));
 }
 
 function moveSession(s, delta) {
@@ -3297,7 +3493,7 @@ function fileSection(s, kind, title, files) {
           : { label: 'Stage', action: () => gitOp(s, 'git.stage', folderFiles.map((f) => f.path)) },
         undoableInFolder.length && { label: 'Undo Changes…', danger: true, action: () => confirmUndo(s, kind, undoableInFolder, folder) },
         '-',
-        { label: 'Open in File Explorer', action: () => request('git.openFolder', { id: s.id, path: folder }) },
+        { label: `Open in ${FILE_MANAGER}`, action: () => request('git.openFolder', { id: s.id, path: folder }) },
       ]);
     })];
 }
@@ -4048,7 +4244,7 @@ function loadMonaco() {
         renderOverviewRuler: true,
         enableSplitViewResizing: true,
         useInlineViewWhenSpaceIsLimited: false,
-        fontFamily: '"Cascadia Mono", Consolas, monospace',
+        fontFamily: '"Cascadia Mono", Consolas, Menlo, "DejaVu Sans Mono", monospace',
         fontSize: 13,
         scrollBeyondLastLine: false,
         minimap: { enabled: false },
@@ -5358,7 +5554,7 @@ function showUpdateDialog() {
     if (updates.installing) return;
     updates.installing = true;
     install.disabled = true;
-    install.textContent = 'Downloading…';
+    install.textContent = u.asksPassword ? 'Installing…' : 'Downloading…';
     status.classList.remove('error');
     status.textContent = '';
     try {
@@ -5377,8 +5573,8 @@ function showUpdateDialog() {
     h('div', { class: 'update-from dim' }, `You have ${updates.current}.`),
     h('div', { class: 'update-notes md' }, renderMarkdown(updateNotes(u.notes) || 'No release notes.')),
     h('div', { class: 'update-what' }, u.canInstall
-      ? `LlamaTree will close, install the update and reopen.${running ? ` ${running} running session${running === 1 ? '' : 's'} will restart and carry on in ${running === 1 ? 'its' : 'their'} conversation${running === 1 ? '' : 's'}.` : ''}`
-      : 'This release can’t be installed automatically (it has no checksum). Download it from the release page.'),
+      ? `${u.asksPassword ? 'LlamaTree will install the update (your system asks for an administrator’s password), then close and reopen.' : 'LlamaTree will close, install the update and reopen.'}${running ? ` ${running} running session${running === 1 ? '' : 's'} will restart and carry on in ${running === 1 ? 'its' : 'their'} conversation${running === 1 ? '' : 's'}.` : ''}`
+      : 'This copy of LlamaTree can’t install this release itself. Download it from the release page.'),
     status,
   ], [
     h('button', { class: 'btn', onclick: () => request('openUrl', { uri: u.pageUrl }) }, 'Release page'),
@@ -5548,6 +5744,55 @@ function showNoticesDialog() {
 }
 
 /** The version number's menu: updates, release notes and the tips along the top. */
+// ------------------------------------------------------------------ closing the window
+
+/** What closing the window does with running sessions: 'ask', 'keep' (they run on without it) or 'stop'. */
+const closeChoice = () => store.get('closeChoice', 'ask');
+
+let closeAsking = false;
+
+/**
+ * The window's close button (HostLink.AskToClose): sessions run in the session host, so closing the window can leave
+ * them running. With any running, this asks whether to keep them running or stop them, unless you've chosen once
+ * and for all. The answer goes to the host, which closes the window.
+ */
+async function onCloseRequested() {
+  post({ type: 'window.closing' });   // the window waits a moment for this, then closes regardless
+  if (closeAsking) return;
+  let info;
+  try { info = await request('app.closeInfo'); } catch { info = { running: 0 }; }
+  const choice = closeChoice();
+  if (!info.running || choice !== 'ask') {
+    request('app.close', { stop: !!info.running && choice === 'stop' });
+    return;
+  }
+  closeAsking = true;
+  const remember = h('input', { type: 'checkbox' });
+  const answer = (stop) => {
+    if (remember.checked) store.set('closeChoice', stop ? 'stop' : 'keep');
+    closeModal();
+    request('app.close', { stop });
+  };
+  openModal('Close LlamaTree', [
+    ...info.message.split('\n\n').map((p) => h('p', {}, p)),
+    h('label', { class: 'check-field' }, remember, 'Don’t ask again (change it in the version menu, top right)'),
+  ], [
+    h('button', { class: 'btn', onclick: closeModal }, 'Cancel'),
+    h('div', { class: 'spacer' }),
+    h('button', { class: 'btn danger', onclick: () => answer(true) }, 'Stop sessions'),
+    h('button', { class: 'btn primary', 'data-autofocus': '', onclick: () => answer(false) }, 'Keep running'),
+  ]);
+  onModalClose = () => { closeAsking = false; };
+}
+
+/** The window couldn't reach a session host, nor start one. */
+function onHostFailed() {
+  openModal('LlamaTree couldn’t start', [
+    h('p', {}, 'The part of LlamaTree that runs your sessions didn’t start, so no sessions can be shown.'),
+    h('p', {}, 'Close LlamaTree and open it again. If it keeps happening, restart your computer.'),
+  ], [h('div', { class: 'spacer' }), h('button', { class: 'btn primary', onclick: closeModal }, 'OK')]);
+}
+
 function versionMenu(x, y) {
   showMenu(x, y, [
     { icon: 'refresh', label: 'Check for updates', action: () => checkForUpdates(true) },
@@ -5558,6 +5803,11 @@ function versionMenu(x, y) {
     } },
     { icon: 'bulb', label: 'Show tips and offers', checked: notices.tips, action: () => setShowTips(!notices.tips) },
     { icon: 'gift', label: 'Tips and offers…', action: showNoticesDialog },
+    '-',
+    { header: 'Closing the window with sessions running' },
+    ...[['ask', 'Ask each time'], ['keep', 'Keep them running'], ['stop', 'Stop them']].map(([value, label]) =>
+      ({ label, checked: closeChoice() === value, action: () => store.set('closeChoice', value) })),
+    { label: 'Quit and stop all sessions', action: () => request('app.close', { stop: true }) },
     '-',
     { icon: 'info', label: `LlamaTree ${updates.current ?? ''}`.trim() + ' · release notes',
       action: () => request('openUrl', { uri: 'https://github.com/LlamachantTechnology/LlamaTree/releases' }) },

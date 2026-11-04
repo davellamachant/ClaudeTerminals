@@ -114,9 +114,9 @@ internal sealed partial class ClaudeAgent : AgentProfile
         if (firstPrompt != null)
             result = AfterProgram(result, CommandLineResolver.QuoteArgument(firstPrompt));
         if (themeSettings != null && !Has("--settings"))
-            result = result.TrimEnd() + " --settings \"" + themeSettings + "\"";
+            result = result.TrimEnd() + " --settings " + CommandLineResolver.QuotePath(themeSettings);
         if (mcpConfig != null && !Has("--mcp-config"))
-            result = result.TrimEnd() + " --mcp-config \"" + mcpConfig + "\" --allowedTools " + "mcp__" + Panels.PanelMcp.ServerName;
+            result = result.TrimEnd() + " --mcp-config " + CommandLineResolver.QuotePath(mcpConfig) + " --allowedTools " + "mcp__" + Panels.PanelMcp.ServerName;
         return result;
     }
 

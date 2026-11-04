@@ -77,6 +77,42 @@ public sealed class UpdateServiceTests
     [Fact]
     public void A_prerelease_is_not_offered() => Assert.Null(UpdateService.Parse(Release(prerelease: true)));
 
+    [Theory]
+    [InlineData(InstallKind.Deb)]
+    [InlineData(InstallKind.Rpm)]
+    [InlineData(InstallKind.Tar)]
+    public void A_linux_copy_updates_from_the_package_it_was_installed_from(InstallKind kind)
+    {
+        var name = LinuxUpdate.AssetName(kind, new Version(1, 0, 8))!;
+        var json = Release(asset: name).Replace("\"name\":\"notes.txt\"", "\"name\":\"LlamaTree-Setup-1.0.8.exe\"");
+
+        var u = UpdateService.Parse(json, kind);
+
+        Assert.Equal(name, u?.AssetName);
+        Assert.True(u?.ForThisMachine);
+    }
+
+    [Theory]
+    [InlineData(InstallKind.Deb)]
+    [InlineData(InstallKind.None)]   // macOS, or a copy run from source
+    public void Without_its_package_the_release_is_still_shown_but_not_installed(InstallKind kind)
+    {
+        var u = UpdateService.Parse(Release(), kind);
+        Assert.Equal("LlamaTree-Setup-1.0.8.exe", u?.AssetName);
+        Assert.False(u?.ForThisMachine);
+    }
+
+    [Fact]
+    public void The_linux_packages_are_named_as_the_packaging_tool_names_them()
+    {
+        if (System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture != System.Runtime.InteropServices.Architecture.X64) return;
+        var v = new Version(1, 2, 3);
+        Assert.Equal("llamatree_1.2.3_amd64.deb", LinuxUpdate.AssetName(InstallKind.Deb, v));
+        Assert.Equal("llamatree-1.2.3-1.x86_64.rpm", LinuxUpdate.AssetName(InstallKind.Rpm, v));
+        Assert.Equal("LlamaTree-1.2.3-linux-x64.tar.gz", LinuxUpdate.AssetName(InstallKind.Tar, v));
+        Assert.Null(LinuxUpdate.AssetName(InstallKind.Windows, v));
+    }
+
     [Fact]
     public void The_service_initialises_and_knows_this_copys_version()
     {
@@ -126,7 +162,7 @@ public sealed class UpdateServiceTests
     public void Continue_is_dropped_only_when_the_folder_has_no_conversation(string command, bool has, string expected) =>
         Assert.Equal(expected, ClaudeAgent.PrepareCommand(command, null, () => has));
 
-    [Theory]
+    [WindowsTheory]
     [InlineData("claude", "claude --settings \"T.json\"")]
     [InlineData("claude --continue", "claude --continue --settings \"T.json\"")]
     [InlineData("claude --resume abc", "claude --resume abc --settings \"T.json\"")]   // a resumed session gets the theme too
@@ -137,7 +173,7 @@ public sealed class UpdateServiceTests
     public void Claude_is_started_in_the_theme_of_its_terminal(string command, string expected) =>
         Assert.Equal(expected, ClaudeAgent.PrepareCommand(command, null, () => true, "T.json"));
 
-    [Fact]
+    [WindowsFact]
     public void A_theme_restart_resumes_the_conversation_and_sets_the_theme()
     {
         Assert.Equal("claude --resume abc-123 --settings \"T.json\"", ClaudeAgent.PrepareCommand("claude --continue", "abc-123", () => true, "T.json"));

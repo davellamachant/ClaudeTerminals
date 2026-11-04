@@ -169,7 +169,7 @@ public sealed class ActivityTests
         repo.Commit(("src/a.cs", "a"), ("src/b.cs", "b"), ("src/deep/c.cs", "c"), ("src/deep/down/d.cs", "d"), ("src/other/e.cs", "e"), ("docs/readme.md", "d"), ("root.txt", "r"));
         var folders = await GitService.GetTopFoldersAsync(Path.Combine(repo.Root, "src"));
         Assert.NotNull(folders);
-        Assert.Equal(repo.Root, folders.Root, ignoreCase: true);
+        Assert.True(LlamaTree.Platform.PathText.SamePlace(repo.Root, folders.Root), $"{folders.Root} isn't {repo.Root}");
         Assert.Equal([("src", 5), ("(root)", 1), ("docs", 1)], folders.Folders.Select(r => (r.Name, r.Files)));
         // A top-level folder's own sub-folders, each counted with everything below it; files directly in it are no folder.
         Assert.Equal([("deep", 2), ("other", 1)], folders.Folders[0].Folders.Select(r => (r.Name, r.Files)));

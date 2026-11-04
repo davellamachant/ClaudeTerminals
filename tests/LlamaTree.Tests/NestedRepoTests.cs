@@ -56,8 +56,8 @@ public sealed class NestedRepoTests : IDisposable
         var found = await GitService.FindRepositoriesAsync(sub);
 
         Assert.Equal(2, found.Count);
-        Assert.Equal(outer, found[0], ignoreCase: true);
-        Assert.Equal(nested, found[1]);
+        Assert.True(LlamaTree.Platform.PathText.SamePlace(outer, found[0]), $"{found[0]} isn't {outer}");
+        Assert.True(LlamaTree.Platform.PathText.SamePlace(nested, found[1]), $"{found[1]} isn't {nested}");
     }
 
     [Fact]
