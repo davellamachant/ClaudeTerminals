@@ -17,8 +17,9 @@ internal static class ServerInstall
         // install.sh reads LLAMATREE_UPDATE_URL itself: a test server standing in for GitHub stands in for it there too.
         var url = Environment.GetEnvironmentVariable("LLAMATREE_INSTALL_SCRIPT_URL") is { Length: > 0 } test ? test : ScriptUrl;
         if (url.Contains('\'')) throw new InvalidOperationException("The install script's address isn't usable.");
-        var forward = Environment.GetEnvironmentVariable("LLAMATREE_UPDATE_URL") is { Length: > 0 } api && !api.Contains('\'')
-            ? $"LLAMATREE_UPDATE_URL='{api}'; export LLAMATREE_UPDATE_URL; " : "";
+        var api = Environment.GetEnvironmentVariable("LLAMATREE_UPDATE_URL");
+        if (api != null && api.Contains('\'')) throw new InvalidOperationException("LLAMATREE_UPDATE_URL isn't usable (it holds a quote).");
+        var forward = api is { Length: > 0 } ? $"LLAMATREE_UPDATE_URL='{api}'; export LLAMATREE_UPDATE_URL; " : "";
         var script = $"""
             set -e
             {forward}d=$(mktemp -d); trap 'rm -rf "$d"' EXIT
@@ -28,8 +29,9 @@ internal static class ServerInstall
             sh "$d/install.sh" </dev/null
             """;
         var (code, output) = await Ssh.RunScriptAsync(target, script, TimeSpan.FromMinutes(10));
-        if (code == 0) return output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).LastOrDefault(l => !l.StartsWith("LlamaTree: ")) is { } done
-            ? $"{target}: {done}" : $"LlamaTree is installed on {target}.";
-        throw new InvalidOperationException($"LlamaTree couldn't be installed on {target}:\n{(output.Length > 0 ? output : $"ssh ended with {code}.")}");
+        // What the server says is its own account (a server can say anything): the connection made again afterwards is
+        // what shows LlamaTree is really there.
+        if (code == 0) return $"{target} reports LlamaTree is installed. Connecting to it again…";
+        throw new InvalidOperationException($"LlamaTree wasn't installed on {target}. What the server said:\n{(output.Length > 0 ? output : $"(nothing; ssh ended with {code})")}");
     }
 }
