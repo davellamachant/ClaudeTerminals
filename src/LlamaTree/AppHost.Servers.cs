@@ -112,7 +112,15 @@ internal sealed partial class AppHost
                 case "files.upload":
                     return (true, await UploadToAsync(c, msg));
             }
-            return (true, await ForwardAsync(c, msg, ss.Info.RemoteId));
+            var answer = await ForwardAsync(c, msg, ss.Info.RemoteId);
+            if (type is "start" or "restart" && !ss.Running)
+            {
+                // Its server sends its session list only when sessions change, not when one starts: it runs now, as far
+                // as sessions here are told (list_sessions, stop_session…), until it says it exited.
+                ss.Running = true;
+                relay.SetPeers(RelayPeers());
+            }
+            return (true, answer);
         }
         if (OptStr(msg, "server") is { Length: > 0 } server)
         {
@@ -247,7 +255,7 @@ internal sealed partial class AppHost
             {
                 if (FindServerSession(c.Target, obj["id"]?.GetValue<string>()) is not { } ss) break;
                 obj["id"] = ss.Info.Id;
-                if (type == "exited") ss.Running = false;
+                if (type == "exited" && ss.Running) { ss.Running = false; relay.SetPeers(RelayPeers()); }
                 if (type == "git.status") ss.RepoRoot = obj["root"] is JsonValue root && root.TryGetValue<string>(out var r) ? r : null;
                 window.PostJson(obj.ToJsonString());
                 break;
