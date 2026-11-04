@@ -785,6 +785,7 @@ const termTheme = (look = themeLook()) => ({ ...(isLight() ? TERM_THEME_LIGHT : 
 // terminal's screen; xterm's own cursor is made invisible (an underline in the background colour) while it's on.
 const TRAIL_MAX = 48;        // pieces of ribbon kept at once
 const CYCLE_CELLS = 3;       // how many cells wide the light cycle is drawn
+const CYCLE_OFFSET = 25;     // how far right of the cursor it rides, in pixels, so it never covers what you're typing
 // Side view, facing right, in a 24 by 16 box: two tall wheels with hubs, the canopy sweeping over them, the rider's
 // back, and the white light stripe along the canopy.
 const CYCLE_SVG = '<svg viewBox="0 0 24 16" preserveAspectRatio="xMinYMid meet" aria-hidden="true">' +
@@ -837,7 +838,7 @@ function lightCycle(s, on) {
     const cw = screen.clientWidth / term.cols, ch = screen.clientHeight / term.rows;
     const x = b.cursorX, y = b.cursorY;
     head.hidden = false;
-    Object.assign(head.style, { left: `${x * cw}px`, top: `${y * ch}px`, width: `${cw * CYCLE_CELLS}px`, height: `${ch}px` });
+    Object.assign(head.style, { left: `${x * cw + CYCLE_OFFSET}px`, top: `${y * ch}px`, width: `${cw * CYCLE_CELLS}px`, height: `${ch}px` });
     const from = c.last;
     c.last = { x, y };
     if (!from || (from.x === x && from.y === y)) return;
@@ -846,7 +847,7 @@ function lightCycle(s, on) {
     c.moves.push(now);
     if (c.moves.length > BURST_MOVES || !trailsAllowed()) return;
     // The ribbon, from the rear wheel: down (or up) the old column to the new line, then along it to the new cell.
-    const mid = (v, size) => (v + 0.5) * size;
+    const midX = (col) => (col + 0.5) * cw + CYCLE_OFFSET;   // a column's middle, where the cycle rides
     const wheel = (row) => (row + 0.69) * ch;   // the wheels' height in the cell (11 of 16 in CYCLE_SVG)
     const piece = (left, top, width, height) => {
       const p = h('div', { class: 'cycle-trail', style: `left:${left}px;top:${top}px;width:${width}px;height:${height}px` });
@@ -855,8 +856,8 @@ function lightCycle(s, on) {
       c.pieces.push(p);
       while (c.pieces.length > TRAIL_MAX) c.pieces.shift().remove();
     };
-    if (from.y !== y) piece(mid(from.x, cw) - 1, Math.min(wheel(from.y), wheel(y)), 2, Math.abs(y - from.y) * ch);
-    if (from.x !== x) piece(Math.min(mid(from.x, cw), mid(x, cw)), wheel(y) - 1, Math.abs(x - from.x) * cw, 2);
+    if (from.y !== y) piece(midX(from.x) - 1, Math.min(wheel(from.y), wheel(y)), 2, Math.abs(y - from.y) * ch);
+    if (from.x !== x) piece(Math.min(midX(from.x), midX(x)), wheel(y) - 1, Math.abs(x - from.x) * cw, 2);
   };
   const queue = () => { if (!c.queued) { c.queued = true; requestAnimationFrame(ride); } };
   c.move = s.term.onCursorMove(queue);
