@@ -1125,6 +1125,31 @@ internal sealed class AppHost
                 if (!result.Ok) throw new InvalidOperationException(string.IsNullOrEmpty(result.Error) ? result.Text : result.Error);
                 return result.Text.Trim();
             }
+            case "git.branches":
+                return (await GitService.GetBranchesAsync(GitDir(msg))).Select(b => new
+                {
+                    name = b.Name, remote = b.Remote, upstream = b.Upstream, ahead = b.Ahead, behind = b.Behind, gone = b.Gone, worktree = b.Worktree,
+                });
+            case "git.checkout":
+            {
+                // The branch picker: switch to a local branch, or to a remote one's local branch (made if needed).
+                var s = Get(msg);
+                var result = await GitService.CheckoutBranchAsync(GitDir(msg), Str(msg, "branch"), Bool(msg, "remote"), Bool(msg, "stash"));
+                await s.RefreshStatusAsync();
+                if (!result.Ok) throw new InvalidOperationException(result.Message);
+                return result.Message;
+            }
+            case "git.createBranch":
+            {
+                // Visual Studio's New Branch: from a branch or commit, switched to unless unticked, with the changes
+                // brought along or stashed first.
+                var s = Get(msg);
+                var result = await GitService.CreateBranchAsync(GitDir(msg), Str(msg, "branch").Trim(), OptStr(msg, "base"),
+                    Bool(msg, "checkout"), Bool(msg, "stash"));
+                await s.RefreshStatusAsync();
+                if (!result.Ok) throw new InvalidOperationException(result.Message);
+                return result.Message;
+            }
             case "app.version":
                 return UpdateService.CurrentVersion.ToString();
             case "notices.check":

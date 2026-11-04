@@ -47,14 +47,19 @@ const PATHS = {
   markDeny: 'M8 2a6 6 0 1 0 0 12A6 6 0 1 0 8 2M3.8 3.8l8.4 8.4',         // Permissions: not allowed
   git: 'M5 3v10M5 11a2 2 0 1 0 0 .01M5 3a1.6 1.6 0 1 0 0 .01M11 3a1.6 1.6 0 1 0 0 .01M11 4.6C11 8 5 7 5 10',
   branch: 'M5 2.5v8M5 12a1.5 1.5 0 1 0 0 .01M11 4a1.5 1.5 0 1 0 0 .01M11 5.5c0 3-6 2.5-6 5',
+  branchTracked: 'M4 2.5v8M4 12a1.5 1.5 0 1 0 0 .01M10 4a1.5 1.5 0 1 0 0 .01M10 5.5c0 3-6 2.5-6 5M12.5 14V9.5M10.5 11.5l2-2 2 2',   // a branch with an upstream
+  newBranch:'M4 2.5v8M4 12a1.5 1.5 0 1 0 0 .01M10 4a1.5 1.5 0 1 0 0 .01M10 5.5c0 3-6 2.5-6 5M12.5 9.5v4M10.5 11.5h4',   // branch with a +
   chevR: 'M6 4l4 4-4 4',
   chevL: 'M10 4l-4 4 4 4',
   chevD: 'M4 6l4 4 4-4',
+  chevU: 'M4 10l4-4 4 4',
+  edit: 'M10.5 2.5l3 3-8 8h-3v-3zM9 4l3 3',   // a pencil: changed files, as on Visual Studio's status bar
   up: 'M8 13V3M4 7l4-4 4 4',
   down: 'M8 3v10M4 9l4 4 4-4',
   more: 'M3.5 8h.01M8 8h.01M12.5 8h.01',
   collapse: 'M6 2v4H2M10 2v4h4M6 14v-4H2M10 14v-4h4',
   sideBySide: 'M2 3h12v10H2zM8 3v10',
+  panel: 'M2 3h12v10H2zM10 3v10',   // the side panel, with the Git tabs off
   inline: 'M2 3h12v10H2zM2 8h12',
   whitespace: 'M3 12h10M3 9v3M13 9v3M6 4h4M8 4v5',
   openFile: 'M9 2H4v12h8V5zM9 2v3h3',
@@ -236,6 +241,7 @@ const state = {
   projectViewOf: null,       // the project whose Project view is showing: a place of its own, with no session open
   currentId: store.get('currentId', null),   // session shown in the Git panel
   gitVisible: store.get('gitVisible', true),
+  hiddenGitTabs: new Set(store.get('hiddenGitTabs', [])),   // 'changes' and/or 'repo', turned off in the side panel's ▾
   gitWidth: store.get('gitWidth', 400),
   panels: [],                // shown by Claude through the app's MCP server (their tabs live in the dock)
   panelsLoaded: false,       // until the host sends them, saved panel tabs keep their place
@@ -1317,9 +1323,9 @@ function renderTileHeader(s) {
     projectTag(s),
     relayTileMark(s),
     h('span', { class: 'tile-title', title: s.title }, s.title),
-    gs && h('button', {
-      class: 'chip', title: `${gs.count} changed file(s) on ${gs.branch} — show in Git Changes`,
-      onclick: () => showGit(s.id),
+    gs && h(gitTabOn('changes') ? 'button' : 'span', {
+      class: 'chip', title: `${gs.count} changed file(s) on ${gs.branch}${gitTabOn('changes') ? ' — show in Git Changes' : ''}`,
+      onclick: gitTabOn('changes') && (() => showGit(s.id)),
     }, iconEl('branch'), gs.branch, gs.ahead ? ` ↑${gs.ahead}` : '', gs.count ? h('span', { class: 'mod' }, ` ●${gs.count}`) : ''),
     h('button', { class: 'icon-btn', title: 'Session options', onclick: (e) => { const r = e.currentTarget.getBoundingClientRect(); sessionMenu(s, r.left, r.bottom + 2); } }, iconEl('more')),
     expanded && h('button', { class: 'icon-btn', title: 'Back to all sessions (Shift+Esc)', onclick: collapse }, iconEl('collapse')),
@@ -1705,13 +1711,17 @@ function menuKey(e) {
   if (!openMenuEl || e.ctrlKey || e.altKey || e.metaKey) return false;
   const items = [...openMenuEl.querySelectorAll('.menu-item')];
   const at = items.findIndex((i) => i.classList.contains('active'));
-  const move = { ArrowDown: at + 1, ArrowUp: (at < 0 ? items.length : at) - 1, Home: 0, End: items.length - 1 }[e.key];
+  // A menu with a box to type in (the branch picker's filter) keeps Space, Home and End for the box.
+  const typing = e.target instanceof HTMLInputElement && openMenuEl.contains(e.target);
+  const move = { ArrowDown: at + 1, ArrowUp: (at < 0 ? items.length : at) - 1, ...(typing ? {} : { Home: 0, End: items.length - 1 }) }[e.key];
   if (move !== undefined) {
     items[at]?.classList.remove('active');
-    items[(move + items.length) % items.length]?.classList.add('active');
+    const next = items[(move + items.length) % items.length];
+    next?.classList.add('active');
+    next?.scrollIntoView({ block: 'nearest' });
     return true;
   }
-  if ((e.key === 'Enter' || e.key === ' ') && at >= 0) { items[at].click(); return true; }
+  if ((e.key === 'Enter' || (e.key === ' ' && !typing)) && at >= 0) { items[at].click(); return true; }
   if (e.key === 'Escape' && !e.shiftKey) { closeMenu(); return true; }
   return false;
 }
@@ -1720,7 +1730,7 @@ function menuKey(e) {
 function sessionMenu(s, x, y, from = 'session') {
   showMenu(x, y, [
     state.expandedId === s.id ? { label: 'Back to all sessions', kbd: 'Shift+Esc', action: collapse } : { label: 'Expand', action: () => expand(s.id) },
-    { label: 'Show Git changes', action: () => showGit(s.id) },
+    gitTabOn('changes') && { label: 'Show Git changes', action: () => showGit(s.id) },
     { label: 'Show conversation', action: () => openConversation(s) },
     { label: 'Permissions…', action: () => openPermissions('session', s.id) },
     { label: `Project view: ${projectName(groupOf(s))}${projectName(groupOf(s)).endsWith('s') ? '’' : '’s'} worktrees side by side`, action: () => openProjectView(groupOf(s)) },
@@ -2370,10 +2380,71 @@ function showNewConversations(ids) {
 function applyGitVisibility() {
   document.body.classList.toggle('git-hidden', !state.gitVisible);
   $('#gitPanel').style.width = state.gitWidth + 'px';
-  $('#btnGit').classList.toggle('active', state.gitVisible);
+  applySideEmpty();
+}
+
+/** Anything in the side panel for the selected session: the Git tabs, or (with those off) a panel or plugin. */
+const sideHasTabs = () => dock.groups.some((g) => groupTabs(g).length > 0);
+
+/**
+ * With the Git tabs off, the side panel shows only while it has a panel or plugin to show, and its title bar button
+ * stands for the side panel rather than Git. The button stays, so its ▾ can always bring the Git tabs back.
+ */
+function applySideEmpty() {
+  const empty = !sideHasTabs();
+  document.body.classList.toggle('side-empty', empty);
+  const btn = $('#btnGit');
+  btn.classList.toggle('active', state.gitVisible && !empty);
+  const git = anyGitTab();
+  btn.innerHTML = icon(git ? 'git' : 'panel');
+  btn.title = git ? 'Git and the side panel (Ctrl+Shift+G)'
+    : empty ? 'Side panel: nothing open (click for its options)' : 'Side panel: panels and plugins (Ctrl+Shift+G)';
+  $('#gitRefresh').hidden = !git;
+}
+
+/** Whether a Git tab ('changes' or 'repo') is turned on in the side panel's ▾. */
+const gitTabOn = (t) => !state.hiddenGitTabs.has(t);
+const anyGitTab = () => Object.keys(GIT_TABS).some(gitTabOn);
+
+/** Shows or hides Git Changes or Git Repository; where it sat in the side panel is kept for when it's back. */
+function setGitTab(t, on) {
+  if (on) state.hiddenGitTabs.delete(t); else state.hiddenGitTabs.add(t);
+  store.set('hiddenGitTabs', [...state.hiddenGitTabs]);
+  for (const s of state.sessions) renderTileHeader(s);   // the branch chip opens Git Changes only while it's on
+  if (on) { openDockTab(t); return; }   // turned on: open it, showing the side panel if need be
+  applyGitVisibility();
+  renderGit();
+  toast(`${GIT_TABS[t]} is hidden. Bring it back from the ▾ beside the side panel button.`);
+}
+
+/** Opens a side panel tab (a panel or plugin), showing the side panel if it's hidden. */
+function openDockTab(t) {
+  if (!state.gitVisible) { state.gitVisible = true; store.set('gitVisible', true); applyGitVisibility(); }
+  activateTab(groupOfTab(t), t);
+}
+
+/** The side panel button's ▾: the Git tabs on or off, what's open in the panel to jump to, and the layout. */
+function sidePanelMenu() {
+  const r = $('#btnGitMenu').getBoundingClientRect();
+  const open = dock.groups.flatMap(groupTabs).filter((t) => isPanelTab(t) || isPluginDockTab(t));
+  const empty = !sideHasTabs();
+  showMenu(r.right - 280, r.bottom + 2, [
+    { header: 'Side panel' },
+    !empty && { icon: 'panel', label: state.gitVisible ? 'Hide the side panel' : 'Show the side panel', kbd: 'Ctrl+Shift+G', action: toggleGit },
+    ...Object.entries(GIT_TABS).map(([t, label]) => ({ icon: 'git', label, checked: gitTabOn(t), action: () => setGitTab(t, !gitTabOn(t)) })),
+    open.length > 0 && '-',
+    open.length > 0 && { header: 'Open in the side panel' },
+    ...open.map((t) => isPluginDockTab(t)
+      ? { icon: pluginIcon(pluginOfTab(t)), label: pluginCaption(pluginOfTab(t)), action: () => openDockTab(t) }
+      : { icon: 'list', label: panelByTab(t).title, action: () => openDockTab(t) }),
+    ...reopenItems(),
+    '-',
+    { label: 'Reset layout', action: resetDock },
+  ]);
 }
 
 function toggleGit() {
+  if (!sideHasTabs()) { sidePanelMenu(); return; }   // nothing to show: offer the way to turn the Git tabs back on
   state.gitVisible = !state.gitVisible;
   store.set('gitVisible', state.gitVisible);
   applyGitVisibility();
@@ -2498,8 +2569,10 @@ function placePanels() {
   if (changed) saveDock();
 }
 
-/** The tabs a group shows for the selected session: the Git ones always, panels when they show with it. */
-const groupTabs = (g) => g.tabs.filter((t) => isPluginDockTab(t) ? !!pluginById(pluginOfTab(t)) : !isPanelTab(t) || (panelByTab(t) && panelVisibleFor(panelByTab(t), currentSession())));
+/** The tabs a group shows for the selected session: the Git ones unless they're turned off, panels when they show with it. */
+const groupTabs = (g) => g.tabs.filter((t) => isPluginDockTab(t) ? !!pluginById(pluginOfTab(t))
+  : isPanelTab(t) ? !!panelByTab(t) && panelVisibleFor(panelByTab(t), currentSession())
+  : gitTabOn(t));
 
 /**
  * The tab a group has open: its chosen one, or its first while the chosen one isn't shown for this session. The choice
@@ -2517,6 +2590,7 @@ const markSeen = (t) => { const p = panelByTab(t); if (p) panelSeen.set(t, p.upd
 const isUnseen = (p) => panelSeen.get(panelTab(p)) !== p.updated;
 
 function renderGit() {
+  applySideEmpty();   // with the Git tabs off, the side panel comes and goes with its panels
   if (!state.gitVisible) return;
   placePanels();
   buildDock();
@@ -2877,6 +2951,7 @@ function makeDivider(g) {
       isPluginDockTab(t) && { label: 'Close plugin', action: () => closeDockPlugin(t) },
       ...reopenItems(),
       '-',
+      t in GIT_TABS && { label: `Hide ${GIT_TABS[t]}`, action: () => setGitTab(t, false) },
       { label: 'Example panel skill…', action: showExampleSkill },
       { label: 'Reset layout', action: resetDock },
     ].filter(Boolean);
@@ -2910,7 +2985,10 @@ function branchLine(s) {
   return h('div', { class: 'git-toolbar' },
     repoPicker(s),
     h('div', { class: 'git-branch', title: g.upstream ? `Tracking ${g.upstream}` : 'No upstream branch' },
-      iconEl('branch'), h('span', { class: 'name' }, g.branch || '(unknown)'),
+      h('button', {
+        class: 'branch-btn', title: `${g.upstream ? `Tracking ${g.upstream}` : 'No upstream branch'}\nSwitch branches or create a new one`,
+        onclick: (e) => branchPicker(s, e.currentTarget),
+      }, iconEl('branch'), h('span', { class: 'name' }, g.branch || '(unknown)'), iconEl('chevD')),
       g.upstream && h('span', { class: 'ab', title: `${plural(ahead, 'outgoing commit')} / ${plural(behind, 'incoming commit')}` },
         iconEl('up'), String(ahead), ' ', iconEl('down'), String(behind)),
       pr && h('button', {
@@ -2982,6 +3060,8 @@ function gitMoreMenu(s, x, y) {
   const info = s.prInfo?.data;
   const free = !s.remoteBusy;
   showMenu(x, y, [
+    { label: 'New Branch…', icon: 'newBranch', action: () => showNewBranchDialog(s) },
+    free && '-',
     free && { label: 'Fetch', action: () => remoteOp(s, 'fetch') },
     free && s.git.upstream && { label: 'Pull', action: () => remoteOp(s, 'pull') },
     free && { label: 'Push', action: () => remoteOp(s, 'push') },
@@ -3013,6 +3093,191 @@ async function remoteOp(s, op) {
   renderGit();
 }
 
+/**
+ * New Branch, after Visual Studio's: a name, what it's based on (a local or remote branch, or the commit it was opened
+ * from in Git Repository) and whether to switch to it. Switching with uncommitted changes asks first whether to bring
+ * them to the new branch or stash them (see askAboutChanges). A failure comes back to this dialog, as it was filled in.
+ */
+function showNewBranchDialog(s, { base = null, commit = null, name = '', checkout = true, error = null } = {}) {
+  const g = s.git;
+  if (!g?.isRepo) return;
+  const current = g.branch && !g.branch.startsWith('(') ? g.branch : null;
+  const branch = h('input', { value: name, placeholder: 'feature/my-change', spellcheck: 'false' });
+  const shortSha = (sha) => sha.slice(0, 7);
+  // The list fills in once the branches arrive; until then it holds just what it starts on.
+  const start = base ?? commit?.sha ?? current ?? 'HEAD';
+  const startLabel = commit && start === commit.sha ? `Commit ${shortSha(commit.sha)}: ${commit.subject}` : start === 'HEAD' ? 'HEAD (the current commit)' : start;
+  const select = h('select', {}, h('option', { value: start }, startLabel));
+  request('git.branches', { id: s.id }).then((all) => {
+    const local = all.filter((b) => !b.remote).map((b) => b.name), remote = all.filter((b) => b.remote).map((b) => b.name);
+    const chosen = select.value;
+    const opt = (v, label = v) => h('option', { value: v, selected: v === chosen }, label);
+    select.replaceChildren(...[
+      commit && opt(commit.sha, `Commit ${shortSha(commit.sha)}: ${commit.subject}`),
+      !current && opt('HEAD', 'HEAD (the current commit)'),
+      local.length > 0 && h('optgroup', { label: 'Local' }, local.map((b) => opt(b))),
+      remote.length > 0 && h('optgroup', { label: 'Remote' }, remote.map((b) => opt(b))),
+    ].filter(Boolean));
+    if (select.value !== chosen) select.prepend(opt(chosen, startLabel));   // e.g. a branch deleted meanwhile: keep it, git says if it's gone
+  }).catch(() => { /* keep the one option; creating still works */ });
+  const switchTo = h('input', { type: 'checkbox', checked: checkout });
+  const err = h('div', { class: 'form-error', hidden: !error }, error ?? '');
+  const create = h('button', { class: 'btn primary' }, 'Create');
+  const go = () => {
+    const b = branch.value.trim();
+    if (!b) { err.hidden = false; err.textContent = 'Name the new branch.'; branch.focus(); return; }
+    const opts = { base: select.value, commit, name: b, checkout: switchTo.checked };
+    if (opts.checkout && changeCount(s)) askAboutChanges(s, opts.name, (stash, button) => createBranch(s, opts, stash, button), () => showNewBranchDialog(s, opts));
+    else createBranch(s, opts, false, create);
+  };
+  create.addEventListener('click', go);
+  branch.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+  openModal('Create a new branch', [
+    field('Branch name', branch),
+    field('Based on', h('div', { class: 'combo' }, select, h('span', { class: 'combo-btn' }, iconEl('chevD')))),
+    h('label', { class: 'check-field' }, switchTo, 'Checkout branch'),
+    err,
+  ], [h('button', { class: 'btn', onclick: closeModal }, 'Cancel'), create]);
+}
+
+const changeCount = (s) => (s.git?.staged.length ?? 0) + (s.git?.unstaged.length ?? 0);
+
+/**
+ * Switching branches with uncommitted changes, as Visual Studio asks: bring them along (the default) or stash them.
+ * run(stash, button) does the switch; back, if given, returns to the dialog this came from. An error from a try is
+ * shown here, so the other choice can be made.
+ */
+function askAboutChanges(s, target, run, back = null, error = null) {
+  const changes = changeCount(s);
+  const bring = h('button', { class: 'btn primary' }, 'Bring the changes');
+  const stash = h('button', { class: 'btn' }, 'Stash and continue');
+  bring.addEventListener('click', () => run(false, bring));
+  stash.addEventListener('click', () => run(true, stash));
+  openModal('Uncommitted changes', [
+    h('div', {}, `You have ${changes} uncommitted change${changes === 1 ? '' : 's'} on ${s.git.branch || 'the current branch'}. What should happen to ${changes === 1 ? 'it' : 'them'} on ${target}?`),
+    h('ul', { class: 'dim' },
+      h('li', {}, h('b', {}, 'Bring the changes'), `: they come along to ${target}, uncommitted, as they are now. Git refuses if one is in a file ${target} has differently.`),
+      h('li', {}, h('b', {}, 'Stash and continue'), `: they are put away in a Git stash and ${target} starts clean. git stash pop brings them back.`)),
+    h('div', { class: 'form-error', hidden: !error }, error ?? ''),
+  ], [h('button', { class: 'btn', onclick: back ?? closeModal }, back ? 'Back' : 'Cancel'), stash, bring]);
+}
+
+/** Disables the open dialog's buttons and labels the one pressed while a branch operation runs. */
+function busyButtons(button, label) {
+  if (!button) return;
+  for (const b of $('#modalHost').querySelectorAll('.modal-footer button')) b.disabled = true;
+  button.textContent = label;
+}
+
+function branchDone(s, text) {
+  closeModal();
+  toast(text);
+  invalidateLog(s);   // a new branch shows on its commit in Git Repository, even when not switched to
+  renderGit();
+}
+
+async function createBranch(s, opts, stash, button) {
+  if (button.disabled) return;
+  busyButtons(button, 'Creating…');
+  try {
+    branchDone(s, await request('git.createBranch', { id: s.id, branch: opts.name, base: opts.base, checkout: opts.checkout, stash }));
+  } catch (e) {
+    showNewBranchDialog(s, { ...opts, error: e.message });
+  }
+}
+
+/** Switches to a branch from the picker; from the changes prompt, button is the choice pressed and errors stay there. */
+async function checkoutBranch(s, b, stash, button = null) {
+  if (button?.disabled) return;
+  busyButtons(button, 'Switching…');
+  try {
+    branchDone(s, await request('git.checkout', { id: s.id, branch: b.name, remote: b.remote, stash }));
+  } catch (e) {
+    if (button) askAboutChanges(s, localNameOf(b), (st, btn) => checkoutBranch(s, b, st, btn), null, e.message);
+    else toast(e.message, true);
+  }
+}
+
+/** The local branch a picked branch means: itself, or for origin/feature, feature. */
+const localNameOf = (b) => (b.remote ? b.name.replace(/^[^/]+\//, '') : b.name);
+
+/**
+ * The branch picker, after Visual Studio's branch button: a filter, New Branch, and the local and remote branches in
+ * two tabs. Picking one switches to it (a remote one through its local branch, made if needed), asking first what to
+ * do with uncommitted changes. Arrows and Enter work from the filter (see menuKey).
+ */
+async function branchPicker(s, anchor) {
+  // A second click on the button closes it: the press already did, as it was outside the picker.
+  if (Date.now() - (+anchor.dataset.closedAt || 0) < 400) return;
+  const filter = h('input', { class: 'bp-filter', placeholder: 'Filter branches', spellcheck: 'false' });
+  const list = h('div', { class: 'bp-list' }, h('div', { class: 'git-message' }, 'Loading…'));
+  let tab = 'local', branches = null;
+  const tabBtn = (key, label) => h('button', {
+    class: 'bp-tab', 'data-tab': key,
+    onclick: () => { tab = key; fill(); filter.focus(); },
+  }, label);
+  const tabs = h('div', { class: 'bp-tabs' }, tabBtn('local', 'Locals'), tabBtn('remote', 'Remotes'));
+  const here = (s.git?.root || s.directory).replace(/[\\/]+$/, '').toLowerCase();
+  const pick = (b) => {
+    closeMenu();
+    if (!b.remote && b.name === s.git.branch) return;
+    if (changeCount(s)) askAboutChanges(s, localNameOf(b), (stash, btn) => checkoutBranch(s, b, stash, btn));
+    else checkoutBranch(s, b, false);
+  };
+  const row = (b) => {
+    const current = !b.remote && b.name === s.git.branch;
+    const elsewhere = !b.remote && !current && b.worktree && b.worktree.replace(/[\\/]+$/, '').toLowerCase() !== here ? b.worktree : null;
+    const state = [b.ahead && `↑${b.ahead}`, b.behind && `↓${b.behind}`, b.gone && 'gone'].filter(Boolean).join(' ');
+    return h('div', {
+      class: 'menu-item bp-row' + (current ? ' current' : '') + (elsewhere ? ' elsewhere' : ''),
+      title: [b.name, current && 'The current branch', b.upstream && `Tracking ${b.upstream}${b.gone ? ' (gone from the remote)' : ''}`,
+        elsewhere && `Checked out in the worktree ${elsewhere}; Git can't check it out here too`].filter(Boolean).join('\n'),
+      onclick: () => {
+        if (elsewhere) { closeMenu(); toast(`${b.name} is checked out in the worktree ${elsewhere}, so it can't be checked out here too.`, true); return; }
+        pick(b);
+      },
+    }, h('span', { class: 'menu-icon' }, iconEl(b.upstream ? 'branchTracked' : 'branch')),
+    h('span', { class: 'bp-name' }, b.name),
+    elsewhere ? h('span', { class: 'bp-note' }, `in ${leafName(elsewhere)}`) : state && h('span', { class: 'bp-note' }, state));
+  };
+  const fill = () => {
+    for (const t of tabs.children) t.classList.toggle('active', t.dataset.tab === tab);
+    if (!branches) return;
+    const q = filter.value.trim().toLowerCase();
+    const shown = branches.filter((b) => b.remote === (tab === 'remote') && (!q || b.name.toLowerCase().includes(q)));
+    list.replaceChildren(...(shown.length ? shown.map(row)
+      : [h('div', { class: 'git-message' }, q ? 'No branches match.' : tab === 'remote' ? 'No remote branches. Fetch to see them.' : 'No branches.')]));
+    // Typing picks the first match, so Enter switches to it.
+    if (q) list.querySelector('.menu-item')?.classList.add('active');
+  };
+  filter.addEventListener('input', fill);
+  const popup = h('div', { class: 'menu branch-picker' },
+    h('div', { class: 'bp-head' }, filter,
+      h('button', { class: 'btn', onclick: () => { closeMenu(); showNewBranchDialog(s); } }, 'New Branch')),
+    tabs, list);
+  closeMenu();
+  $('#menuHost').append(popup);
+  const r = anchor.getBoundingClientRect();
+  popup.style.left = Math.max(4, Math.min(r.left, innerWidth - popup.offsetWidth - 4)) + 'px';
+  // Below the button, or above it when that's where the room is (the status bar's): pinned by its bottom edge then,
+  // so it grows upward as the branches arrive.
+  if (innerHeight - r.bottom >= 360 || r.top < innerHeight - r.bottom) popup.style.top = r.bottom + 2 + 'px';
+  else { popup.style.bottom = innerHeight - r.top + 2 + 'px'; popup.style.maxHeight = r.top - 8 + 'px'; }
+  openMenuEl = popup;
+  anchor.classList.add('open');
+  // closeMenu just removes the element: take the anchor's open look off once it's gone.
+  new MutationObserver((_, obs) => { if (!popup.isConnected) { anchor.classList.remove('open'); anchor.dataset.closedAt = Date.now(); obs.disconnect(); } }).observe($('#menuHost'), { childList: true });
+  fill();
+  filter.focus();
+  try {
+    branches = await request('git.branches', { id: s.id });
+  } catch (e) {
+    list.replaceChildren(h('div', { class: 'git-message' }, `Couldn't list the branches: ${e.message}`));
+    return;
+  }
+  if (popup.isConnected) fill();
+}
+
 function renderChanges(s, body) {
   const g = s.git;
   if (!g) { body.replaceChildren(h('div', { class: 'git-message' }, 'Loading…')); return; }
@@ -3038,6 +3303,7 @@ function renderChanges(s, body) {
     s.info && h('div', { class: 'infobar' + (s.info.error ? ' error' : '') }, h('span', { class: 'msg' }, s.info.text),
       h('button', { class: 'icon-btn small', title: 'Dismiss', onclick: () => { s.info = null; renderGit(); } }, iconEl('close'))),
     scroll,
+    gitStatusBar(s),
   ].filter(Boolean);
   if (ui.wrap.parentNode === body) {
     // Rebuild everything around the commit box but leave the box itself in place: taking it out of the page, even
@@ -3049,6 +3315,30 @@ function renderChanges(s, body) {
     fill(body, before, ui.wrap, ...after);
   }
   scroll.scrollTop = scrollTop;
+}
+
+/**
+ * The bar along the bottom of Git Changes, after Visual Studio's status bar: outgoing/incoming commits (opening Git
+ * Repository), how many files are changed, and the branch, which opens the branch picker.
+ */
+function gitStatusBar(s) {
+  const g = s.git;
+  const files = new Set([...g.staged, ...g.unstaged].map((f) => f.path)).size;
+  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  const sync = g.upstream
+    ? h(gitTabOn('repo') ? 'button' : 'span', {
+      class: 'sb-item',
+      title: `${plural(g.ahead, 'outgoing commit')} / ${plural(g.behind, 'incoming commit')} (${g.upstream})${gitTabOn('repo') ? '\nShow in Git Repository' : ''}`,
+      onclick: gitTabOn('repo') && (() => openDockTab('repo')),
+    }, iconEl('up'), String(g.ahead), iconEl('down'), String(g.behind))
+    : h('span', { class: 'sb-item dim', title: 'This branch isn\'t on the remote yet: Push publishes it' }, iconEl('up'), 'Not published');
+  return h('div', { class: 'git-statusbar' },
+    sync,
+    h('span', { class: 'sb-item', title: `${plural(files, 'changed file')}` }, iconEl('edit'), String(files)),
+    h('button', {
+      class: 'sb-item sb-branch', title: 'Switch branches or create a new one',
+      onclick: (e) => branchPicker(s, e.currentTarget),
+    }, iconEl('branch'), h('span', { class: 'name' }, g.branch || '(unknown)'), iconEl('chevU')));
 }
 
 /** The session's commit message box and button, created once so its text, caret, selection and focus survive refreshes. */
@@ -3378,6 +3668,13 @@ async function renderRepo(s, body) {
     class: 'commit-row' + (c.outgoing ? ' outgoing' : '') + (s.selectedCommit === c.sha ? ' selected' : ''),
     title: `${c.subject}\n${c.author} · ${new Date(c.date).toLocaleString()}\n${c.sha}`,
     onclick: () => selectCommit(s, c.sha),
+    oncontextmenu: (e) => {
+      e.preventDefault();
+      showMenu(e.clientX, e.clientY, [
+        { label: 'New Branch…', icon: 'newBranch', action: () => showNewBranchDialog(s, { commit: { sha: c.sha, subject: c.subject } }) },
+        { label: 'Copy Commit ID', action: () => navigator.clipboard.writeText(c.sha) },
+      ]);
+    },
   }, h('span', { class: 'graph' }), refBadges(c.refs), h('span', { class: 'commit-subject' }, c.subject),
   h('span', { class: 'commit-meta' }, `${c.author} · ${relTime(c.date)}`));
 
@@ -5573,7 +5870,9 @@ function themeMenu(x, y) {
       p.toolbar && hiddenPluginButtons.has(p.id) && { label: [h('span', { class: 'menu-indent' }), 'Show its title bar button'], action: () => setPluginButton(p.id, true) },
     ]),
     plugins.list.length > 0 && '~',   // the plugins, then what's done about them (as under Theme)
-    { icon: 'shield', label: 'Permissions', kbd: 'Plugins and sessions', action: () => openPermissions() },
+    relayWaiting() > 0
+      ? { icon: 'shield', label: 'Permissions', kbd: `${relayWaiting()} waiting for your answer`, action: () => openPermissions('session') }
+      : { icon: 'shield', label: 'Permissions', kbd: 'Plugins and sessions', action: () => openPermissions() },
     plugins.problems.length > 0 && { icon: 'warn', label: `${plugins.problems.length} couldn't be loaded`, kbd: 'Why?', action: () => toast(plugins.problems.join('\n'), true) },
     { icon: 'folder', label: plugins.list.length ? 'Open the plugins folder' : 'Add a plugin: open the plugins folder', action: () => request('plugins.openFolder') },
   ]);
@@ -6242,7 +6541,6 @@ function applyGrants(grants) {
     if (g.hidden?.length) pluginHidden[id] = g.hidden;
     if (g.changed) pluginChanged.add(id);
   }
-  renderPermsButton();
   checkPluginSight();
   permissionsChanged();
 }
@@ -6501,17 +6799,8 @@ function relayTileMark(s) {
   return h('button', { class: 'icon-btn relay-tile', title: 'It may message other sessions by rules of its own: show them', onclick: () => openPermissions('session', s.id) }, iconEl('link'));
 }
 
-/** The title bar's Permissions button: shown once anything is allowed, or a message waits for your answer (counted on it). */
-function renderPermsButton() {
-  const b = $('#btnPerms');
-  if (!b) return;
-  const waiting = relay.waiting.reduce((n, w) => n + w.count, 0);
-  const any = waiting > 0 || relay.rules.some((r) => r.decision === 'allow') || Object.keys(pluginAccess).length > 0;
-  b.hidden = !any;
-  b.title = waiting ? `Permissions: ${waiting} message${waiting === 1 ? '' : 's'} waiting for your answer` : 'Permissions: what plugins and sessions may do';
-  fill(b, iconEl('shield'), waiting ? h('span', { class: 'plugin-btn-count' }, String(Math.min(waiting, 99))) : null);
-}
-$('#btnPerms')?.addEventListener('click', () => openPermissions(relay.waiting.length ? 'session' : null));
+/** Messages between sessions waiting for your answer (counted on Permissions in the palette menu). */
+const relayWaiting = () => relay.waiting.reduce((n, w) => n + w.count, 0);
 
 function setPermsBy(by) {
   permsView.by = by;
@@ -6826,7 +7115,6 @@ function relayChanged(st) {
   Object.assign(relay, st);
   if (relay.asking && !relay.waiting.some((w) => w.from === relay.asking.from && w.to === relay.asking.to)) closeModal();
   renderPermsPause();
-  renderPermsButton();
   for (const s of state.sessions) renderTileHeader(s);   // their marks
   permissionsChanged();
   for (const s of state.sessions) relayNotify(s);
@@ -7055,6 +7343,7 @@ loadThemes();
 
 $('#btnGrid').innerHTML = icon('grid');
 $('#btnGit').innerHTML = icon('git');
+$('#btnGitMenu').innerHTML = icon('chevD');
 $('#btnAdd').innerHTML = icon('plus') + '<span>New Session</span>';
 $('#gitRefresh').innerHTML = icon('refresh');
 $('#gitHide').innerHTML = icon('close');
@@ -7065,6 +7354,7 @@ $('#diffOpenFile').innerHTML = icon('openFile');
 
 $('#btnGrid').addEventListener('click', () => { showTerminalDoc(); collapse(); });
 $('#btnGit').addEventListener('click', toggleGit);
+$('#btnGitMenu').addEventListener('click', sidePanelMenu);
 // Not addEventListener('click', showAddDialog): the click event would arrive as its `mode` argument.
 $('#btnAdd').addEventListener('click', () => showAddDialog());
 $('#btnAddEmpty').addEventListener('click', () => showAddDialog());
