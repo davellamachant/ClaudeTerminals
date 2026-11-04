@@ -907,6 +907,32 @@ img.plugin-ic { width: 16px; height: 16px; flex: none; object-fit: contain; }
 .veil-row input[type=range] { flex: 1; min-width: 0; margin: 0; accent-color: var(--accent-strong); cursor: pointer; }
 .veil-end { color: var(--text-faint); font-size: 12px; flex: none; }
 .veil-value { min-width: 4ch; text-align: right; font-variant-numeric: tabular-nums; flex: none; }
+/* The same slider, small, in a tile's bottom-right corner (veilSlider in app.js): always on the open terminal, on the
+   others while the pointer is over them; faint until the pointer is on it. It sits clear of the conversation rail, and
+   above the "Starts when you open it" badge when that's showing. */
+.tile-veil {
+  position: absolute; right: 24px; bottom: 8px; z-index: 3; display: none; align-items: center; gap: 6px; padding: 3px 8px;
+  border-radius: 10px; background: color-mix(in srgb, var(--panel) 85%, transparent); border: 1px solid var(--border-soft);
+  color: var(--text-dim); font-size: 11px; opacity: .5; transition: opacity .15s;
+}
+.tile:hover .tile-veil, .tile.expanded .tile-veil { display: inline-flex; }
+.tile-veil:hover, .tile-veil:focus-within { opacity: 1; }
+.tile-veil input[type=range] { width: 84px; height: 12px; margin: 0; accent-color: var(--accent-strong); cursor: pointer; }
+.tile-veil span { min-width: 3.5ch; text-align: right; font-variant-numeric: tabular-nums; }
+.tile-exited:not([hidden]) ~ .tile-veil { bottom: 44px; }
+/* The same slider, small, in a tile's bottom-right corner (veilSlider in app.js): always on the open terminal, on the
+   others while the pointer is over them; faint until the pointer is on it. It sits clear of the conversation rail, and
+   above the "Starts when you open it" badge when that's showing. */
+.tile-veil {
+  position: absolute; right: 24px; bottom: 8px; z-index: 3; display: none; align-items: center; gap: 6px; padding: 3px 8px;
+  border-radius: 10px; background: color-mix(in srgb, var(--panel) 85%, transparent); border: 1px solid var(--border-soft);
+  color: var(--text-dim); font-size: 11px; opacity: .5; transition: opacity .15s;
+}
+.tile:hover .tile-veil, .tile.expanded .tile-veil { display: inline-flex; }
+.tile-veil:hover, .tile-veil:focus-within { opacity: 1; }
+.tile-veil input[type=range] { width: 84px; height: 12px; margin: 0; accent-color: var(--accent-strong); cursor: pointer; }
+.tile-veil span { min-width: 3.5ch; text-align: right; font-variant-numeric: tabular-nums; }
+.tile-exited:not([hidden]) ~ .tile-veil { bottom: 44px; }
 
 /* Status dots dialog: a card per style, each showing every state moving. */
 .dot-style-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 10px; }

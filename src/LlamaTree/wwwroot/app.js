@@ -652,10 +652,35 @@ function markVeil(look = themeLook(), value = veilSetting()) {
   if (seeThrough(look)) root.dataset.veil = '';
   else delete root.dataset.veil;
 }
-/** The amount on the page, and every terminal dressed for it. */
+/** The amount on the page, every terminal dressed for it, and every tile's slider at it. */
 function applyVeil(value = veilSetting()) {
   markVeil(themeLook(), value);
   for (const s of state.sessions) if (s.term) dressCursor(s);
+  syncVeilSliders();
+}
+/**
+ * The small slider in a tile's corner (see .tile-veil in app.css): the same amount as Terminal background, changed in
+ * place. Dragging shows at once; letting go keeps it for the theme on. Its clicks stay its own, so they don't expand the tile.
+ */
+function veilSlider() {
+  const v = String(Math.round(veilAmount()));
+  const input = h('input', { type: 'range', min: '0', max: '100', step: '1', value: v, 'aria-label': 'How solid the terminal is' });
+  const out = h('span', {}, v + '%');
+  input.addEventListener('input', () => applyVeil(+input.value));
+  input.addEventListener('change', () => { const n = +input.value; setVeil(n === Math.round(veilDefault()) ? null : n); });
+  const el = h('div', { class: 'tile-veil', title: "Terminal background: how solid the terminal is over the window's floor. Drag to change it for this theme." }, input, out);
+  for (const type of ['pointerdown', 'mousedown', 'click', 'dblclick', 'contextmenu']) el.addEventListener(type, (e) => e.stopPropagation());
+  return el;
+}
+/** Every tile's slider at the amount on the page. */
+function syncVeilSliders() {
+  const v = String(Math.round(veilAmount()));
+  for (const s of state.sessions) {
+    if (!s.veil) continue;
+    const input = s.veil.querySelector('input');
+    if (input.value !== v) input.value = v;
+    s.veil.querySelector('span').textContent = v + '%';
+  }
 }
 /** Your amount for the theme on (null takes it away), kept and shown. */
 function setVeil(value) {
@@ -1025,7 +1050,8 @@ function createSession(info) {
   s.header.addEventListener('mouseenter', () => loadConversationInfo(s));
   s.rail = h('div', { class: 'chat-rail' });
   attachRail(s.rail);
-  s.tile = h('div', { class: 'tile', 'data-id': s.id }, s.header, h('div', { class: 'tile-body' }, s.surface, s.rail, s.cover, s.exitedBadge));
+  s.veil = veilSlider();
+  s.tile = h('div', { class: 'tile', 'data-id': s.id }, s.header, h('div', { class: 'tile-body' }, s.surface, s.rail, s.cover, s.exitedBadge, s.veil));
 
   const term = new Terminal({
     fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, Menlo, "DejaVu Sans Mono", "Courier New", monospace',
