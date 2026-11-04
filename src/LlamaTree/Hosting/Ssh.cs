@@ -11,9 +11,25 @@ namespace LlamaTree.Hosting;
 /// </summary>
 internal sealed class Ssh
 {
-    /// <summary>What's run on the server: LlamaTree's bridge to its session host. LLAMATREE_REMOTE_COMMAND overrides it.</summary>
+    /// <summary>
+    /// What's run on the server: LlamaTree's bridge to its session host. The llamatree command where the server's shell
+    /// finds it (a package's /usr/bin/llamatree), else where install.sh puts a copy of your own (~/.local/bin, which a
+    /// shell started by ssh often doesn't have on its PATH). In sh, whatever your login shell is (fish, csh…).
+    /// LLAMATREE_REMOTE_COMMAND overrides it.
+    /// </summary>
     private static string RemoteCommand =>
-        Environment.GetEnvironmentVariable("LLAMATREE_REMOTE_COMMAND") is { Length: > 0 } c ? c : "llamatree --attach";
+        Environment.GetEnvironmentVariable("LLAMATREE_REMOTE_COMMAND") is { Length: > 0 } c ? c : DefaultRemoteCommand;
+
+    /// <summary>Exit code of the bridge command when LlamaTree isn't installed on the server.</summary>
+    public const int NotInstalled = 127;
+
+    /// <summary>What the bridge command says when LlamaTree isn't installed on the server.</summary>
+    public const string NotInstalledMessage = "LlamaTree: it is not installed on this server.";
+
+    internal const string DefaultRemoteCommand =
+        "sh -c 'if command -v llamatree >/dev/null 2>&1; then exec llamatree --attach; " +
+        "elif [ -x \"$HOME/.local/bin/llamatree\" ]; then exec \"$HOME/.local/bin/llamatree\" --attach; " +
+        "else echo \"LlamaTree: it is not installed on this server.\" >&2; exit 127; fi'";
 
     private readonly StringBuilder errors = new();
     private readonly TaskCompletionSource errorsDone = new(TaskCreationOptions.RunContinuationsAsynchronously);

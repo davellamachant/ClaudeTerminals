@@ -1763,6 +1763,7 @@ function sessionMenu(s, x, y, from = 'session') {
   const c = serverOf(s);
   showMenu(x, y, [
     c && c.state !== 'online' && { header: serverStateText(c) },
+    c?.notInstalled && { label: `Install LlamaTree on ${c.target}…`, action: () => installServer(c.target) },
     c && ['offline', 'elsewhere'].includes(c.state) && { label: `Reconnect to ${c.target}`, action: () => request('servers.reconnect', { server: c.target }).catch((e) => toast(e.message, true)) },
     c && c.state !== 'online' && '-',
     c?.state === 'online' && c.outdated && { header: serverVersionText(c) },
@@ -2207,6 +2208,9 @@ function showAddDialog(mode = 'new', from = null) {
     } catch (e) {
       error.hidden = false;
       error.textContent = e.message;
+      const server = serverValue();
+      if (server && /not installed on this server/.test(e.message))
+        error.append(' ', h('button', { class: 'btn', onclick: () => installServer(server) }, `Install LlamaTree on ${server}…`));
     }
   };
   for (const i of [dir, name, command, project.newName]) i.addEventListener('keydown', (e) => { if (e.key === 'Enter') add(); });
@@ -5916,6 +5920,7 @@ function serverTitle(c) {
   if (c.state === 'online') return `Runs on ${c.machine || c.target}, reached over SSH as ${c.target}. It keeps running there when LlamaTree closes or the connection drops.` +
     (c.outdated ? `\n${serverVersionText(c)} Click to update it.` : '');
   if (c.state === 'connecting') return `Connecting to ${c.target}…`;
+  if (c.notInstalled) return `LlamaTree isn’t installed on ${c.target}.\nThe session is there, but nothing runs it until LlamaTree is. Click to install it.`;
   if (c.state === 'elsewhere') return `${c.problem ?? ''}\nClick to show ${c.target}’s sessions here instead.`;
   return `Can’t reach ${c.target}${c.problem ? ':\n' + c.problem : '.'}\nThe session keeps running there; LlamaTree keeps trying. Click to try now.`;
 }
@@ -5928,9 +5933,30 @@ function serverTag(s) {
   const stale = !down && c.outdated;
   return h('span', {
     class: 'server-tag' + (down ? ' down' : stale ? ' stale' : ''), title: serverTitle(c),
-    onclick: down && c.state !== 'connecting' ? ((e) => { e.stopPropagation(); request('servers.reconnect', { server: c.target }).catch((err) => toast(err.message, true)); })
+    onclick: c.notInstalled ? ((e) => { e.stopPropagation(); installServer(c.target); })
+      : down && c.state !== 'connecting' ? ((e) => { e.stopPropagation(); request('servers.reconnect', { server: c.target }).catch((err) => toast(err.message, true)); })
       : stale && ((e) => { e.stopPropagation(); updateServer(c); }),
   }, iconEl('server'), serverName(c), stale && iconEl('up'));
+}
+
+/**
+ * Installs LlamaTree on a server that doesn't have it (servers.install), once you've said yes: its install script from
+ * the latest release, run over ssh, installs the package with sudo where that needs no password, and otherwise a copy
+ * of your own in your home folder there. Then the connection is made again.
+ */
+function installServer(target) {
+  confirmDialog(`Install LlamaTree on ${target}?`, [
+    `LlamaTree isn't installed on ${target}, and its sessions need it there.`,
+    `${target} downloads LlamaTree's install script from its latest GitHub release and runs it. The script checks what it downloads against the checksums GitHub publishes, installs the package with sudo where sudo needs no password, and otherwise installs a copy just for your account, in ~/.local/share/LlamaTree (it updates itself).`,
+  ].join('\n\n'), 'Install', false, async () => {
+    toast(`Installing LlamaTree on ${target}…`);
+    try {
+      toast(await request('servers.install', { server: target }));
+    } catch (err) {
+      openModal(`LlamaTree wasn't installed on ${target}`, [h('pre', { class: 'host-error' }, err.message)],
+        [h('div', { class: 'spacer' }), h('button', { class: 'btn primary', onclick: closeModal }, 'OK')]);
+    }
+  });
 }
 
 /** What a server's version is next to this computer's, when they differ. */

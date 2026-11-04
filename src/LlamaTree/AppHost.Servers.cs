@@ -67,6 +67,7 @@ internal sealed partial class AppHost
         // Older than this computer's LlamaTree: it can be updated to match (servers.update).
         outdated = Version.TryParse(c.Version, out var v) && Updates.UpdateService.Normalize(v) < Updates.UpdateService.CurrentVersion,
         current = Updates.UpdateService.CurrentVersion.ToString(),
+        notInstalled = c.State == "offline" && c.NotInstalled,
     });
 
     /// <summary>The page has loaded: each server's host is asked again for its sessions and what they show.</summary>
@@ -135,6 +136,13 @@ internal sealed partial class AppHost
                     // Installed first; then its LlamaTree restarts on it (the page has asked you, as that stops its sessions).
                     var said = await ServerUpdate.UpdateAsync(c.Target, Updates.UpdateService.CurrentVersion);
                     c.Restart();
+                    return (true, said);
+                }
+                case "servers.install":
+                {
+                    // You said yes (the page asked): its LlamaTree installed, then the connection made again.
+                    var said = await ServerInstall.InstallAsync(c.Target);
+                    c.Reconnect();
                     return (true, said);
                 }
                 case "addSessions":

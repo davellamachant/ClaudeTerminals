@@ -47,6 +47,9 @@ internal sealed class ServerConnection : IDisposable
     public string? Machine { get; private set; }
     public string? Version { get; private set; }
 
+    /// <summary>The server was reached, but LlamaTree isn't installed there (see ServerInstall).</summary>
+    public bool NotInstalled { get; private set; }
+
     /// <summary>Whether the server's LlamaTree does <paramref name=feature/> (see SessionHost's welcome); an older one doesn't say.</summary>
     public bool Supports(string feature) => features.Contains(feature);
     private HashSet<string> features = [];
@@ -243,6 +246,8 @@ internal sealed class ServerConnection : IDisposable
             StateChanged?.Invoke(this);
             return;
         }
+        // The bridge command says so when there's no LlamaTree on the server (see Ssh.DefaultRemoteCommand): it can be installed.
+        NotInstalled = !reached && why?.Contains(Ssh.NotInstalledMessage, StringComparison.Ordinal) == true;
         SetState("offline", reached ? "The connection dropped." : string.IsNullOrWhiteSpace(why) ? "The connection ended before LlamaTree answered on the server." : why);
         var wait = RetrySeconds[Math.Min(failures++, RetrySeconds.Length - 1)];
         _ = Task.Delay(TimeSpan.FromSeconds(wait)).ContinueWith(_ => runOnUi(() =>
