@@ -49,7 +49,21 @@ One window for many local Claude Code and Codex sessions, with a Visual Studio�
 
 ## Install
 
-Download `LlamaTree-Setup-<version>.exe` from the [latest release](https://github.com/LlamachantTechnology/LlamaTree/releases/latest) and run it. It installs for your account only (no admin), and later versions install themselves from inside the app.
+**Windows** (PowerShell):
+
+```powershell
+powershell -c "irm https://github.com/LlamachantTechnology/LlamaTree/releases/latest/download/install.ps1 | iex"
+```
+
+**Linux:**
+
+```sh
+curl -fsSL https://github.com/LlamachantTechnology/LlamaTree/releases/latest/download/install.sh | sh
+```
+
+Each downloads the latest release, checks it against the SHA-256 GitHub publishes for it, and installs it. On Windows that's the setup below, run silently. On Linux it's the `.deb` or `.rpm` when there's apt, dnf or zypper and you can use sudo (it asks for your password); otherwise it's the `.tar.gz` unpacked into `~/.local/share/LlamaTree`, with a `llamatree` command in `~/.local/bin` and a menu entry, for your account only. Set `LLAMATREE_INSTALL=tar` to choose that anyway (`curl … | LLAMATREE_INSTALL=tar sh`). Both scripts are in [tools/install](tools/install) if you'd like to read them first.
+
+Or install by hand: download `LlamaTree-Setup-<version>.exe` from the [latest release](https://github.com/LlamachantTechnology/LlamaTree/releases/latest) and run it. It installs for your account only (no admin), and later versions install themselves from inside the app.
 
 Releases are signed by **Llamachant Technology Ltd**. If SmartScreen still warns about a new release ("Windows protected your PC"), check that the publisher says Llamachant Technology Ltd, then choose *More info › Run anyway*.
 
@@ -509,7 +523,7 @@ Signed releases are built by `azure-pipelines.yml` on the Azure DevOps agent wit
 
 1. Bump `<Version>` in `LlamaTree.csproj` and merge to `main`.
 2. In Azure DevOps, run the pipeline on `main` (or on a tag `v<version>`) with *Create the GitHub release* ticked. Untick it for a trial run that only builds and signs, keeping the installer on the run's Artifacts.
-3. The pipeline runs `publish.ps1 -Sign`, which signs `LlamaTree.exe`/`.dll`, setup and its uninstaller as *Llamachant Technology Ltd* (picked from the certificate store by subject, as the NuGet signing does), timestamps them with Sectigo's server, and fails unless each carries a valid, timestamped signature from that publisher. It then creates a **draft** GitHub release with the installer.
+3. The pipeline runs `publish.ps1 -Sign`, which signs `LlamaTree.exe`/`.dll`, setup and its uninstaller as *Llamachant Technology Ltd* (picked from the certificate store by subject, as the NuGet signing does), timestamps them with Sectigo's server, and fails unless each carries a valid, timestamped signature from that publisher. It then creates a **draft** GitHub release with the installer, the Linux packages and the two install scripts from `tools/install` (which the one-line installs fetch from the latest release, so keep their names).
 4. Write the release notes on the draft and publish it: that's what makes the in-app updater offer the new version. The updater shows everything above the notes' *Install* heading, and needs the installer named `LlamaTree-Setup-<version>.exe` on a `v<version>` tag (Linux copies update from the `.deb`, `.rpm` and `.tar.gz` under the names `publish.ps1` gives them).
 
 ## License

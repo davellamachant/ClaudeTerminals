@@ -2,3 +2,6 @@
 
 *.ico binary
 *.png binary
+
+# Run by sh on Linux and macOS (install.sh is attached to releases as is): CRLF would break them.
+*.sh text eol=lf
