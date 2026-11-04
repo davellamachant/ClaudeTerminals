@@ -133,7 +133,8 @@ public class ServerFilesTests : IDisposable
         var outside = Path.Combine(root, "private");
         Directory.CreateDirectory(Path.Combine(allowed, "src"));
         Directory.CreateDirectory(outside);
-        Assert.Equal(Path.Combine(allowed, "src"), LlamaTree.Platform.PathText.ResolvedInside(Path.Combine(allowed, "src"), allowed), ignoreCase: true);
+        // The folder as resolved (on a Mac the temporary folder /var/... is really /private/var/...).
+        Assert.Equal(LlamaTree.Platform.PathText.ResolvedPath(Path.Combine(allowed, "src")), LlamaTree.Platform.PathText.ResolvedInside(Path.Combine(allowed, "src"), allowed));
         Assert.Null(LlamaTree.Platform.PathText.ResolvedInside(outside, allowed));
         var link = Path.Combine(allowed, "out");
         try { Directory.CreateSymbolicLink(link, outside); }
