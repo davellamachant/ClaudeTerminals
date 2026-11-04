@@ -32,6 +32,10 @@ internal sealed class SessionHost : IHostWindow
     private AppHost app = null!;
     private LinkChannel? window;
     private PluginAddressing plugins = PluginAddressing.VirtualHosts;
+    private bool pluginCopies;
+    private bool toolCalls;   // the window answers sessions' tool calls (see ForwardToolCall)
+    private readonly ConcurrentDictionary<int, TaskCompletionSource<System.Text.Json.Nodes.JsonObject?>> toolReplies = new();
+    private int toolCallIds;   // the window is sent copies of plugins' folders (see ServePlugin)
     private int? windowPid;
     private bool quitting;
     private bool everAttached;
@@ -141,11 +145,16 @@ internal sealed class SessionHost : IHostWindow
             channel.Send(LinkKind.Window, JsonSerializer.Serialize(new
             {
                 op = "welcome", version = Updates.UpdateService.CurrentVersion.ToString(), machine = Environment.MachineName,
+                // What it does that an older one didn't, which another computer's host may count on: "confined-start", a
+                // session added with "within" checked against that folder as resolved once, and its process started in the
+                // folder held as checked (see Terminal.ConfinedFolder). An earlier build that only checked said "within".
+                features = new[] { "confined-start" },
             }));
             app.Attached();
         }
         else if (kind == LinkKind.Page && channel == window)
         {
+            if (json.StartsWith("""{"type":"tools.reply",""", StringComparison.Ordinal)) { TakeToolReply(json); return; }
             app.Receive(json);
         }
     }
@@ -159,6 +168,10 @@ internal sealed class SessionHost : IHostWindow
             // Null for a window on another computer (TryGetInt32 throws on anything but a number).
             windowPid = root.TryGetProperty("pid", out var pid) && pid.ValueKind == JsonValueKind.Number && pid.TryGetInt32(out var p) ? p : null;
             app.Remote = root.TryGetProperty("remote", out var r) && r.ValueKind == JsonValueKind.String ? r.GetString() : null;
+            // A window on another computer that serves plugins is sent their folders; one that doesn't (another
+            // computer's host, showing this one's sessions among its own) isn't.
+            pluginCopies = app.Remote != null && root.TryGetProperty("plugins", out var wants) && wants.ValueKind == JsonValueKind.Object;
+            toolCalls = app.Remote != null && root.TryGetProperty("tools", out var tools) && tools.ValueKind == JsonValueKind.True;
             plugins = root.TryGetProperty("plugins", out var pl) && pl.ValueKind == JsonValueKind.Object &&
                       pl.TryGetProperty("origin", out var o) && o.ValueKind == JsonValueKind.String &&
                       pl.TryGetProperty("key", out var k) && k.ValueKind == JsonValueKind.String
@@ -167,7 +180,7 @@ internal sealed class SessionHost : IHostWindow
         }
         catch (JsonException)
         {
-            (windowPid, plugins, app.Remote) = (null, PluginAddressing.VirtualHosts, null);
+            (windowPid, plugins, app.Remote, pluginCopies, toolCalls) = (null, PluginAddressing.VirtualHosts, null, false, false);
         }
     }
 
@@ -212,6 +225,9 @@ internal sealed class SessionHost : IHostWindow
         if (channel != window) return;
         window = null;
         windowPid = null;
+        toolCalls = false;
+        foreach (var id in toolReplies.Keys)
+            if (toolReplies.TryRemove(id, out var r)) r.TrySetException(new IOException("The window went."));
         app.Detached();
         CheckIdle();
     }
@@ -269,7 +285,7 @@ internal sealed class SessionHost : IHostWindow
         if (window is not { } w) return;
         // A window on another computer can't read the plugin's folder: it's sent a copy first, which it serves. The
         // copy is all sent before anything else, so it's there before the page has heard of the plugin.
-        if (app.Remote != null) SendPluginFiles(w, plugin);
+        if (pluginCopies) SendPluginFiles(w, plugin);
         w.Send(LinkKind.Window, JsonSerializer.Serialize(new { op = "serve", id = plugin.Id, folder = plugin.Folder }));
     }
 
@@ -289,6 +305,28 @@ internal sealed class SessionHost : IHostWindow
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+    }
+
+    public Task<System.Text.Json.Nodes.JsonObject?>? ForwardToolCall(string session, JsonElement message)
+    {
+        if (!toolCalls || window is not { } w) return null;
+        var id = Interlocked.Increment(ref toolCallIds);
+        var reply = new TaskCompletionSource<System.Text.Json.Nodes.JsonObject?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        toolReplies[id] = reply;
+        w.Send(LinkKind.Window, JsonSerializer.Serialize(new { op = "tools", id, session, message }));
+        return reply.Task;
+    }
+
+    private void TakeToolReply(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var m = doc.RootElement;
+            if (m.TryGetProperty("id", out var i) && i.TryGetInt32(out var id) && toolReplies.TryRemove(id, out var reply))
+                reply.TrySetResult(m.TryGetProperty("reply", out var r) && r.ValueKind == JsonValueKind.Object ? System.Text.Json.Nodes.JsonNode.Parse(r.GetRawText())!.AsObject() : null);
+        }
+        catch (JsonException) { }
     }
 
     public void SendFile(string path)

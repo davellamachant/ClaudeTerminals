@@ -65,6 +65,48 @@ internal static class ServerFiles
     }
 
     /// <summary>
+    /// Copies files from this computer to a server, a part at a time, for pasting into a session there: their paths
+    /// there. Every few parts it waits for the server's host to have written the ones before, so a big file isn't all
+    /// held in memory waiting to go. <paramref name="request"/> sends a request and waits for its reply;
+    /// <paramref name="send"/> sends a page message (JSON) without waiting.
+    /// </summary>
+    public static async Task<List<string>> UploadAsync(string[] paths, Func<object, Task<System.Text.Json.JsonElement>> request, Action<string> send)
+    {
+        var copied = new List<string>();
+        foreach (var path in paths)
+        {
+            if (Directory.Exists(path)) throw new InvalidOperationException($"{Path.GetFileName(path)} is a folder: only files can be pasted into a session on a server.");
+            var size = new FileInfo(path).Length;
+            if (size > MaxFile) throw new InvalidOperationException($"{Path.GetFileName(path)} is too big to paste ({size >> 20} MB; at most {MaxFile >> 20} MB).");
+        }
+        var json = new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web);
+        foreach (var path in paths)
+        {
+            var token = Guid.NewGuid().ToString("N");
+            await request(new { type = "upload.begin", token, name = Path.GetFileName(path) });
+            await using var f = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1, useAsync: true);
+            var buffer = new byte[PartSize];
+            Task? written = null;
+            for (var part = 1; ; part++)
+            {
+                var n = await f.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: false);
+                if (n == 0) break;
+                var data = Convert.ToBase64String(buffer, 0, n);
+                if (part % 8 != 0) send(System.Text.Json.JsonSerializer.Serialize(new { type = "upload.data", token, data }, json));
+                else
+                {
+                    if (written != null) await written;
+                    written = request(new { type = "upload.data", token, data });
+                }
+                if (n < buffer.Length) break;
+            }
+            if (written != null) await written;
+            copied.Add((await request(new { type = "upload.end", token })).GetString() ?? throw new InvalidOperationException("The server didn't say where the file went."));
+        }
+        return copied;
+    }
+
+    /// <summary>
     /// Where files pasted into this computer's sessions from another are kept: the app's data folder, so only you can
     /// read them. Each paste has a folder of its own, so files keep their names; ones a week old are cleared out.
     /// </summary>

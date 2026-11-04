@@ -491,6 +491,18 @@ body.no-anim .tile, body.no-anim .surface { transition: none !important; }
 }
 .tile.expanded .tile-header { cursor: default; }
 .tile-name { font-weight: 600; white-space: nowrap; }
+/* A session on a server: which one (see serverTag), and an edge along its tile's header so it stands out among the
+   local ones. Red while its server can't be reached. */
+.server-tag { display: inline-flex; align-items: center; gap: 4px; padding: 0 7px; height: 18px; border-radius: 9px; font-size: 11px; font-weight: 600; white-space: nowrap; color: var(--link); background: color-mix(in srgb, var(--link) 14%, transparent); border: 1px solid color-mix(in srgb, var(--link) 45%, transparent); }
+.server-tag svg.ic { width: 12px; height: 12px; flex: none; }
+.server-tag.stale { color: var(--attention); background: color-mix(in srgb, var(--attention) 14%, transparent); border-color: color-mix(in srgb, var(--attention) 50%, transparent); cursor: pointer; }
+.server-tag.down { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); border-color: color-mix(in srgb, var(--danger) 50%, transparent); cursor: pointer; }
+.tile.on-server .tile-header { box-shadow: inset 3px 0 0 var(--link); }
+.tile.on-server.server-down .tile-header { box-shadow: inset 3px 0 0 var(--danger); }
+.tab-server { display: inline-flex; align-items: center; gap: 3px; max-width: 110px; padding: 0 5px; border-radius: 8px; font-size: 11px; color: var(--link); background: color-mix(in srgb, var(--link) 14%, transparent); }
+.tab-server span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab-server svg.ic { width: 11px; height: 11px; flex: none; }
+.tab-server.down { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
 .tile-title { color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
 .chip {
   display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 7px; border-radius: 10px;
@@ -1393,3 +1405,15 @@ button.sb-item:hover, .sb-item.open { background: var(--hover-strong); color: va
 .fb-foot { display: flex; align-items: center; gap: 12px; min-height: 28px; }
 .fb-status { flex: 1; min-width: 0; color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fb-hidden { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+/* Sessions started by agents: the mark on their tile, and the dialog asking you first */
+.chip.started-by { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip.started-by svg.ic { width: 12px; height: 12px; flex: none; }
+.spawn-ask { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 8px 0 10px; }
+.spawn-ask .k, .k.dim { color: var(--text-dim); }
+.spawn-ask span:not(.k) { word-break: break-all; }
+.spawn-prompt {
+  max-height: 180px; overflow: auto; margin: 4px 0 10px; padding: 8px; white-space: pre-wrap; word-break: break-word; user-select: text;
+  background: var(--chrome-2); border: 1px solid var(--border); border-radius: 4px; font: inherit;
+}
+.spawn-warn { padding: 6px 8px; border-radius: 4px; background: var(--info-bg); border: 1px solid var(--info-border); }
+.spawn-ask code { word-break: break-all; }

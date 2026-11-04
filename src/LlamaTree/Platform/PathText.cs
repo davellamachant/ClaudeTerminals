@@ -47,6 +47,43 @@ internal static class PathText
     private static string? RealPath(string path) => Libc.Instance.RealPath(path);
 
     /// <summary>
+    /// <paramref name="path"/> with every link in it resolved, if it really is <paramref name="root"/> or inside it (also
+    /// resolved); null if it isn't, or either isn't there. A link inside a folder can lead anywhere, so a path given as
+    /// inside one is checked this way when it's given; the process is then started in the folder as it is at that moment
+    /// (see Terminal.ConfinedFolder), against the root as resolved here (<see cref="ResolvedPath"/>).
+    /// </summary>
+    public static string? ResolvedInside(string path, string root) => Confine(path, root)?.Folder;
+
+    /// <summary>
+    /// The folder and the root it must be inside, both with every link resolved once, here and now, and the folder checked
+    /// against that very root: null if either isn't there or the folder isn't inside. What's kept for the session (and
+    /// checked again as its process starts) is this root, never one resolved again later, which could have gone or moved.
+    /// </summary>
+    public static (string Folder, string Root)? Confine(string path, string root) =>
+        ResolvedPath(root) is { } realRoot && ResolvedPath(path) is { } real && IsInside(real, realRoot) ? (real, realRoot) : null;
+
+    /// <summary>The path with every link in it resolved, as it's normally written; null if it isn't there.</summary>
+    public static string? ResolvedPath(string path) => FinalPath(path) is { } real ? Plain(TrimEnd(real)) : null;
+
+    /// <summary>
+    /// Whether <paramref name="real"/> is <paramref name="realRoot"/> or inside it, both with their links already
+    /// resolved. Compared exactly, letter case included, on every system: a volume (or, on Windows, a folder) can be case
+    /// sensitive, where /work/Project and /work/project are two folders. Both are as the system resolved them, so the
+    /// same folder is spelled the same; at worst a path is refused, never let out.
+    /// </summary>
+    public static bool IsInside(string real, string realRoot)
+    {
+        (real, realRoot) = (TrimEnd(real), TrimEnd(realRoot));
+        var prefix = realRoot.EndsWith(Path.DirectorySeparatorChar) ? realRoot : realRoot + Path.DirectorySeparatorChar;   // "/" is its own
+        return string.Equals(real, realRoot, StringComparison.Ordinal) || real.StartsWith(prefix, StringComparison.Ordinal);
+    }
+
+    /// <summary>A path as Windows resolves it, \\?\C:\... (or \\?\UNC\server\share\...), as it's normally written.</summary>
+    public static string Plain(string path) =>
+        path.StartsWith(@"\\?\UNC\", StringComparison.Ordinal) ? @"\\" + path[8..]
+        : path.StartsWith(@"\\?\", StringComparison.Ordinal) ? path[4..] : path;
+
+    /// <summary>
     /// Whether two full paths name the same place, also when one reaches it through a link: git reports real paths,
     /// and on a Mac the temporary folder /var/... is really /private/var/.... A path that's gone is compared through
     /// the nearest folder above it that's still there.
