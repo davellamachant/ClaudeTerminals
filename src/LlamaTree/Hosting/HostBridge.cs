@@ -29,8 +29,13 @@ internal static class HostBridge
     private static async Task<int> RunAsync()
     {
         var host = await HostEndpoint.ConnectAsync(TimeSpan.FromMilliseconds(300));
-        if (host == null && SessionHost.StartDetached())
-            for (var i = 0; i < 120 && host == null; i++) host = await HostEndpoint.ConnectAsync(TimeSpan.FromMilliseconds(250));
+        // Started again every few seconds while none answers: one still ending (quit to restart on a new version, say)
+        // holds its lock a moment, and the one started meanwhile sees it and leaves.
+        for (var i = 0; i < 120 && host == null; i++)
+        {
+            if (i % 12 == 0 && !SessionHost.StartDetached()) break;
+            host = await HostEndpoint.ConnectAsync(TimeSpan.FromMilliseconds(250));
+        }
         if (host == null)
         {
             Console.Error.WriteLine("LlamaTree: the session host didn't start on " + Environment.MachineName + ".");

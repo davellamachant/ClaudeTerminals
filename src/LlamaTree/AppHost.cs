@@ -306,8 +306,7 @@ internal sealed partial class AppHost
 
         public Task<string> AddWorktreeAsync(string parent, string branch) => OnUiAsync(async () =>
         {
-            if (app.serverSessions.ContainsKey(parent))
-                throw new ControlException("Making a worktree isn't available yet for a session on a server; give a folder there instead.");
+            if (app.serverSessions.TryGetValue(parent, out var sp)) return await ServerWorktreeAsync(sp, branch);
             var p = app.sessions.GetValueOrDefault(parent) ?? throw new ControlException("That session isn't in LlamaTree any more.");
             var root = await GitService.GetTopLevelAsync(p.RepoRoot ?? p.Info.Directory)
                 ?? throw new ControlException("This session's folder isn't in a Git repository, so there's no worktree to make; give a folder instead.");
@@ -319,6 +318,33 @@ internal sealed partial class AppHost
             if (!result.Ok) throw new ControlException(string.IsNullOrWhiteSpace(result.Error) ? "git couldn't make the worktree." : result.Error.Trim());
             return path;
         });
+
+        /// <summary>
+        /// A new worktree of a server session's repository, beside it on the server (its folder's name with the branch's
+        /// after it, numbered if that's taken), made by the server's LlamaTree as for its own sessions.
+        /// </summary>
+        private async Task<string> ServerWorktreeAsync(ServerSession sp, string branch)
+        {
+            var root = sp.RepoRoot?.TrimEnd('/')
+                ?? throw new ControlException("This session's folder isn't in a Git repository (or its server hasn't said yet), so there's no worktree to make; give a folder instead.");
+            var c = app.ServerFor(sp.Info.Server!);
+            var slug = System.Text.RegularExpressions.Regex.Replace(branch, "[^A-Za-z0-9._-]+", "-").Trim('-', '.');
+            var name = root[(root.LastIndexOf('/') + 1)..] + "-" + (slug.Length > 0 ? slug : "worktree");
+            var parentDir = root[..Math.Max(root.LastIndexOf('/'), 1)];
+            try
+            {
+                // What's already beside it there, to pick a free name.
+                var listing = await c.RequestAsync(new { type = "fs.list", path = parentDir });
+                var taken = listing.TryGetProperty("entries", out var entries)
+                    ? entries.EnumerateArray().Select(e => e.GetProperty("name").GetString()).ToHashSet(StringComparer.Ordinal) : [];
+                var pick = name;
+                for (var i = 2; taken.Contains(pick); i++) pick = $"{name}-{i}";
+                var path = parentDir.TrimEnd('/') + "/" + pick;
+                var made = await c.RequestAsync(new { type = "worktree.add", id = sp.Info.RemoteId, branch, path, @base = (string?)null });
+                return made.ValueKind == JsonValueKind.String ? made.GetString()! : path;
+            }
+            catch (InvalidOperationException ex) { throw new ControlException(ex.Message); }
+        }
 
         // Typed by the page, as you would: a session on a server gets it there.
         public void TypePrompt(string id, string text) => app.RunOnUi(() => app.Post(new { type = "control.prompt", id, text }));

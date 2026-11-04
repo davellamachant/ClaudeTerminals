@@ -489,7 +489,7 @@ internal sealed class PanelMcp(PanelStore store, Relay.RelayHub? relay = null, R
               "properties": {
                 "name": { "type": "string", "description": "A short name for the new session, shown on its tab (up to 60 characters)." },
                 "prompt": { "type": "string", "description": "Its first prompt: the whole task, written to make sense on its own in a new conversation (up to 8000 characters)." },
-                "directory": { "type": "string", "description": "The folder it works in: this session's folder (the default) or a folder another session of this project uses." },
+                "directory": { "type": "string", "description": "The folder it works in: this session's folder (the default), a folder another session of this project uses, or a folder inside either (a relative path starts from this session's folder)." },
                 "branch": { "type": "string", "description": "Instead of a folder: a new branch, on which it gets a new worktree of this session's repository (from this session's current commit), so its changes don't mix with others'." }
               },
               "required": ["name", "prompt"]

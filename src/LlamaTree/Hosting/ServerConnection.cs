@@ -135,6 +135,18 @@ internal sealed class ServerConnection : IDisposable
     }
 
     private LinkChannel? pending;   // connected, waiting for the server's host to say who it is
+    private bool restarting;        // its LlamaTree was asked to quit (to start on a new version): its going is expected
+
+    /// <summary>
+    /// Has the server's LlamaTree quit (its sessions noting their conversations and stopping), so it starts again, on
+    /// the version just installed, as this connects again.
+    /// </summary>
+    public void Restart()
+    {
+        if (link is not { IsOpen: true } l) return;
+        restarting = true;
+        l.Send(LinkKind.Page, """{"type":"app.close","stop":true}""");
+    }
 
     /// <summary>Something only a window does, asked by the server's host. Returns the op.</summary>
     private string WindowOp(LinkChannel channel, string json)
@@ -158,6 +170,9 @@ internal sealed class ServerConnection : IDisposable
                     channel.Send(LinkKind.Page, """{"type":"ready"}""");
                     // Its plugins folder, read: each plugin's folder is sent here, then served (see ServerPlugins).
                     channel.Send(LinkKind.Page, """{"type":"plugins.list"}""");
+                    break;
+                case "close" when restarting:
+                    channel.Close();   // the server's LlamaTree is restarting on a new version: back once it's up
                     break;
                 case "close":
                     // Another window took over the server's sessions (only one shows them at a time). Not taken back
@@ -208,6 +223,14 @@ internal sealed class ServerConnection : IDisposable
         copies.DropAll();
         foreach (var id in replies.Keys)
             if (replies.TryRemove(id, out var r)) r.TrySetException(new InvalidOperationException($"The connection to {Target} ended."));
+        if (restarting)
+        {
+            restarting = false;
+            failures = 0;
+            SetState("connecting", null);
+            _ = Task.Delay(TimeSpan.FromSeconds(2)).ContinueWith(_ => runOnUi(() => { if (mine == attempt && !disposed && link == null) _ = ConnectAsync(++attempt); }), TaskScheduler.Default);
+            return;
+        }
         if (State == "elsewhere")
         {
             StateChanged?.Invoke(this);

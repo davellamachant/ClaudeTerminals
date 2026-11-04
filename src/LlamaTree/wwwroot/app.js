@@ -1765,6 +1765,9 @@ function sessionMenu(s, x, y, from = 'session') {
     c && c.state !== 'online' && { header: serverStateText(c) },
     c && ['offline', 'elsewhere'].includes(c.state) && { label: `Reconnect to ${c.target}`, action: () => request('servers.reconnect', { server: c.target }).catch((e) => toast(e.message, true)) },
     c && c.state !== 'online' && '-',
+    c?.state === 'online' && c.outdated && { header: serverVersionText(c) },
+    c?.state === 'online' && c.outdated && { label: `Update LlamaTree on ${serverName(c)}…`, action: () => updateServer(c) },
+    c?.state === 'online' && c.outdated && '-',
     state.expandedId === s.id ? { label: 'Back to all sessions', kbd: 'Shift+Esc', action: collapse } : { label: 'Expand', action: () => expand(s.id) },
     gitTabOn('changes') && { label: 'Show Git changes', action: () => showGit(s.id) },
     { label: 'Show conversation', action: () => openConversation(s) },
@@ -5910,7 +5913,8 @@ function serverStateText(c) {
 
 function serverTitle(c) {
   if (!c) return '';
-  if (c.state === 'online') return `Runs on ${c.machine || c.target}, reached over SSH as ${c.target}. It keeps running there when LlamaTree closes or the connection drops.`;
+  if (c.state === 'online') return `Runs on ${c.machine || c.target}, reached over SSH as ${c.target}. It keeps running there when LlamaTree closes or the connection drops.` +
+    (c.outdated ? `\n${serverVersionText(c)} Click to update it.` : '');
   if (c.state === 'connecting') return `Connecting to ${c.target}…`;
   if (c.state === 'elsewhere') return `${c.problem ?? ''}\nClick to show ${c.target}’s sessions here instead.`;
   return `Can’t reach ${c.target}${c.problem ? ':\n' + c.problem : '.'}\nThe session keeps running there; LlamaTree keeps trying. Click to try now.`;
@@ -5921,10 +5925,42 @@ function serverTag(s) {
   const c = serverOf(s);
   if (!c) return null;
   const down = c.state !== 'online';
+  const stale = !down && c.outdated;
   return h('span', {
-    class: 'server-tag' + (down ? ' down' : ''), title: serverTitle(c),
-    onclick: down && c.state !== 'connecting' && ((e) => { e.stopPropagation(); request('servers.reconnect', { server: c.target }).catch((err) => toast(err.message, true)); }),
-  }, iconEl('server'), serverName(c));
+    class: 'server-tag' + (down ? ' down' : stale ? ' stale' : ''), title: serverTitle(c),
+    onclick: down && c.state !== 'connecting' ? ((e) => { e.stopPropagation(); request('servers.reconnect', { server: c.target }).catch((err) => toast(err.message, true)); })
+      : stale && ((e) => { e.stopPropagation(); updateServer(c); }),
+  }, iconEl('server'), serverName(c), stale && iconEl('up'));
+}
+
+/** What a server's version is next to this computer's, when they differ. */
+function serverVersionText(c) {
+  return `${serverName(c)} runs LlamaTree ${c.version}; this computer runs ${c.current}.`;
+}
+
+/**
+ * Updates a server's LlamaTree to this computer's version (servers.update), once you've said yes: the server downloads
+ * the release's package from GitHub, checks it and installs it with sudo where that needs no password (otherwise you're
+ * told what to run there), then LlamaTree restarts there, which stops its sessions.
+ */
+function updateServer(c) {
+  const name = serverName(c);
+  const running = state.sessions.filter((s) => s.server === c.target && s.running);
+  confirmDialog(`Update LlamaTree on ${name}?`, [
+    serverVersionText(c),
+    `${name} downloads LlamaTree ${c.current} from GitHub, checks it against the checksum GitHub publishes, and installs it with sudo. That works where sudo needs no password; otherwise you're told what to run there.`,
+    running.length
+      ? `LlamaTree then restarts on ${name}, which stops ${running.length === 1 ? 'its running session' : `its ${running.length} running sessions`} (${running.map((s) => s.name).join(', ')}). ${running.length === 1 ? 'It picks' : 'Each picks'} up its conversation where it left off when you open it again.`
+      : `LlamaTree then restarts on ${name}.`,
+  ].join('\n\n'), 'Update', running.length > 0, async () => {
+    toast(`Updating LlamaTree on ${name}…`);
+    try {
+      toast(await request('servers.update', { server: c.target }));
+    } catch (err) {
+      openModal(`LlamaTree wasn't updated on ${name}`, [h('pre', { class: 'host-error' }, err.message)],
+        [h('div', { class: 'spacer' }), h('button', { class: 'btn primary', onclick: closeModal }, 'OK')]);
+    }
+  });
 }
 
 /** A server, briefly: its own name once connected (vm-build), else how it's reached without the user (4.204.25.78). */

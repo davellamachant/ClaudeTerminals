@@ -22,6 +22,9 @@ internal sealed partial class AppHost
     {
         public SessionInfo Info { get; } = info;
         public bool Running { get; set; }
+
+        /// <summary>The repository its Git tabs show, on its server (from its last Git status), or null.</summary>
+        public string? RepoRoot { get; set; }
     }
 
     /// <summary>Sessions on servers, by their id here.</summary>
@@ -58,7 +61,13 @@ internal sealed partial class AppHost
     }
 
     /// <summary>Each server's connection, for the page: how it's going, and why not when it isn't.</summary>
-    private object ServersState() => servers.Values.Select(c => new { target = c.Target, state = c.State, problem = c.Problem, machine = c.Machine, version = c.Version });
+    private object ServersState() => servers.Values.Select(c => new
+    {
+        target = c.Target, state = c.State, problem = c.Problem, machine = c.Machine, version = c.Version,
+        // Older than this computer's LlamaTree: it can be updated to match (servers.update).
+        outdated = Version.TryParse(c.Version, out var v) && Updates.UpdateService.Normalize(v) < Updates.UpdateService.CurrentVersion,
+        current = Updates.UpdateService.CurrentVersion.ToString(),
+    });
 
     /// <summary>The page has loaded: each server's host is asked again for its sessions and what they show.</summary>
     private void ServersPageReady()
@@ -113,6 +122,13 @@ internal sealed partial class AppHost
                 case "servers.reconnect":
                     c.Reconnect();
                     return (true, null);
+                case "servers.update":
+                {
+                    // Installed first; then its LlamaTree restarts on it (the page has asked you, as that stops its sessions).
+                    var said = await ServerUpdate.UpdateAsync(c.Target, Updates.UpdateService.CurrentVersion);
+                    c.Restart();
+                    return (true, said);
+                }
                 case "addSessions":
                 {
                     // Sessions it adds show up in its session list (before it answers): they go in the project picked here.
@@ -232,6 +248,7 @@ internal sealed partial class AppHost
                 if (FindServerSession(c.Target, obj["id"]?.GetValue<string>()) is not { } ss) break;
                 obj["id"] = ss.Info.Id;
                 if (type == "exited") ss.Running = false;
+                if (type == "git.status") ss.RepoRoot = obj["root"] is JsonValue root && root.TryGetValue<string>(out var r) ? r : null;
                 window.PostJson(obj.ToJsonString());
                 break;
             }

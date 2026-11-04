@@ -45,7 +45,8 @@ internal sealed class ControlException(string message) : Exception(message);
 /// answered, wait for them, answer their permission prompts, interrupt and stop them. A session controls only the
 /// sessions it started. Starting one goes by <see cref="ControlPolicy"/> (with no rule you're asked, and the call waits
 /// for your answer), always runs the starter's own agent and options (never a command of the agent's choosing), in its
-/// folder, a folder another session of its project uses, or a new worktree; and is limited in number and rate.
+/// folder, a folder another session of its project uses, a folder inside either, or a new worktree; and is limited in
+/// number and rate.
 /// Everything is logged. While messages are paused (<see cref="RelayPolicy.Paused"/>) none of it works. Thread safe.
 /// </summary>
 internal sealed class SessionControl
@@ -226,20 +227,37 @@ internal sealed class SessionControl
             throw new ControlException("A prompt can't start with / or ! (the agent's own commands, and running shell commands): only the person types those.");
     }
 
-    /// <summary>The folder a new session may use: the starter's own, or one another session of its project uses.</summary>
+    /// <summary>
+    /// The folder a new session may use: the starter's own, one another session of its project uses, or a folder inside
+    /// either (a relative path is taken from the starter's folder). Paths are compared as text, in the way of the
+    /// computer the sessions are on (a server's are its own, not this computer's), and can't climb out with "..".
+    /// </summary>
     private string AllowedFolder(ControlSession me, string? directory)
     {
         if (string.IsNullOrWhiteSpace(directory)) return me.Directory;
+        directory = directory.Trim();
+        static bool Rooted(string p) => p.StartsWith('/') || p.StartsWith('\\') || (p.Length >= 2 && char.IsAsciiLetter(p[0]) && p[1] == ':');
+        var sep = me.Directory.StartsWith('/') ? '/' : '\\';   // the starter's computer's way
+        if (!Rooted(directory)) directory = me.Directory.TrimEnd('\\', '/') + sep + directory;
+        if (directory.Split('\\', '/').Any(part => part == ".."))
+            throw new ControlException("A folder can't be given with \"..\": give its full path, or one inside this session's folder.");
+        // Separators made one kind, "." and empty parts dropped (keeping a leading / or \), no trailing one.
         static string Norm(string p)
         {
-            try { return Path.GetFullPath(p).TrimEnd('\\', '/'); }
-            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { return ""; }
+            var lead = p.StartsWith('/') || p.StartsWith('\\') ? "/" : "";
+            return lead + string.Join('/', p.Split('\\', '/').Where(x => x.Length > 0 && x != "."));
         }
         var want = Norm(directory);
         var allowed = host.Sessions().Where(s => s.Id == me.Id || (me.Project != null && s.Project == me.Project)).Select(s => s.Directory);
-        return allowed.FirstOrDefault(d => want.Length > 0 && string.Equals(Norm(d), want, StringComparison.OrdinalIgnoreCase))
-            ?? throw new ControlException("A new session can use this session's folder, a folder another session of its project uses, " +
-                $"or a new worktree (give branch instead); {directory} is none of these.");
+        foreach (var d in allowed)
+        {
+            var root = Norm(d);
+            if (string.Equals(root, want, StringComparison.OrdinalIgnoreCase)) return d.TrimEnd('\\', '/');
+            if (root.Length > 0 && want.Length > root.Length + 1 && want.StartsWith(root + "/", StringComparison.OrdinalIgnoreCase))
+                return d.TrimEnd('\\', '/') + sep + want[(root.Length + 1)..].Replace('/', sep);
+        }
+        throw new ControlException("A new session can use this session's folder, a folder another session of its project uses, a folder inside " +
+            $"either, or a new worktree (give branch instead); {directory} is none of these.");
     }
 
     /// <summary>

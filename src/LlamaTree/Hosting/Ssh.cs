@@ -38,6 +38,56 @@ internal sealed class Ssh
         lock (errors) return errors.ToString().Trim();
     }
 
+    /// <summary>
+    /// Runs a shell script on <paramref name="target"/> (sh reading it from its input, so nothing of it is on a command
+    /// line): its exit code, and what it printed (its output and errors, the last 8000 characters). Ended after
+    /// <paramref name="timeout"/>.
+    /// </summary>
+    public static async Task<(int Code, string Output)> RunScriptAsync(string target, string script, TimeSpan timeout)
+    {
+        var program = Environment.GetEnvironmentVariable("LLAMATREE_SSH") is { Length: > 0 } p ? p : "ssh";
+        var psi = new ProcessStartInfo(program)
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        foreach (var a in new[] { "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "--", target, "sh -s" }) psi.ArgumentList.Add(a);
+        Process ssh;
+        try { ssh = Process.Start(psi) ?? throw new InvalidOperationException("ssh didn't start."); }
+        catch (System.ComponentModel.Win32Exception) { throw new InvalidOperationException("ssh isn't installed on this computer (or isn't on the PATH)."); }
+        using (ssh)
+        {
+            var output = new StringBuilder();
+            void Keep(string? line)
+            {
+                if (line == null) return;
+                lock (output)
+                {
+                    output.AppendLine(line);
+                    if (output.Length > 8000) output.Remove(0, output.Length - 8000);
+                }
+            }
+            ssh.OutputDataReceived += (_, e) => Keep(e.Data);
+            ssh.ErrorDataReceived += (_, e) => Keep(e.Data);
+            ssh.BeginOutputReadLine();
+            ssh.BeginErrorReadLine();
+            await ssh.StandardInput.WriteAsync(script.Replace("\r\n", "\n"));
+            ssh.StandardInput.Close();
+            using var cancel = new CancellationTokenSource(timeout);
+            try { await ssh.WaitForExitAsync(cancel.Token); }
+            catch (OperationCanceledException)
+            {
+                try { ssh.Kill(true); } catch (Exception) { }
+                throw new InvalidOperationException($"It took longer than {timeout.TotalMinutes:0} minutes, so it was stopped.");
+            }
+            ssh.WaitForExit();   // the output read to its end
+            lock (output) return (ssh.ExitCode, output.ToString().Trim());
+        }
+    }
+
     /// <summary>Starts ssh to <paramref name="target"/>. No password prompts (there's nowhere to type one): a key, or ssh-agent.</summary>
     public static Ssh Start(string target)
     {

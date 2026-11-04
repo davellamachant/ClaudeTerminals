@@ -495,6 +495,7 @@ body.no-anim .tile, body.no-anim .surface { transition: none !important; }
    local ones. Red while its server can't be reached. */
 .server-tag { display: inline-flex; align-items: center; gap: 4px; padding: 0 7px; height: 18px; border-radius: 9px; font-size: 11px; font-weight: 600; white-space: nowrap; color: var(--link); background: color-mix(in srgb, var(--link) 14%, transparent); border: 1px solid color-mix(in srgb, var(--link) 45%, transparent); }
 .server-tag svg.ic { width: 12px; height: 12px; flex: none; }
+.server-tag.stale { color: var(--attention); background: color-mix(in srgb, var(--attention) 14%, transparent); border-color: color-mix(in srgb, var(--attention) 50%, transparent); cursor: pointer; }
 .server-tag.down { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); border-color: color-mix(in srgb, var(--danger) 50%, transparent); cursor: pointer; }
 .tile.on-server .tile-header { box-shadow: inset 3px 0 0 var(--link); }
 .tile.on-server.server-down .tile-header { box-shadow: inset 3px 0 0 var(--danger); }

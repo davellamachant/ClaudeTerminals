@@ -102,7 +102,7 @@ public class SessionControlTests
     }
 
     [Fact]
-    public async Task Folders_are_its_own_or_its_projects_only()
+    public async Task Folders_are_its_own_or_its_projects_or_inside_them_only()
     {
         policy.Set(ControlAbility.Spawn, "a", RelayDecision.Allow);
 
@@ -110,8 +110,38 @@ public class SessionControlTests
         Assert.Equal(@"D:\repo-other", dir);
         await Assert.ThrowsAsync<ControlException>(() => control.StartAsync("a", "Helper", "go", @"D:\elsewhere", null));   // p2's
         await Assert.ThrowsAsync<ControlException>(() => control.StartAsync("a", "Helper", "go", @"C:\Windows", null));
+        // Not a folder whose name only starts the same, and nothing climbing out.
+        await Assert.ThrowsAsync<ControlException>(() => control.StartAsync("a", "Helper", "go", @"D:\repository", null));
+        await Assert.ThrowsAsync<ControlException>(() => control.StartAsync("a", "Helper", "go", @"D:\repo\..\elsewhere", null));
+        await Assert.ThrowsAsync<ControlException>(() => control.StartAsync("a", "Helper", "go", @"..\elsewhere", null));
         var (_, wt) = await control.StartAsync("a", "Helper", "go", null, "feature/x");
         Assert.Equal(@"D:\repo-feature-x", wt);
+    }
+
+    // A folder inside its own or a project session's: given in full (either slash), or from its own folder.
+    [Theory]
+    [InlineData(@"D:\repo\src\api\", @"D:\repo\src\api")]
+    [InlineData("D:/repo-other/docs", @"D:\repo-other\docs")]
+    [InlineData("web", @"D:\repo\web")]
+    [InlineData(@".\web\.", @"D:\repo\web")]
+    public async Task A_folder_inside_its_own_or_its_projects_will_do(string given, string expected)
+    {
+        policy.Set(ControlAbility.Spawn, "a", RelayDecision.Allow);
+        Assert.Equal(expected, (await control.StartAsync("a", "Helper", "go", given, null)).Directory);
+    }
+
+    // A session on a Linux server, seen from this computer: its paths stay its server's, whatever this computer is.
+    [Theory]
+    [InlineData("/home/dev/work/docs/", "/home/dev/work/docs")]
+    [InlineData("src/api", "/home/dev/work/src/api")]
+    [InlineData("/home/dev", null)]
+    [InlineData("/home/dev/work/../other", null)]
+    public async Task A_server_sessions_folders_are_its_servers_paths(string given, string? expected)
+    {
+        host.List.Add(new ControlSession("s", "Server lead", "/home/dev/work", "p3", null, true, true));
+        policy.Set(ControlAbility.Spawn, "s", RelayDecision.Allow);
+        if (expected == null) await Assert.ThrowsAsync<ControlException>(() => control.StartAsync("s", "Helper", "go", given, null));
+        else Assert.Equal(expected, (await control.StartAsync("s", "Helper", "go", given, null)).Directory);
     }
 
     [Fact]
