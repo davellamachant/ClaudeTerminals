@@ -162,8 +162,7 @@
 #rain { position: fixed; inset: 0; z-index: -1; pointer-events: none; }   /* behind the page's content, over its background */
 :root[data-rain] { background: var(--chrome); }
 :root[data-rain] body { background: transparent; }   /* the body's own background would paint over the canvas; the root's paints under it */
-:root[data-rain] .tile { background: color-mix(in srgb, var(--terminal-bg) 42%, transparent); }
-:root[data-rain] .xterm .xterm-viewport { background-color: transparent !important; }
+:root[data-rain] { --terminal-veil: 42%; }   /* the rain's own amount: the tile dims it with the terminal's background at under half strength */
 /* The terminal itself: its canvas is see-through under a Grid theme (dressCursor in app.js), and the tile paints the same
    lines over the terminal's own background, fixed to the window so they run on from the floor around it. */
 :root[data-grid] .tile {
@@ -171,10 +170,12 @@
     radial-gradient(120% 40% at 50% 100%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 70%),
     linear-gradient(color-mix(in srgb, var(--accent) 8%, transparent) 1px, transparent 1px) 0 0 / 32px 32px,
     linear-gradient(90deg, color-mix(in srgb, var(--accent) 8%, transparent) 1px, transparent 1px) 0 0 / 32px 32px,
-    var(--terminal-bg);
+    color-mix(in srgb, var(--terminal-bg) var(--terminal-veil, 100%), transparent);
   background-attachment: fixed, fixed, fixed, scroll;   /* the glow at the horizon and the lines run on from the floor around the tile */
 }
-:root[data-grid] .xterm .xterm-viewport { background-color: transparent !important; }   /* xterm paints its viewport black on its own */
+/* The terminal's canvas is see-through (data-veil, set by markVeil in app.js) over a floor and whenever the veil is under
+   100%; xterm paints its viewport in the theme's background on its own, so that's made see-through here too. */
+:root[data-veil] .xterm .xterm-viewport { background-color: transparent !important; }
 
 /* Project colours are picked for a dark background; their text is deepened to stay readable on a light one. */
 :root[data-theme="light"] .proj-tag,
@@ -472,8 +473,11 @@ body.side-empty #splitter, body.side-empty #gitPanel { display: none; }   /* sid
 .empty-sub { color: var(--text-dim); }
 
 /* ---------------------------------------------------------------- tiles */
+/* The terminal veil: the tile paints the terminal's background at --terminal-veil over whatever is behind it (the
+   window's floor under a Grid or rain theme), 100% unless the theme sets its own amount above or you've set one in
+   Terminal background under the palette button (markVeil in app.js puts yours on the root element). */
 .tile {
-  position: absolute; display: flex; flex-direction: column; background: var(--terminal-bg);
+  position: absolute; display: flex; flex-direction: column; background: color-mix(in srgb, var(--terminal-bg) var(--terminal-veil, 100%), transparent);
   border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
   transition: left .16s ease, top .16s ease, width .16s ease, height .16s ease, opacity .12s ease, border-color .2s;
 }
@@ -898,6 +902,11 @@ img.plugin-ic { width: 16px; height: 16px; flex: none; object-fit: contain; }
 .swatch-row .proj-tag { margin-left: 8px; }
 .swatch-auto { display: inline-flex; align-items: center; gap: 6px; }
 .swatch-auto:disabled { opacity: .5; cursor: default; }
+/* Terminal background: the slider from see-through to solid, with its ends named and the amount beside it. */
+.veil-row { display: flex; align-items: center; gap: 10px; }
+.veil-row input[type=range] { flex: 1; min-width: 0; margin: 0; accent-color: var(--accent-strong); cursor: pointer; }
+.veil-end { color: var(--text-faint); font-size: 12px; flex: none; }
+.veil-value { min-width: 4ch; text-align: right; font-variant-numeric: tabular-nums; flex: none; }
 
 /* Status dots dialog: a card per style, each showing every state moving. */
 .dot-style-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 10px; }

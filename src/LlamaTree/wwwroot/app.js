@@ -617,6 +617,59 @@ function rainFrame() {
 }
 addEventListener('resize', () => rainSize());
 
+// ---- Terminal background --------------------------------------------------------------------------------------------
+// How solid the terminals are over the window's floor: the tile paints the terminal's background at --terminal-veil (see
+// .tile in app.css), 100% unless the theme says otherwise (Matrix's rain shows through at 42%) or you've set an amount
+// for the theme in Terminal background under the palette button. Yours is kept per theme, so Matrix can be nearly solid
+// for you while Tron stays as it is.
+const veil = { byTheme: store.get('terminalVeil', {}) };
+const veilKey = () => theme.pref;
+/** Your amount for the theme on, 0–100, or null for the theme's own. */
+function veilSetting() {
+  const v = veil.byTheme?.[veilKey()];
+  return typeof v === 'number' && Number.isFinite(v) ? Math.min(100, Math.max(0, Math.round(v))) : null;
+}
+/** The amount on the page now, 0–100. */
+function veilAmount() {
+  const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--terminal-veil'));
+  return Number.isFinite(v) ? Math.min(100, Math.max(0, v)) : 100;
+}
+/** The theme's own amount: what the page shows without yours. */
+function veilDefault() {
+  const style = document.documentElement.style, mine = style.getPropertyValue('--terminal-veil');
+  style.removeProperty('--terminal-veil');
+  const v = veilAmount();
+  if (mine) style.setProperty('--terminal-veil', mine);
+  return v;
+}
+/** Whether the terminals' own canvas must be see-through: over a floor, or under a veil of less than 100%. */
+const seeThrough = (look = themeLook()) => !!(look?.grid || look?.rain) || veilAmount() < 100;
+/** Puts the amount on the page (yours, or none for the theme's own) and marks the page while the terminals are see-through. */
+function markVeil(look = themeLook(), value = veilSetting()) {
+  const root = document.documentElement;
+  if (value === null) root.style.removeProperty('--terminal-veil');
+  else root.style.setProperty('--terminal-veil', value + '%');
+  if (seeThrough(look)) root.dataset.veil = '';
+  else delete root.dataset.veil;
+}
+/** The amount on the page, and every terminal dressed for it. */
+function applyVeil(value = veilSetting()) {
+  markVeil(themeLook(), value);
+  for (const s of state.sessions) if (s.term) dressCursor(s);
+}
+/** Your amount for the theme on (null takes it away), kept and shown. */
+function setVeil(value) {
+  if (value === null) delete veil.byTheme[veilKey()];
+  else veil.byTheme[veilKey()] = value;
+  store.set('terminalVeil', veil.byTheme);
+  applyVeil();
+}
+/** The Terminal background item's label: how solid, and whose amount it is. */
+function veilLabel() {
+  const v = Math.round(veilAmount());
+  return (v >= 100 ? 'Solid' : v + '% solid') + (veilSetting() === null ? " (the theme's own)" : ' (yours)');
+}
+
 /** Marks the page with the theme: data-theme light or dark for the stylesheet, and a theme's own colours, font and glow. */
 function markTheme(look = themeLook()) {
   const root = document.documentElement;
@@ -631,6 +684,7 @@ function markTheme(look = themeLook()) {
   else delete root.dataset.grid;
   if (look?.rain) root.dataset.rain = '';
   else delete root.dataset.rain;
+  markVeil(look);   // after the floor is marked: whether the terminals are see-through depends on it
   digitalRain(!!look?.rain);
 }
 markTheme(themes.last?.id === theme.pref ? themes.last : null);   // the accent isn't known yet: last time's look
@@ -798,14 +852,15 @@ const BURST_MOVES = 12, BURST_MS = 500;
 const trailsAllowed = () => !matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /**
- * The terminal's colours as the theme wants them on screen: see-through over the Grid floor (the tile under it paints
- * the floor's lines, see .tile in app.css), and xterm's own cursor made invisible while the light cycle stands in for it.
+ * The terminal's colours as the theme wants them on screen: see-through over the Grid floor or the rain (the tile under
+ * it paints the floor's lines, see .tile in app.css) and under a veil of less than 100% (Terminal background), and
+ * xterm's own cursor made invisible while the light cycle stands in for it.
  */
 function dressCursor(s) {
   const t = termTheme();
   const theme = { ...t };
   const look = themeLook();
-  if (look?.grid || look?.rain) theme.background = 'rgba(0, 0, 0, 0)';
+  if (seeThrough(look)) theme.background = 'rgba(0, 0, 0, 0)';
   if (s.cycle) { theme.cursor = t.background; theme.cursorAccent = t.background; }
   s.term.options.theme = theme;
   s.term.options.cursorStyle = s.cycle ? 'underline' : 'block';
@@ -5859,6 +5914,9 @@ function themeMenu(x, y) {
         label: named ? named.name : c === 'windows' ? 'Windows accent' : c === 'purple' ? 'Original purple' : 'Custom',
         kbd: 'Change…', action: showAccentDialog },
     '-',
+    { header: 'Terminal background' },
+    { icon: 'terminal', label: veilLabel(), kbd: 'Change…', action: showVeilDialog },
+    '-',
     { header: 'Status dots' },
     { icon: h('span', { class: 'menu-dot', 'data-dots': dotStyle.id }, h('span', { class: 'dot attention' })),   // the style in use, waiting for you
       label: DOT_STYLES.find((d) => d.id === dotStyle.id).name, kbd: 'Change…', action: showDotStyleDialog },
@@ -6017,6 +6075,38 @@ function showAccentDialog() {
   // Cancel, Esc or a click outside: put back the colour from before.
   onModalClose = () => { if (!saved) { accent.choice = before; accentChanged(); } };
   pick(before);
+}
+
+/**
+ * Terminal background: a slider for how solid the terminals are over the window's floor, for the theme you're on. Each
+ * move shows on every terminal; Cancel or Esc puts back what you had; Theme's own takes your amount away again.
+ */
+function showVeilDialog() {
+  const before = veilSetting();
+  const own = Math.round(veilDefault());
+  const name = currentTheme()?.name ?? (theme.pref === 'system' ? 'System' : theme.pref === 'light' ? 'Light' : 'Dark');
+  const value = h('span', { class: 'veil-value' });
+  const note = h('div', { class: 'field help' });
+  const slider = h('input', { type: 'range', min: '0', max: '100', step: '1', 'aria-label': 'How solid the terminals are' });
+  const show = (v) => {
+    value.textContent = v + '%';
+    note.textContent = v === own ? name + "'s own amount." : name + "'s own amount is " + own + '%.';
+  };
+  slider.addEventListener('input', () => { const v = +slider.value; applyVeil(v); show(v); });
+  let saved = false;
+  openModal('Terminal background', [
+    h('div', {}, `How solid the terminals' background is over the window's floor, for ${name}. Lower it to see more of the floor through the text; raise it when the text is hard to read.`),
+    h('div', { class: 'veil-row' }, h('span', { class: 'veil-end' }, 'See-through'), slider, h('span', { class: 'veil-end' }, 'Solid'), value),
+    note,
+  ], [
+    h('button', { class: 'btn', onclick: closeModal }, 'Cancel'),
+    h('button', { class: 'btn', onclick: () => { slider.value = String(own); applyVeil(null); show(own); } }, "Theme's own"),
+    h('button', { class: 'btn primary', onclick: () => { saved = true; const v = +slider.value; setVeil(v === own ? null : v); closeModal(); } }, 'OK'),
+  ]);
+  // Cancel, Esc or a click outside: put back the amount from before.
+  onModalClose = () => { if (!saved) applyVeil(before); };
+  slider.value = String(Math.round(veilAmount()));
+  show(+slider.value);
 }
 
 $('#btnUpdate').addEventListener('click', showUpdateDialog);
