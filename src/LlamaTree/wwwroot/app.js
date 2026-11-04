@@ -7651,11 +7651,14 @@ function onRelayMessage(m) {
  * Tells a session's agent it has messages, by typing a line into it and sending it, as you would: only while it's idle
  * (not working, not asking you something) and you haven't typed into it in the last few seconds, so it never lands in
  * a prompt you're writing. The messages themselves reach it only through read_messages. Each new message is told once.
+ * A session brought back with the app that hasn't been opened yet is started by its message, so another agent's
+ * question doesn't wait for you to open it; it's told once it's up and idle (its status change checks again).
  */
 function relayNotify(s) {
   const n = relay.unread[s.id] ?? 0;
   if (!n) { delete relay.told[s.id]; relay.from[s.id]?.clear(); return; }
   if (n <= (relay.told[s.id] ?? 0)) return;
+  if (s.startsOnOpen && agentOf(s.command) && !serverDown(s)) { startSession(s); return; }
   if (!s.running || s.startsOnOpen || !agentOf(s.command) || !['running', 'attention'].includes(statusClass(s))) return;
   if (performance.now() - s.act.lastIn < 5000) return;   // you're typing in it: the next check tries again
   relay.told[s.id] = n;
