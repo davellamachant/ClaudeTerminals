@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 
 namespace LlamaTree.Hosting;
 
@@ -14,13 +15,25 @@ namespace LlamaTree.Hosting;
 /// message bridge, never this server. Requests must name this address as their Host (a site that points its own name
 /// at 127.0.0.1 gets nothing), and no file allows reads from another origin. The app's files, and each plugin's
 /// folder, are served under random paths made for this run: no plugin can load the app page or another plugin's page
-/// into its frame (see <see cref="PluginBase"/>). The app page carries the window's bridge token, written in as it's
+/// into its frame (see <see cref="PluginBase"/>), and the app page lets its frames load only plugins' pages (see
+/// <see cref="AppPagePolicy"/>). The app page carries the window's bridge token, written in as it's
 /// served (see <see cref="PhotinoHost"/>).
 /// </para>
 /// </summary>
-internal sealed class LocalSite : IDisposable
+internal sealed partial class LocalSite : IDisposable
 {
     private const string TokenPlaceholder = "<head>";
+
+    /// <summary>
+    /// The app page's Content-Security-Policy here. Never in a frame (it carries the bridge token), and its frames only
+    /// at plugins' addresses: a plugin's frame that follows a link elsewhere is stopped by the web view, rather than the
+    /// page it lands on getting the plugin's messages and grants (see pluginFrame in app.js).
+    /// </summary>
+    internal static string AppPagePolicy(string origin) =>
+        $"frame-ancestors 'none'; frame-src {origin}/plugin/; object-src 'none'; base-uri 'none'";
+
+    [GeneratedRegex("""\s*<meta\s+http-equiv\s*=\s*"Content-Security-Policy"[^>]*>""", RegexOptions.IgnoreCase)]
+    private static partial Regex PagePolicyMeta();
 
     private readonly HttpListener listener;
     private readonly string root;
@@ -125,8 +138,9 @@ internal sealed class LocalSite : IDisposable
             {
                 // The app page, with the bridge token for its script. Never in a frame: a frame of it would get the token too.
                 response.Headers["X-Frame-Options"] = "DENY";
-                response.Headers["Content-Security-Policy"] = "frame-ancestors 'none'";
-                var html = (await File.ReadAllTextAsync(file)).Replace(TokenPlaceholder,
+                response.Headers["Content-Security-Policy"] = AppPagePolicy(Origin);
+                // The page's own policy is the Windows window's (plugins at https://<id>.plugin.local/); this one replaces it.
+                var html = PagePolicyMeta().Replace(await File.ReadAllTextAsync(file), "").Replace(TokenPlaceholder,
                     TokenPlaceholder + $"\n  <meta name=\"llamatree-bridge\" content=\"{bridgeToken}\">", StringComparison.OrdinalIgnoreCase);
                 var bytes = System.Text.Encoding.UTF8.GetBytes(html);
                 response.ContentLength64 = bytes.Length;
