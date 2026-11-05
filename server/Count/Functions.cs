@@ -19,9 +19,9 @@ internal sealed class Functions(CountStore store, TimeProvider clock, ILogger<Fu
     /// count itself, once an hour. Records them for this hour and answers 204; anything else is a 400 and records
     /// nothing. The caller's address and headers aren't read, logged or kept.
     /// </summary>
-    [Function("ping")]
+    [Function("count-ping")]
     public async Task<HttpResponseData> PingAsync(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "ping")] HttpRequestData request, CancellationToken ct)
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "count/ping")] HttpRequestData request, CancellationToken ct)
     {
         var q = System.Web.HttpUtility.ParseQueryString(request.Url.Query);
         if (Ping.Parse(q["id"], q["v"], q["os"], q["osv"], q["projects"], q["sessions"]) is not { } ping)
@@ -35,9 +35,9 @@ internal sealed class Functions(CountStore store, TimeProvider clock, ILogger<Fu
     /// week or less), the projects and sessions they had open, and their versions and systems. Up to
     /// <see cref="CountStore.KeepDays"/> days, ending today.
     /// </summary>
-    [Function("stats")]
+    [Function("count-stats")]
     public async Task<HttpResponseData> StatsAsync(
-        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "stats")] HttpRequestData request, CancellationToken ct)
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "count/stats")] HttpRequestData request, CancellationToken ct)
     {
         var q = System.Web.HttpUtility.ParseQueryString(request.Url.Query);
         var days = int.TryParse(q["days"], out var n) ? Math.Clamp(n, 1, CountStore.KeepDays) : 30;
@@ -53,7 +53,7 @@ internal sealed class Functions(CountStore store, TimeProvider clock, ILogger<Fu
     }
 
     /// <summary>Every day at 03:30 UTC, deletes the days older than <see cref="CountStore.KeepDays"/>.</summary>
-    [Function("forget")]
+    [Function("count-forget")]
     public async Task ForgetAsync([TimerTrigger("0 30 3 * * *")] TimerInfo timer, CancellationToken ct)
     {
         var gone = await store.ForgetBeforeAsync(Today.AddDays(-CountStore.KeepDays), ct);
