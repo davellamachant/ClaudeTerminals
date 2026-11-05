@@ -365,13 +365,13 @@ internal static class GitService
 
     public static async Task<object> GetCommitDetailsAsync(string dir, string sha)
     {
-        var info = await RunAsync(dir, ["show", "-s", "--format=%H%x1f%an <%ae>%x1f%aI%x1f%B%x1f%P", sha]);
+        var info = await RunAsync(dir, ["show", "-s", "--format=%H%x1f%an <%ae>%x1f%aI%x1f%B%x1f%P", "--end-of-options", sha]);
         var f = info.Text.Split('\x1f');
         var parents = f.Length > 4 ? f[4].Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries) : [];
 
         var r = parents.Length > 0
-            ? await RunAsync(dir, ["diff", "--no-ext-diff", "--no-textconv", "--name-status", "-z", "-M", parents[0], sha])
-            : await RunAsync(dir, ["diff-tree", "--root", "-r", "-M", "--no-commit-id", "--name-status", "-z", sha]);
+            ? await RunAsync(dir, ["diff", "--no-ext-diff", "--no-textconv", "--name-status", "-z", "-M", "--end-of-options", parents[0], sha, "--"])
+            : await RunAsync(dir, ["diff-tree", "--root", "-r", "-M", "--no-commit-id", "--name-status", "-z", "--end-of-options", sha, "--"]);
 
         var files = new List<FileChange>();
         var parts = r.Text.Split('\0');
@@ -467,7 +467,7 @@ internal static class GitService
     /// <summary>Commits on <paramref name="branch"/> not on <paramref name="baseBranch"/>, and the other way round; (0, 0) if git couldn't say.</summary>
     private static async Task<(int Ahead, int Behind)> AheadBehindAsync(string dir, string baseBranch, string branch)
     {
-        var r = await RunAsync(dir, ["rev-list", "--left-right", "--count", baseBranch + "..." + branch]);
+        var r = await RunAsync(dir, ["rev-list", "--left-right", "--count", "--end-of-options", baseBranch + "..." + branch, "--"]);
         var parts = r.Ok ? r.Text.Trim().Split(['\t', ' '], StringSplitOptions.RemoveEmptyEntries) : [];
         return parts.Length == 2 && int.TryParse(parts[0], out var behind) && int.TryParse(parts[1], out var ahead) ? (ahead, behind) : (0, 0);
     }
@@ -536,7 +536,7 @@ internal static class GitService
         if (w == null) return Failed(problem!);
         // Not "git worktree prune", which drops every worktree whose folder is gone; remove (git 2.19 and later) takes
         // just this one's entry when its folder is missing.
-        if (!Directory.Exists(w.Path)) return await RunAsync(repoDir, ["worktree", "remove", w.Path]);
+        if (!Directory.Exists(w.Path)) return await RunAsync(repoDir, ["worktree", "remove", "--end-of-options", w.Path]);
         var contents = await ReadWorktreeContentsAsync(w.Path);
         if (contents == null) return Failed("Couldn't check the worktree for uncommitted changes, so it was left alone.");
         var changes = contents.Changes;
@@ -544,7 +544,7 @@ internal static class GitService
             return Failed($"{changes} file{(changes == 1 ? " is" : "s are")} changed or new in this worktree and would be lost. Commit or undo {(changes == 1 ? "it" : "them")} first.");
         if (contents.Ignored.Count > 0 && !deleteIgnored)
             return Failed($"{IgnoredText(contents.Ignored)} would be deleted with the worktree, so it was left alone.");
-        return await RunAsync(repoDir, ["worktree", "remove", w.Path], timeout: TimeSpan.FromMinutes(2));
+        return await RunAsync(repoDir, ["worktree", "remove", "--end-of-options", w.Path], timeout: TimeSpan.FromMinutes(2));
     }
 
     /// <summary>"2 ignored files or folders (.env, bin/)": how many, and the first few by name.</summary>
@@ -570,7 +570,8 @@ internal static class GitService
         if (File.Exists(path)) return Fail($"{path} is a file.");
         // --no-track: started from a remote branch (origin/main, say), git would make that the new branch's upstream, and
         // Push would then fail on the names not matching. With none, the first Push publishes it under its own name.
-        var args = new List<string> { "worktree", "add", "--no-track", "-b", branch, path };
+        // -b takes its value literally; --end-of-options keeps the folder and start point from being read as options.
+        var args = new List<string> { "worktree", "add", "--no-track", "-b", branch, "--end-of-options", path };
         if (!string.IsNullOrWhiteSpace(startPoint)) args.Add(startPoint);
         return await RunAsync(repoDir, args, timeout: TimeSpan.FromMinutes(5));   // checking out a big tree takes a while
     }
@@ -629,10 +630,10 @@ internal static class GitService
         string[] from = startPoint is null ? [] : [startPoint];
         if (!checkout)
         {
-            var made = await RunAsync(dir, ["branch", "--no-track", branch, .. from]);
+            var made = await RunAsync(dir, ["branch", "--no-track", "--end-of-options", branch, .. from]);
             return made.Ok ? new(true, $"Created {branch}.") : new(false, made.Error);
         }
-        return await SwitchAsync(dir, branch, ["switch", "--no-track", "-c", branch, .. from], stashChanges, $"Switched to the new branch {branch}.");
+        return await SwitchAsync(dir, branch, ["switch", "--no-track", "-c", branch, "--end-of-options", .. from], stashChanges, $"Switched to the new branch {branch}.");
     }
 
     /// <summary>
@@ -646,7 +647,7 @@ internal static class GitService
         var exists = async (string reference) => (await RunAsync(dir, ["rev-parse", "--verify", "--quiet", reference])).Ok;
         if (!remote)
             return await exists("refs/heads/" + branch)
-                ? await SwitchAsync(dir, branch, ["switch", branch], stashChanges, $"Switched to {branch}.")
+                ? await SwitchAsync(dir, branch, ["switch", "--end-of-options", branch], stashChanges, $"Switched to {branch}.")
                 : new(false, $"There's no branch named \"{branch}\" any more.");
 
         if (!await exists("refs/remotes/" + branch)) return new(false, $"There's no remote branch named \"{branch}\" any more. Fetch, then try again.");
@@ -655,9 +656,10 @@ internal static class GitService
         var owner = remotes.Where(r => branch.StartsWith(r + "/")).MaxBy(r => r.Length);
         if (owner == null) return new(false, $"\"{branch}\" doesn't belong to any of this repository's remotes.");
         var local = branch[(owner.Length + 1)..];
+        if (local.Length == 0 || local.StartsWith('-')) return new(false, $"\"{branch}\" has no local name a branch can take.");
         if (await exists("refs/heads/" + local))
-            return await SwitchAsync(dir, local, ["switch", local], stashChanges, $"Switched to {local} (your local branch for {branch}).");
-        return await SwitchAsync(dir, local, ["switch", "-c", local, "--track", branch], stashChanges, $"Switched to {local}, a new local branch tracking {branch}.");
+            return await SwitchAsync(dir, local, ["switch", "--end-of-options", local], stashChanges, $"Switched to {local} (your local branch for {branch}).");
+        return await SwitchAsync(dir, local, ["switch", "-c", local, "--track", "--end-of-options", branch], stashChanges, $"Switched to {local}, a new local branch tracking {branch}.");
     }
 
     /// <summary>
@@ -686,8 +688,8 @@ internal static class GitService
             return new(false, why.Contains("would be overwritten")
                 ? why + $"\n\nThose changes can't be brought to {target}: stash them instead, or commit them first."
                 : why);
-        var back = await RunAsync(dir, ["stash", "apply", "--index", stash]);
-        if (back.Ok && await FindStashAsync(dir, null, stash) is { } entry) await RunAsync(dir, ["stash", "drop", entry]);
+        var back = await RunAsync(dir, ["stash", "apply", "--index", "--end-of-options", stash]);
+        if (back.Ok && await FindStashAsync(dir, null, stash) is { } entry) await RunAsync(dir, ["stash", "drop", "--end-of-options", entry]);
         return new(false, back.Ok ? why : why + $"\n\nYour changes are still stashed: git stash apply {stash} brings them back.");
     }
 
@@ -754,7 +756,8 @@ internal static class GitService
     /// <summary>Reads one side of a diff from git, giving up (and ending git) as soon as it is too large to show.</summary>
     internal static async Task<Blob> ShowAsync(string dir, string spec)
     {
-        var r = await RunAsync(dir, ["show", "--no-textconv", spec], maxOutputBytes: MaxDiffBytes);
+        // The spec starts with a commit the page sent: without --end-of-options, "--output=x:file" would be an option.
+        var r = await RunAsync(dir, ["show", "--no-textconv", "--end-of-options", spec], maxOutputBytes: MaxDiffBytes);
         return r.Truncated ? Blob.Large : r.Ok ? new Blob(true, r.Output) : Blob.Empty;
     }
 
@@ -1116,7 +1119,7 @@ internal static class GitService
         var remote = await DefaultRemoteAsync(dir);
         return remote == null
             ? Failed("This repository has no remote to push to.")
-            : await RunRemoteAsync(dir, ["push", "--set-upstream", remote, "HEAD"]);
+            : await RunRemoteAsync(dir, ["push", "--set-upstream", "--end-of-options", remote, "HEAD"]);
     }
 
     /// <summary>"origin" if it exists, otherwise the first remote, or null when there are none.</summary>
