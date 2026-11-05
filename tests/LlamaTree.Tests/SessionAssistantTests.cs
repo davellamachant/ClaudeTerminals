@@ -84,12 +84,25 @@ public sealed class SessionAssistantTests
     }
 
     [Theory]
-    [InlineData("codex", "codex", "codex")]      // both Codex: Codex answers
-    [InlineData("claude", "codex", "claude")]    // mixed: Claude
-    [InlineData("pwsh", "pwsh", "claude")]       // no agent: Claude
-    [InlineData("claude", "pwsh", "claude")]
-    public void The_sessions_own_agent_answers_when_they_share_one(string a, string b, string writer) =>
-        Assert.Equal(writer, SessionAssistant.WriterFor([Brief("A", null, agent: Agents.For(a)), Brief("B", null, agent: Agents.For(b))]).Id);
+    [InlineData("codex", "codex")]      // both Codex: still Claude, as codex exec can read files even read-only
+    [InlineData("claude", "codex")]
+    [InlineData("pwsh", "pwsh")]        // no agent
+    [InlineData("claude", "pwsh")]
+    [InlineData("claude", "claude")]
+    public void Claude_answers_whichever_agent_the_sessions_run(string a, string b) =>
+        Assert.Same(Agents.Claude, SessionAssistant.WriterFor([Brief("A", null, agent: Agents.For(a)), Brief("B", null, agent: Agents.For(b))]));
+
+    [Fact]
+    public void The_agent_that_answers_for_Codex_sessions_has_no_tools()
+    {
+        var writer = SessionAssistant.WriterFor([Brief("Cx", null, agent: Agents.Codex)]);
+        var command = writer.HeadlessCommand!;
+        Assert.StartsWith("claude -p ", command);
+        Assert.Contains("--tools \"\"", command);            // no built-in tools: no Read, Bash, …
+        Assert.Contains("--strict-mcp-config", command);     // and no MCP servers (none are given)
+        Assert.DoesNotContain("--mcp-config", command);
+        Assert.DoesNotContain("codex", command);
+    }
 
     [Fact]
     public void Each_sessions_agent_is_named_as_it_is_even_a_shell()

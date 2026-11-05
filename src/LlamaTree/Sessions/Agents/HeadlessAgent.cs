@@ -8,7 +8,7 @@ namespace LlamaTree.Sessions;
 /// Runs an agent once, headless, with a prompt on its standard input and its answer on standard output
 /// (<see cref="AgentProfile.HeadlessCommand"/>: claude -p with no tools, or codex exec read-only). It runs with the
 /// user's own sign-in, in the same clean environment sessions get, and saves no conversation. The commit message
-/// suggester and the plugins' ask request use it.
+/// suggester and the plugins' ask request use it (ask only ever with Claude, see <see cref="SessionAssistant.WriterFor"/>).
 /// </summary>
 internal static class HeadlessAgent
 {

@@ -13,9 +13,9 @@ internal sealed record AssistantAnswer(string Answer, string Writer, IReadOnlyLi
 
 /// <summary>
 /// Answers a question about your sessions ("what is Checkout waiting on?", "which session touched the import?") from their
-/// conversations: the prompts you sent, what each agent answered and the tools it used. The answer is written by an
-/// agent run headless with your own sign-in (see <see cref="HeadlessAgent"/>): the sessions' own agent when they all
-/// share one that can, otherwise Claude. It only reads: nothing here types into a session or changes a file.
+/// conversations: the prompts you sent, what each agent answered and the tools it used. The answer is written by Claude
+/// run headless with your own sign-in and no tools (see <see cref="HeadlessAgent"/>), whichever agent the sessions run.
+/// It only reads what it's given: nothing here types into a session, reads a file or changes one.
 /// </summary>
 internal static class SessionAssistant
 {
@@ -40,12 +40,13 @@ internal static class SessionAssistant
         return new AssistantAnswer(answer, writer.Name, sessions.Select(s => s.Id).ToList());
     }
 
-    /// <summary>The sessions' own agent when they all share one that can answer headless; otherwise Claude.</summary>
-    internal static AgentProfile WriterFor(IReadOnlyList<SessionBrief> sessions)
-    {
-        var agents = sessions.Select(s => s.Agent).Distinct().ToList();
-        return agents.Count == 1 ? HeadlessAgent.Writer(agents[0]) : Agents.Claude;
-    }
+    /// <summary>
+    /// Always Claude, even for Codex sessions: a plugin names the sessions, so it would be choosing the agent too. claude -p
+    /// runs with no tools and no MCP servers (<see cref="ClaudeAgent.HeadlessCommand"/>); codex exec has no switch that
+    /// takes all its tools away, and its read-only sandbox still lets it read any file (~/.ssh, the panel tokens), so it
+    /// never answers here. Without Claude installed the question fails rather than falling back to Codex.
+    /// </summary>
+    internal static AgentProfile WriterFor(IReadOnlyList<SessionBrief> sessions) => Agents.Claude;
 
     /// <summary>The request for the agent: the rules, the sessions and their conversations, earlier questions, then the question.</summary>
     internal static string BuildPrompt(string question, IReadOnlyList<AssistantExchange> history, IReadOnlyList<SessionBrief> sessions, DateTime now)
