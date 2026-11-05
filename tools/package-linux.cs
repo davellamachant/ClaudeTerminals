@@ -193,7 +193,7 @@ void Rpm()
     h.Int32(1009, [(int)installedSize]);                        // SIZE
     h.String(1010, "LlamaTree " + version);                     // DISTRIBUTION
     h.String(1011, "Llamachant Technology Ltd");                // VENDOR
-    h.String(1014, "Proprietary");                              // LICENSE
+    h.String(1014, "Apache-2.0");                               // LICENSE
     h.String(1015, Maintainer);                                 // PACKAGER
     h.I18n(1016, "Development/Tools");                          // GROUP
     h.String(1020, Homepage);                                   // URL
