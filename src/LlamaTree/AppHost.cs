@@ -36,6 +36,12 @@ internal sealed partial class AppHost
     private volatile bool webReady;   // read by sessions' output threads too
     private bool shutDown;
     private UpdateInfo? update;
+    /// <summary>
+    /// The count of users (see <see cref="TelemetryService"/>): one request an hour, if you've said yes. Started when the
+    /// page is first ready, it looks 20 seconds later (so it never competes with the start) and then every ten minutes.
+    /// </summary>
+    private readonly System.Threading.Timer countTimer;
+    private bool countStarted;
 
     /// <summary>The window title: shown in the taskbar, Alt+Tab and the Dock.</summary>
     public static string Title => $"LlamaTree {UpdateService.CurrentVersion}";
@@ -96,6 +102,7 @@ internal sealed partial class AppHost
             if (Interlocked.Exchange(ref flushQueued, 1) == 0) RunOnUi(() => { flushQueued = 0; FlushOutput(); });
         }, null, 16, 16);
         conversationTimer = new System.Threading.Timer(_ => RunOnUi(FollowConversations), null, 10_000, 10_000);
+        countTimer = new System.Threading.Timer(_ => RunOnUi(() => _ = TelemetryService.PingIfDueAsync(CountUsage())), null, Timeout.Infinite, Timeout.Infinite);
 
         var tidied = false;
         foreach (var info in SessionStore.Load())
@@ -624,6 +631,7 @@ internal sealed partial class AppHost
         shutDown = true;
         flushTimer.Dispose();
         conversationTimer.Dispose();
+        countTimer.Dispose();
         foreach (var s in sessions.Values) CatchUpConversation(s);   // so each reopens where it was
         foreach (var s in sessions.Values) s.Dispose();
         panelServer?.Dispose();
@@ -829,6 +837,11 @@ internal sealed partial class AppHost
                     newConversations.Clear();
                 }
                 foreach (var s in sessions.Values) _ = s.RefreshStatusAsync();
+                if (!countStarted)
+                {
+                    countStarted = true;
+                    countTimer.Change(TimeSpan.FromSeconds(20), TimeSpan.FromMinutes(10));
+                }
                 return null;
 
             case "start":
@@ -1474,6 +1487,15 @@ internal sealed partial class AppHost
                 return UpdateService.CurrentVersion.ToString();
             case "notices.check":
                 return (await NoticeService.CheckAsync()).Select(n => new { id = n.Id, kind = n.Kind, text = n.Text, linkLabel = n.LinkLabel, linkUrl = n.LinkUrl, color = n.Color });
+            case "count.state":
+                // Whether you've said yes to being counted (null: not asked yet), for the question along the top and the version menu.
+                return CountMessage(TelemetryService.Load());
+            case "count.set":
+            {
+                var state = TelemetryService.SetEnabled(Bool(msg, "enabled"));
+                if (state.Enabled == true) _ = TelemetryService.PingIfDueAsync(CountUsage());   // this hour's, now that there's a yes
+                return CountMessage(state);
+            }
             case "update.check":
             {
                 // The page decides when to ask (at start, then every 15 minutes, or from the menu).
@@ -1650,6 +1672,12 @@ internal sealed partial class AppHost
         var s = Get(msg);
         return s.RepoRoot ?? s.Info.Directory;
     }
+
+    /// <summary>The count's state for the page: enabled is null until you've answered.</summary>
+    private static object CountMessage(CountState s) => new { enabled = s.Enabled, lastSent = s.LastSent?.ToString("yyyy-MM-dd'T'HH:00'Z'") };
+
+    /// <summary>What the count says about use: how many projects and sessions are open. Read on the UI thread.</summary>
+    private CountUsage CountUsage() => new(projects.Count, sessions.Count);
 
     private static string Str(JsonElement e, string name) =>
         e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : "";

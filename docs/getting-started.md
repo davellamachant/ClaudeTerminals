@@ -104,7 +104,7 @@ A few seconds after starting, and every 15 minutes, LlamaTree checks the latest 
 - **Linux, from a `.tar.gz`:** a copy unpacked into a folder you own is replaced by the new one.
 - **macOS** (for now): the button links the release instead.
 
-The version is shown at the top right and in the window title. Click it for *Check for updates*, and untick *Check for updates automatically* to turn the automatic check off.
+The version is shown at the top right and in the window title. Click it for *Check for updates*, and untick *Check for updates automatically* to turn the automatic check off. *Count me among the users*, in the same menu, is the answer you gave to *May we count you?* (see [Counting users](privacy.md#counting-users)).
 
 ## Next
 
