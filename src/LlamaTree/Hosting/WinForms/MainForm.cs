@@ -65,17 +65,22 @@ internal sealed class MainForm : Form, HostLink.IWindow
 
     /// <summary>
     /// The files copied in Explorer, or the image on the clipboard (a screenshot, a copied picture) saved as a PNG in the
-    /// temp folder.
+    /// app's own folder (see <see cref="Desktop.NewPastedImagePath()"/>).
     /// </summary>
     public string[] ClipboardFiles()
     {
         if (Clipboard.ContainsFileDropList()) return Clipboard.GetFileDropList().Cast<string>().ToArray();
         if (!Clipboard.ContainsImage()) return [];
-        var path = Desktop.NewPastedImagePath();
         // The PNG as the app that copied it wrote it (keeping transparency), else the bitmap.
-        if (Clipboard.GetData("PNG") is MemoryStream png) File.WriteAllBytes(path, png.ToArray());
-        else if (Clipboard.GetImage() is { } image) using (image) image.Save(path, System.Drawing.Imaging.ImageFormat.Png);
-        else return [];
+        using var png = Clipboard.GetData("PNG") as MemoryStream;
+        using var image = png == null ? Clipboard.GetImage() : null;
+        if (png == null && image == null) return [];
+        var path = Desktop.NewPastedImagePath();
+        using (var file = Desktop.CreatePastedImage(path))
+        {
+            if (png != null) png.WriteTo(file);
+            else image!.Save(file, System.Drawing.Imaging.ImageFormat.Png);
+        }
         return [path];
     }
 
