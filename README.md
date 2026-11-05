@@ -69,6 +69,8 @@ dotnet test                                             # tests
 
 See [Building LlamaTree](docs/building.md) for macOS and Linux, how it's put together, the installer and releasing.
 
+Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) for how to report a bug, where to start and what a pull request needs.
+
 ## License
 
 Apache License 2.0, see [LICENSE](LICENSE) and [NOTICE](NOTICE). Copyright 2026 Llamachant Technology Ltd. Versions up to 1.2.0 were released under the MIT License, which still applies to them. The license doesn't grant use of the LlamaTree or Llamachant names or logos (section 6). Bundles [xterm.js](https://github.com/xtermjs/xterm.js) and [Monaco Editor](https://github.com/microsoft/monaco-editor) (both MIT).
