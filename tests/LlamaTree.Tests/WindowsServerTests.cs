@@ -8,15 +8,22 @@ namespace LlamaTree.Tests;
 public sealed class WindowsServerTests
 {
     [Theory]
-    [InlineData(9009, "'sh' is not recognized as an internal or external command,\r\noperable program or batch file.", true)]
-    [InlineData(9009, "Der Befehl \"sh\" ist entweder falsch geschrieben oder\r\nkonnte nicht gefunden werden.", true)]
-    [InlineData(49, "'sh' is not recognized as an internal or external command,", true)]   // 9009's low byte, from a Unix ssh
-    [InlineData(126, Ssh.WindowsMessage, true)]   // Git's sh, on Windows
-    [InlineData(127, Ssh.NotInstalledMessage, false)]
-    [InlineData(255, "ssh: connect to host build-box port 22: Connection refused", false)]
-    [InlineData(null, "Permission denied (publickey).", false)]
-    public void A_Windows_server_shows_by_its_shell_having_no_sh(int? code, string errors, bool windows) =>
-        Assert.Equal(windows, Ssh.SaysWindows(code, errors));
+    [InlineData("Windows_NT\r\n", true)]   // cmd, in any language
+    [InlineData("** WARNING: connection is not using a post-quantum key exchange algorithm.\r\nWindows_NT\r\n", true)]   // ssh's own words beside it
+    [InlineData("%OS%\n", false)]   // sh, or PowerShell
+    [InlineData("", false)]
+    public void A_Windows_server_answers_its_system_question_as_cmd_does(string output, bool windows) =>
+        Assert.Equal(windows, Ssh.AnswersWindows(output));
+
+    [Theory]
+    [InlineData("ssh: connect to host build-box port 22: Connection timed out", true)]
+    [InlineData("ssh: Could not resolve hostname build-box: No such host is known.", true)]
+    [InlineData("azureuser@4.229.225.9: Permission denied (publickey,keyboard-interactive).", true)]
+    [InlineData("Host key verification failed.", true)]
+    [InlineData("'sh' is not recognized as an internal or external command,\r\noperable program or batch file.", false)]   // ran, on Windows
+    [InlineData("Der Befehl \"sh\" ist entweder falsch geschrieben oder\r\nkonnte nicht gefunden werden.", false)]
+    public void A_server_ssh_never_reached_isnt_asked_what_it_runs(string errors, bool neverRan) =>
+        Assert.Equal(neverRan, Ssh.NeverRanCommand(errors));
 
     /// <summary>Runs the bridge command for Windows as Windows' OpenSSH Server does (cmd /c, with pipes), in a made-up profile folder.</summary>
     private static (int Code, string Output, string Errors) RunBridgeCommand(string localAppData, string input)

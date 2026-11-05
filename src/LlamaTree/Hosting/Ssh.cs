@@ -32,7 +32,9 @@ internal sealed class Ssh
     internal const string WindowsMessage = "LlamaTree: this server runs Windows.";
 
     internal const string DefaultRemoteCommand =
-        "sh -c 'case \"$(uname -s 2>/dev/null)\" in MINGW*|MSYS*|CYGWIN*) echo \"" + WindowsMessage + "\" >&2; exit 126;; esac; " +
+        // Arms of their own rather than MINGW*|MSYS*|…: cmd, on a Windows server without sh, would take | for a pipe.
+        "sh -c 'case \"$(uname -s 2>/dev/null)\" in MINGW*) echo \"" + WindowsMessage + "\" >&2; exit 126;; " +
+        "MSYS*) echo \"" + WindowsMessage + "\" >&2; exit 126;; CYGWIN*) echo \"" + WindowsMessage + "\" >&2; exit 126;; esac; " +
         "if command -v llamatree >/dev/null 2>&1; then exec llamatree --attach; " +
         "elif [ -x \"$HOME/.local/bin/llamatree\" ]; then exec \"$HOME/.local/bin/llamatree\" --attach; " +
         "else echo \"" + NotInstalledMessage + "\" >&2; exit 127; fi'";
@@ -48,31 +50,60 @@ internal sealed class Ssh
         "@if exist \"%~d\\LlamaTree.exe\" (\"%~d\\LlamaTree.exe\" --attach & exit /b)) & " +
         "echo " + NotInstalledMessage + " 1>&2& exit /b 127";
 
-    /// <summary>Servers found to run Windows (by what the bridge command said there): they're sent its cmd form.</summary>
-    private static readonly ConcurrentDictionary<string, bool> windowsServers = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>
+    /// What's known of each server's system: true for Windows (it's sent the bridge command's cmd form), false for one
+    /// that answered as something else. Servers not here haven't been asked (see <see cref="FoundWindowsAsync"/>).
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, bool> systems = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Whether <paramref name="target"/> has been found to run Windows.</summary>
-    public static bool RunsWindows(string target) => windowsServers.ContainsKey(target);
+    public static bool RunsWindows(string target) => systems.TryGetValue(target, out var windows) && windows;
 
     /// <summary>
-    /// Whether what ssh said, for a connection that ended before LlamaTree answered, shows a Windows server: cmd found no
-    /// sh (exit code 9009, which an ssh on macOS or Linux reports as 9009's low byte, 49), PowerShell found no sh, or the
-    /// sh was Git's or Cygwin's. cmd's words are in the server's language, so its exit code is what's relied on.
-    /// (A server whose OpenSSH runs commands in PowerShell instead isn't supported: what it says is shown as it is.)
+    /// The question for a server whose sh bridge command failed: cmd expands %OS% (to Windows_NT, in any language),
+    /// while sh, and PowerShell, print it as it is. (cmd's own failure says little: its words are in the server's
+    /// language, and with the command's redirections its exit code is a plain 1.)
     /// </summary>
-    internal static bool SaysWindows(int? exitCode, string errors) =>
-        errors.Contains(WindowsMessage, StringComparison.Ordinal) ||
-        (exitCode is 9009 or 49 && errors.Contains("sh", StringComparison.Ordinal));
+    internal const string SystemQuestion = "echo %OS%";
+
+    /// <summary>Whether a server's answer to <see cref="SystemQuestion"/> (with whatever ssh printed beside it) is Windows'.</summary>
+    internal static bool AnswersWindows(string output) =>
+        output.Split('\n').Any(line => line.Trim() == "Windows_NT");
 
     /// <summary>
-    /// After a connection that ended before LlamaTree answered: true when that showed the server runs Windows and it
-    /// wasn't known yet, so connecting again at once (with the bridge command for Windows) is worth it.
+    /// After a connection that ended before LlamaTree answered: true when the server turns out to run Windows and it
+    /// wasn't known yet, so connecting again at once (with the bridge command for Windows) is worth it. What the bridge
+    /// command said can tell (Git's sh on Windows says so; sh saying LlamaTree isn't installed is a Unix server's);
+    /// otherwise the server is asked, once it answers at all. (One whose OpenSSH runs commands in PowerShell isn't
+    /// supported: what it said is shown as it is.)
     /// </summary>
-    public bool FoundWindows(string errors) =>
-        target != null && !RunsWindows(target) && SaysWindows(exitCode, errors) && windowsServers.TryAdd(target, true);
+    public async Task<bool> FoundWindowsAsync(string errors)
+    {
+        if (target == null || systems.ContainsKey(target)) return false;
+        if (errors.Contains(WindowsMessage, StringComparison.Ordinal)) return systems.TryAdd(target, true);
+        if (errors.Contains(NotInstalledMessage, StringComparison.Ordinal)) { systems.TryAdd(target, false); return false; }
+        if (NeverRanCommand(errors)) return false;
+        try
+        {
+            var (code, output) = await RunAsync(target, SystemQuestion, null, TimeSpan.FromSeconds(30));
+            if (AnswersWindows(output)) return systems.TryAdd(target, true);
+            if (code == 0) systems.TryAdd(target, false);   // it answered, as something else; otherwise it may be unreachable now
+        }
+        catch (InvalidOperationException) { }
+        return false;
+    }
+
+    /// <summary>
+    /// Whether ssh's own words (this computer's ssh, so in English) say it never got as far as running a command there:
+    /// then there's no point asking the server anything.
+    /// </summary>
+    internal static bool NeverRanCommand(string errors) =>
+        errors.StartsWith("ssh:", StringComparison.Ordinal) || errors.Contains("\nssh:", StringComparison.Ordinal) ||
+        errors.Contains("Permission denied", StringComparison.Ordinal) ||
+        errors.Contains("Host key verification failed", StringComparison.Ordinal) ||
+        errors.Contains("REMOTE HOST IDENTIFICATION HAS CHANGED", StringComparison.Ordinal);
 
     private string? target;
-    private int? exitCode;
 
     private readonly StringBuilder errors = new();
     private readonly TaskCompletionSource errorsDone = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -193,10 +224,7 @@ internal sealed class Ssh
         {
             if (e.Data == null)
             {
-                // ssh has ended (its error output with it): its exit code is the server's command's.
-                try { if (ssh.WaitForExit(1000)) result.exitCode = ssh.ExitCode; }
-                catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException) { }
-                result.errorsDone.TrySetResult();
+                result.errorsDone.TrySetResult();   // ssh has ended
                 return;
             }
             lock (result.errors) { if (result.errors.Length < 4000) result.errors.AppendLine(e.Data); }
