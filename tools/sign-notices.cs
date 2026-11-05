@@ -13,18 +13,20 @@ using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
 
 const string Organization = "2.5.4.10";
+const string SerialNumber = "2.5.4.5";
+const string RegistrationNumber = "2469513";   // the company's registration, which the app also requires (Publisher.cs)
 const string CodeSigning = "1.3.6.1.5.5.7.3.3";
 
 if (args.Length < 1) { Console.Error.WriteLine("Usage: dotnet run tools/sign-notices.cs -- <notices.json> [subject]"); return 2; }
 var path = Path.GetFullPath(args[0]);
-var subject = args.Length > 1 ? args[1] : "Llamachant Technology Ltd";   // as publish.ps1, and NoticeService.Publisher
+var subject = args.Length > 1 ? args[1] : "Llamachant Technology Ltd";   // as publish.ps1, and Publisher.Name
 
 var content = File.ReadAllBytes(path);
 using (var doc = JsonDocument.Parse(content))   // never sign a file the app can't read
     if (!doc.RootElement.TryGetProperty("notices", out var list) || list.ValueKind != JsonValueKind.Array)
         throw new InvalidDataException($"{path} has no \"notices\" list.");
 
-// The newest valid code signing certificate with its key, issued to the organisation (O=), as the app requires.
+// The newest valid code signing certificate with its key, issued to the organisation (O=) and its registration, as the app requires.
 var certificate = new[] { StoreLocation.CurrentUser, StoreLocation.LocalMachine }
     .SelectMany(location =>
     {
@@ -34,10 +36,11 @@ var certificate = new[] { StoreLocation.CurrentUser, StoreLocation.LocalMachine 
     })
     .Where(c => c.HasPrivateKey
         && c.Extensions.OfType<X509EnhancedKeyUsageExtension>().Any(e => e.EnhancedKeyUsages.Cast<Oid>().Any(o => o.Value == CodeSigning))
-        && c.SubjectName.EnumerateRelativeDistinguishedNames().Any(n => n.GetSingleElementType().Value == Organization && n.GetSingleElementValue() == subject))
+        && c.SubjectName.EnumerateRelativeDistinguishedNames().Any(n => n.GetSingleElementType().Value == Organization && n.GetSingleElementValue() == subject)
+        && c.SubjectName.EnumerateRelativeDistinguishedNames().Any(n => n.GetSingleElementType().Value == SerialNumber && n.GetSingleElementValue() == RegistrationNumber))
     .OrderByDescending(c => c.NotAfter)
     .FirstOrDefault()
-    ?? throw new InvalidOperationException($"No valid code signing certificate with its private key for O={subject} in the certificate store.");
+    ?? throw new InvalidOperationException($"No valid code signing certificate with its private key for O={subject}, SERIALNUMBER={RegistrationNumber} in the certificate store.");
 Console.WriteLine($"Signing {Path.GetFileName(path)} as {certificate.Subject} (expires {certificate.NotAfter:yyyy-MM-dd})");
 
 var cms = new SignedCms(new ContentInfo(content), detached: true);

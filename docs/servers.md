@@ -33,7 +33,7 @@ While the server is connected, its sessions' panels show here, and they can mess
 
 When a server doesn't have LlamaTree, its sessions' badge and menu say so, as does adding a session there, each with *Install LlamaTree on `<server>`…*. Once you say yes, the server runs the install script from the latest release over SSH: the package, with sudo, when that needs no password; otherwise a copy for your account that updates itself. Then LlamaTree connects again.
 
-If the server's sudo wants a password, LlamaTree shows you the command to run there yourself. It checks the package's SHA-256 before installing. Or install it by hand, as on any Linux machine:
+If the server's sudo wants a password, LlamaTree shows you the command to run there yourself. It checks the package's SHA-256, from the release's signed list of checksums, before installing. Or install it by hand, as on any Linux machine:
 
 ```sh
 curl -fsSL https://github.com/LlamachantTechnology/LlamaTree/releases/latest/download/install.sh | sh

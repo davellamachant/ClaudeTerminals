@@ -6,7 +6,8 @@
 # With apt-get, dnf or zypper and administrator rights (root, or sudo: it asks for the password when there's a
 # terminal to ask in), it installs the .deb or .rpm, which brings WebKitGTK and libnotify with it. Otherwise it unpacks
 # the .tar.gz into ~/.local/share/LlamaTree with a `llamatree` command in ~/.local/bin; that copy updates itself too.
-# Each download is checked against the SHA-256 GitHub publishes for it, as the in-app updater does.
+# Each download is checked against the SHA-256 GitHub publishes for it (the in-app updater checks the release's signed
+# SHA256SUMS as well).
 #
 #   LLAMATREE_INSTALL=tar      install for this user only, from the .tar.gz, even when a package could be installed
 #   LLAMATREE_INSTALL=package  install the package or stop: never fall back to the .tar.gz

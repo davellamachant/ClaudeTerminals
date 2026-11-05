@@ -6,7 +6,7 @@ namespace LlamaTree.Hosting;
 /// <summary>
 /// Updates a server's LlamaTree to this computer's version: the release's .deb or .rpm, whichever the server installs
 /// with (apt, dnf or zypper), for its processor. The server downloads it from GitHub itself, checks it against the
-/// SHA-256 GitHub publishes for the file (as this computer's updater does), and installs it with sudo, but only where
+/// SHA-256 in the release's signed SHA256SUMS (verified here, see UpdateService.ReleaseFilesAsync), and installs it with sudo, but only where
 /// sudo needs no password: there's nowhere to type one. Otherwise it says what to run there.
 /// </summary>
 internal static partial class ServerUpdate

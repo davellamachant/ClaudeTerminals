@@ -7,7 +7,7 @@ LlamaTree runs on your machine and has no account. Your code, prompts and conver
 | What | Where | What's sent |
 |---|---|---|
 | Update check, at start and every 15 minutes | GitHub's API for this repository's latest release | An anonymous request. Nothing about you or your sessions. |
-| Downloading an update, when you click Update | GitHub releases | An anonymous download, checked against GitHub's SHA-256 before it runs. |
+| Downloading an update, when you click Update | GitHub releases | An anonymous download, checked against the checksum we sign for each release (and, on Windows, the installer's own signature) before it runs. |
 | Tips, offers and news, at start and every 30 minutes | `downloads.llamachant.com` (always that address) | An anonymous request. Only notices signed with our code-signing certificate are shown. Tips and offers can be turned off. |
 | The count of users, once an hour while it's open, **only if you've said yes** | `api.llamatree.dev` (always that address) | Six things: a random id, the app's version, the operating system's name and version, and how many projects and sessions are open. Only the numbers. See [Counting users](#counting-users). |
 | Sessions on a server, when you connect to one | The server you name, through your own `ssh` | Whatever the server's sessions need: their output, your typing, files you open or paste. Nothing goes through Llamachant. |
