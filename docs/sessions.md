@@ -82,6 +82,8 @@ Projects group sessions, for example one product across its worktrees. Tick proj
 
 ![Sessions grouped by project, with Git Changes for the selected worktree](images/overview.png)
 
+**Projects as tabs.** With many projects, the row of filters gets busy. Right-click the Projects row's free space › *Projects as tabs* to show each project as a tab instead: a click shows only that project's sessions, clicking it again (or **All**) goes back to every project, and <kbd>Ctrl</kbd>+click adds or removes a project alongside the ones shown. Every project starts pinned to the row. Hover a tab and click its pin (or right-click › *Unpin*) to move it into the **▾** list after the tabs. Picking a project there shows it as a tab in italics, with its pin ready to put it back on the row. The ▾ shows a dot and a count when a session in an unpinned project is waiting for you. This is an option of the *Projects and sessions across the top* layout; the other layouts list projects down the left.
+
 - **Put a session in a project** when you add it, by dragging its tab into the project's group, or right-click its tab › *Move to project…*
 - **Rename, recolour, reorder or delete** a project by right-clicking it. *Edit project* sets its name and colour (a swatch, a custom colour or Automatic). Deleting a project keeps its sessions; they just have no project.
 - **Add a session to a project** with the **+** at the end of its tab group (at the end of the row when there are no projects). It works from that project's current session, or its first:
