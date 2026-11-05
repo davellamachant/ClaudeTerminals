@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.Claims;
 using System.Security.Cryptography;
@@ -50,6 +51,7 @@ internal static class RemoteAccess
             passwordSignIn = PasswordSignIn(),
             defaultShell = Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\OpenSSH", "DefaultShell", null) as string,
             addresses = Addresses(),
+            otherRules = OtherSshRules() ?? [],
             keys = (admin ? AddedKeys() : FileKeys(UserKeys)).Select(k => new { fingerprint = k.Fingerprint, comment = k.Comment }),
             myKey = MyKey(),
         };
@@ -106,6 +108,56 @@ internal static class RemoteAccess
             return true;   // sshd's default
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+    }
+
+    /// <summary>The display name of the firewall rule OpenSSH Server comes with (OpenSSH-Server-In-TCP), the one Turn on and Turn off change.</summary>
+    internal const string OwnRule = "OpenSSH SSH Server (sshd)";
+
+    /// <summary>
+    /// The display names of the other enabled firewall rules that let TCP port 22 in, which Turn off leaves on: one you
+    /// made yourself, say. Read through the firewall's COM interface, which needs no administrator rights and gives rules
+    /// by display name. Null if the firewall can't be read.
+    /// </summary>
+    internal static List<string>? OtherSshRules()
+    {
+        try
+        {
+            dynamic policy = Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FwPolicy2", throwOnError: true)!)!;
+            var found = new List<string>();
+            foreach (dynamic rule in policy.Rules)
+            {
+                // Inbound (1), allowing (1), on, and not OpenSSH's own.
+                if (!(bool)rule.Enabled || (int)rule.Direction != 1 || (int)rule.Action != 1) continue;
+                string name = rule.Name ?? "";
+                if (name == OwnRule) continue;
+                if (LetsSshIn((int)rule.Protocol, (string?)rule.LocalPorts, (string?)rule.ApplicationName, (string?)rule.serviceName))
+                    found.Add(name);
+            }
+            return found.Distinct().Take(5).ToList();
+        }
+        catch (Exception ex) when (ex is COMException or InvalidCastException or Microsoft.CSharp.RuntimeBinder.RuntimeBinderException or TypeLoadException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Whether a rule lets sshd in: for TCP (6), naming port 22 itself (alone, in a list or in a range), and not kept to
+    /// another program or service. Rules for every port are left out: those are nearly always one app's own (a Store
+    /// app's, which the rule's app package keeps to it).
+    /// </summary>
+    internal static bool LetsSshIn(int protocol, string? localPorts, string? application, string? service)
+    {
+        if (protocol != 6) return false;
+        if (!string.IsNullOrEmpty(application) && !Path.GetFileName(application).Equals("sshd.exe", StringComparison.OrdinalIgnoreCase)) return false;
+        if (!string.IsNullOrEmpty(service) && service != "*" && !service.Equals("sshd", StringComparison.OrdinalIgnoreCase)) return false;
+        foreach (var part in (localPorts ?? "").Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (part == "22") return true;
+            var dash = part.IndexOf('-');
+            if (dash > 0 && int.TryParse(part[..dash], out var from) && int.TryParse(part[(dash + 1)..], out var to) && from <= 22 && 22 <= to) return true;
+        }
+        return false;
     }
 
     /// <summary>This computer's addresses another could reach it at: its networks', and Tailscale's (100.64.0.0/10) marked as such.</summary>
@@ -265,7 +317,7 @@ internal static class RemoteAccess
             Set-Service sshd -StartupType Automatic
             Start-Service sshd
             if (-not (Get-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue)) {
-                New-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -DisplayName 'OpenSSH SSH Server (sshd)' -Direction Inbound -Protocol TCP -LocalPort 22 -Action Allow | Out-Null
+                New-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -DisplayName {{Quote(OwnRule)}} -Direction Inbound -Protocol TCP -LocalPort 22 -Action Allow | Out-Null
             }
             Set-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -Enabled True -Profile {{profiles}}
             {{passwords}}

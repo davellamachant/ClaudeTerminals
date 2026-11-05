@@ -72,4 +72,37 @@ public sealed class RemoteAccessTests
         if (!OperatingSystem.IsWindows()) return;
         Assert.Equal(on, RemoteAccess.PasswordSignIn(config));
     }
+
+    [Theory]
+    [InlineData(6, "22", null, null, true)]                    // a rule of your own for SSH
+    [InlineData(6, "80, 22,443", "", "", true)]                // in a list
+    [InlineData(6, "20-30", null, null, true)]                 // in a range
+    [InlineData(6, "22", @"C:\Windows\System32\OpenSSH\sshd.exe", null, true)]
+    [InlineData(6, "22", null, "sshd", true)]
+    [InlineData(6, "22", null, "*", true)]
+    [InlineData(17, "22", null, null, false)]                  // UDP
+    [InlineData(6, "2222", null, null, false)]
+    [InlineData(6, "23-30", null, null, false)]
+    [InlineData(6, "*", null, null, false)]                    // every port: nearly always one app's own
+    [InlineData(6, null, null, null, false)]
+    [InlineData(6, "22", @"C:\Program Files\Other\other.exe", null, false)]   // kept to another program
+    [InlineData(6, "22", null, "TermService", false)]          // or another service
+    public void A_rule_lets_ssh_in_when_it_names_port_22_for_tcp(int protocol, string? ports, string? application, string? service, bool lets)
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        Assert.Equal(lets, RemoteAccess.LetsSshIn(protocol, ports, application, service));
+    }
+
+    [Fact]
+    public void The_firewall_s_rules_can_be_read_without_administrator_rights()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var rules = RemoteAccess.OtherSshRules();   // null when reading them failed (the COM call, or a property's type)
+        Assert.NotNull(rules);
+        Assert.DoesNotContain(RemoteAccess.OwnRule, rules);
+    }
+
+    [Fact]
+    public void Turn_on_makes_the_firewall_rule_by_the_name_the_other_rules_are_told_from() =>
+        Assert.Contains("-DisplayName " + RemoteAccess.Quote(RemoteAccess.OwnRule), RemoteAccess.EnableScript(keysOnly: true, publicNetworks: false));
 }

@@ -6340,14 +6340,23 @@ async function showRemoteAccessDialog() {
         h('button', { class: 'btn', disabled: !!busy, onclick: () => run('Turning off password sign-in…', 'remoteAccess.enable', { keysOnly: true, publicNetworks: false }) }, 'Turn off password sign-in')));
       if (st.defaultShell) parts.push(h('p', { class: 'remote-access-warn' }, `OpenSSH Server runs commands in ${st.defaultShell} (its DefaultShell setting). LlamaTree needs cmd, its default: remove that setting for LlamaTree to connect.`));
     } else {
-      parts.push(h('p', {}, 'Turning it on installs Windows’ own OpenSSH Server (from Windows Update; it can take a few minutes), starts it now and with Windows, and opens it in the firewall. Windows asks for your permission once. Your sessions here keep running in your desktop session, and your other computers show them beside their own.'));
+      parts.push(h('p', {}, 'Turning it on installs Windows’ own OpenSSH Server (from Windows Update; it can take a few minutes), starts it now and with Windows, and opens it in the firewall. Windows may ask for your permission once. Your sessions here keep running in your desktop session, and your other computers show them beside their own.'));
       parts.push(h('label', { class: 'check-field' }, h('input', { type: 'checkbox', checked: keysOnly, onchange: (e) => { keysOnly = e.target.checked; } }), 'Keys only: turn off password sign-in (recommended)'));
       parts.push(h('label', { class: 'check-field' }, h('input', { type: 'checkbox', checked: publicNetworks, onchange: (e) => { publicNetworks = e.target.checked; } }), 'Also on networks Windows calls public (a cloud VM’s, say)'));
+    }
+    // Rules of its own that Turn off doesn't touch (one you made, say): they open port 22 whatever this dialog says.
+    if (st.otherRules?.length) {
+      const names = st.otherRules.map((n) => `“${n}”`).join(', ');
+      parts.push(h('p', { class: 'remote-access-warn' }, on
+        ? `Other firewall rules let port 22 in too (${names}), on whatever networks they’re set for. Turn off leaves them on.`
+        : `Other firewall rules still let port 22 in (${names}). Nothing answers while OpenSSH Server is off, but if it’s started some other way, they let other computers reach it. Remove them in Windows Defender Firewall if you don’t need them.`));
     }
     // The keys that can sign in as you.
     parts.push(h('div', { class: 'remote-access-head' }, 'Computers that can connect'));
     parts.push(st.keys.length
-      ? h('ul', { class: 'remote-access-list' }, st.keys.map((k) => h('li', {}, k.comment || k.fingerprint, ' ',
+      ? h('ul', { class: 'remote-access-list' }, st.keys.map((k) => h('li', {}, k.comment || 'A key with no name', ' ',
+        // Its fingerprint's start, which tells apart keys with the same name (ssh-keygen -lf shows it whole).
+        h('code', { class: 'remote-access-code', title: k.fingerprint }, k.fingerprint.replace(/^SHA256:/, '').slice(0, 12) + '…'), ' ',
         h('button', { class: 'btn', disabled: !!busy, onclick: () => run('Removing the key…', 'remoteAccess.removeKey', { fingerprint: k.fingerprint }) }, 'Remove'))))
       : h('p', {}, st.admin ? 'None added here yet.' : 'None yet.', ' Paste another computer’s public key below (on it: the one line of ~/.ssh/id_ed25519.pub, or Copy in this dialog there).'));
     if (st.admin) parts.push(h('p', { class: 'remote-access-note' }, 'Keys added some other way aren’t listed: Windows keeps an administrator’s where only administrators can read them.'));
@@ -6355,7 +6364,7 @@ async function showRemoteAccessDialog() {
     parts.push(h('div', {}, h('button', { class: 'btn', disabled: !!busy, onclick: () => {
       if (!keyBox.value.trim()) { toast('Paste the other computer’s public key first.', true); return; }
       run('Adding the key…', 'remoteAccess.addKey', { key: keyBox.value }, () => { keyBox.value = ''; });
-    } }, 'Add key'), st.admin ? h('span', { class: 'remote-access-note' }, ' Windows asks for permission: an administrator’s keys are kept where only administrators can change them.') : null));
+    } }, 'Add key'), st.admin ? h('span', { class: 'remote-access-note' }, ' Windows may ask for permission: an administrator’s keys are kept where only administrators can change them.') : null));
     return parts;
   }
 
