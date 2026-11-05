@@ -127,23 +127,23 @@ internal sealed class PluginGrants
 
     /// <summary>
     /// Checks each plugin's plugin.json against the one it had when you allowed it: one that changed has what you allowed
-    /// taken back (asked again, marked <see cref="PluginGrant.Changed"/>). Returns the ids of those it took back.
+    /// taken back (asked again, marked <see cref="PluginGrant.Changed"/>). So does one allowed before plugin.json hashes were
+    /// kept (no <see cref="PluginGrant.Manifest"/>): its files may have been swapped since, so it isn't trusted with the
+    /// plugin.json there now. What it was refused, its projects and hidden sessions stay. Returns the ids of those it took back.
     /// </summary>
     public List<string> Reconcile(IEnumerable<PluginInfo> plugins)
     {
         var changed = new List<string>();
         lock (gate)
         {
-            var dirty = false;
             foreach (var p in plugins)
             {
                 if (!grants.TryGetValue(p.Id, out var g) || g.Allowed.Count == 0 || g.Manifest == p.ManifestHash) continue;
-                dirty = true;
-                if (g.Manifest == null) { grants[p.Id] = g with { Manifest = p.ManifestHash }; continue; }   // allowed before hashes were kept
+                // Changed, or allowed before hashes were kept: either way it's asked again, and allowing it records the hash.
                 grants[p.Id] = g with { Allowed = [], Changed = true };
                 changed.Add(p.Id);
             }
-            if (dirty) Save();
+            if (changed.Count > 0) Save();
         }
         if (changed.Count > 0) Changed?.Invoke();
         return changed;
@@ -168,7 +168,10 @@ internal sealed class PluginGrants
         if (any) Changed?.Invoke();
     }
 
-    /// <summary>Takes in answers the page kept before they were kept here (only into an empty store, once).</summary>
+    /// <summary>
+    /// Takes in answers the page kept before they were kept here (only into an empty store, once). They have no plugin.json
+    /// hash, so what they allowed is asked again at the next <see cref="Reconcile"/>.
+    /// </summary>
     public void Import(Dictionary<string, PluginGrant> from)
     {
         lock (gate)

@@ -58,13 +58,41 @@ public class PluginGrantsTests
     }
 
     [Fact]
-    public void AnswersFromBeforeHashesTakeTheCurrentOne()
+    public void AnswersFromBeforeHashesAreAskedAgain()
     {
         var g = new PluginGrants(null);
-        g.Import(new() { ["floor"] = new PluginGrant(["sessions"], [], null, [], null) });
-        Assert.Empty(g.Reconcile([Plugin("floor", "H1")]));
+        g.Import(new() { ["floor"] = new PluginGrant(["sessions"], ["message"], ["billing"], ["s1"], null) });
+        Assert.Equal(["floor"], g.Reconcile([Plugin("floor", "H1")]));
+        Assert.Equal("ask", g.State("floor", "sessions"));
+        var kept = g.Snapshot()["floor"];
+        Assert.True(kept.Changed);
+        Assert.Equal(["message"], kept.Denied);   // what it was refused, and what it sees, stay
+        Assert.Equal(["billing"], kept.Projects);
+        Assert.Equal(["s1"], kept.Hidden);
+
+        g.Set("floor", "sessions", "allow", "H1");
         Assert.Equal("allow", g.State("floor", "sessions"));
+        Assert.Equal("H1", g.Snapshot()["floor"].Manifest);
+        Assert.Empty(g.Reconcile([Plugin("floor", "H1")]));
         Assert.Equal(["floor"], g.Reconcile([Plugin("floor", "H2")]));
+    }
+
+    [Fact]
+    public void AnswersFromBeforeHashesOnDiskAreAskedAgain()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "lt-grants-" + Guid.NewGuid().ToString("N"));
+        var path = Path.Combine(dir, "plugin-grants.json");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            File.WriteAllText(path, """{ "floor": { "allowed": ["sessions"], "denied": [], "projects": null, "hidden": [] } }""");
+            var g = new PluginGrants(path);
+            Assert.Equal("allow", g.State("floor", "sessions"));   // nothing taken back until it's checked against the plugin
+            Assert.Equal(["floor"], g.Reconcile([Plugin("floor", "H1")]));
+            Assert.Equal("ask", new PluginGrants(path).State("floor", "sessions"));
+            Assert.True(new PluginGrants(path).Snapshot()["floor"].Changed);
+        }
+        finally { Directory.Delete(dir, true); }
     }
 
     [Fact]
