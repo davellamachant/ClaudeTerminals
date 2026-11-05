@@ -5,7 +5,8 @@ Run agents on another machine (a build box, a cloud VM, a beefy desktop) and wor
 ## What you need
 
 - **`ssh` on this computer.** Windows 10 and 11 have it built in, as do macOS and Linux.
-- **Key or ssh-agent sign-in.** LlamaTree can't type a password. Connect once from a terminal first (`ssh user@server`) so the server's host key is known.
+- **A Linux server** (x86-64) that you can reach with SSH. LlamaTree can't be installed on a Mac or Windows server yet.
+- **Key or ssh-agent sign-in.** LlamaTree can't type a password. Connect once from a terminal first (`ssh user@server`) so the server's host key is known. If you haven't set up a key, see [Setting up SSH](#setting-up-ssh).
 - **Claude Code or Codex on the server**, installed and signed in, since that's where they run.
 - **LlamaTree on the server.** It gives the `llamatree` command that LlamaTree runs there. If it isn't there yet, LlamaTree says so and offers *Install LlamaTree on `<server>`…* (see [below](#installing-llamatree-on-the-server)). The server doesn't need a desktop.
 
@@ -14,6 +15,69 @@ These are the same for sessions among your own and for a [server in a window of 
 ![Session tiles with build-box and gpu-rig server badges, one showing Can't reach gpu-rig](images/servers.png)
 
 *payments-refactor runs on build-box; gpu-rig is offline, so its session says it can't be reached.*
+
+## Setting up SSH
+
+Skip this if `ssh user@server` already signs you in without asking for anything. Otherwise, these steps take a few minutes, once per computer. Run them on the computer LlamaTree runs on, not on the server.
+
+### 1. Make a key
+
+```sh
+ssh-keygen -t ed25519
+```
+
+Press Enter to keep the usual file (`.ssh/id_ed25519` in your home folder). It asks for a passphrase: give it one and let ssh-agent remember it (step 3), or leave it empty, which is simpler but means anyone with a copy of the file can use it.
+
+### 2. Put the key on the server
+
+On macOS and Linux:
+
+```sh
+ssh-copy-id user@server
+```
+
+Windows has no `ssh-copy-id`; in PowerShell, run:
+
+```powershell
+type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh user@server "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+```
+
+Each asks for your password on the server one last time. Then `ssh user@server` should sign in without it.
+
+### 3. Let ssh-agent hold the passphrase
+
+Only for a key with a passphrase. LlamaTree can't type it, so ssh-agent has to hold the unlocked key.
+
+- **Windows:** the OpenSSH agent is installed but turned off. In PowerShell run as administrator, once:
+
+  ```powershell
+  Get-Service ssh-agent | Set-Service -StartupType Automatic
+  Start-Service ssh-agent
+  ```
+
+  Then, in an ordinary PowerShell, `ssh-add` and type the passphrase. Windows keeps the key in the agent from then on, after restarts too.
+- **macOS:** `ssh-add --apple-use-keychain ~/.ssh/id_ed25519`, and add `UseKeychain yes` and `AddKeysToAgent yes` under `Host *` in `~/.ssh/config`, so the passphrase comes from your keychain after a restart.
+- **Linux:** most desktops start an agent for you; run `ssh-add` once per sign-in.
+
+### 4. Give the server a short name (optional)
+
+An entry in your SSH config (`.ssh/config` in your home folder; create it if there isn't one) lets you type `build-box` in LlamaTree in place of the whole address, and holds anything else the server needs:
+
+```
+Host build-box
+    HostName 203.0.113.10
+    User dev
+    Port 22
+    IdentityFile ~/.ssh/id_ed25519
+```
+
+Only `HostName` is needed; leave out the lines you don't. For a server you reach through another, add `ProxyJump user@gateway`.
+
+### Different kinds of server
+
+- **A Linux machine on your network:** it needs an SSH server. On Ubuntu or Debian, `sudo apt install openssh-server`; on Fedora, `sudo dnf install openssh-server`, then `sudo systemctl enable --now sshd`. Use its name or IP address as the server.
+- **A cloud VM** (Azure, AWS, Google Cloud and the like): sign in with the user and key the provider set up when you made it. The user is often fixed by the image: `ubuntu` on Ubuntu, `ec2-user` on Amazon Linux, `azureuser` if you kept Azure's suggestion. Point `IdentityFile` at the key file you downloaded, and check that the VM's firewall or security group lets in SSH (port 22). LlamaTree needs no other port.
+- **A server behind a gateway or VPN:** connect the VPN first, or reach it through the gateway with `ProxyJump` as above.
 
 ## Adding a session on a server
 
