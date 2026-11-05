@@ -6349,7 +6349,8 @@ async function showRemoteAccessDialog() {
     parts.push(st.keys.length
       ? h('ul', { class: 'remote-access-list' }, st.keys.map((k) => h('li', {}, k.comment || k.fingerprint, ' ',
         h('button', { class: 'btn', disabled: !!busy, onclick: () => run('Removing the key…', 'remoteAccess.removeKey', { fingerprint: k.fingerprint }) }, 'Remove'))))
-      : h('p', {}, 'None yet. Paste another computer’s public key below (on it: the one line of ~/.ssh/id_ed25519.pub, or Copy in this dialog there).'));
+      : h('p', {}, st.admin ? 'None added here yet.' : 'None yet.', ' Paste another computer’s public key below (on it: the one line of ~/.ssh/id_ed25519.pub, or Copy in this dialog there).'));
+    if (st.admin) parts.push(h('p', { class: 'remote-access-note' }, 'Keys added some other way aren’t listed: Windows keeps an administrator’s where only administrators can read them.'));
     parts.push(keyBox);
     parts.push(h('div', {}, h('button', { class: 'btn', disabled: !!busy, onclick: () => {
       if (!keyBox.value.trim()) { toast('Paste the other computer’s public key first.', true); return; }
