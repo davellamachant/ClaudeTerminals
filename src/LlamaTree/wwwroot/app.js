@@ -4497,18 +4497,47 @@ function panelButton(p, b) {
     showAddDialog('new', { directory: owner?.directory, name: b.name, project: owner?.project ?? null, prompt: b.prompt });
     return;
   }
-  typeHere(b.prompt);
+  typeHere(b.prompt, p);
 }
 
-/** Types text into the session you're looking at, for you to finish or send (never sent from here). */
-function typeHere(text) {
+/**
+ * Text to type into a terminal with no keys of its own: control characters (Esc and the sequences it starts, Enter,
+ * Ctrl+C, C1 codes) dropped, line endings made \n, and only the characters in keep (such as '\n') left in.
+ */
+function typeable(text, keep = '') {
+  return [...(text ?? '').replace(/\r\n?/g, '\n')].filter((c) => !/[\u0000-\u001f\u007f-\u009f]/.test(c) || keep.includes(c)).join('');
+}
+
+/**
+ * Types text into the session you're looking at, for you to finish or send (never sent from here). From a panel's
+ * button (panel given), you're asked first when it would go to a session other than the panel's own, or is more than
+ * one line (in a plain shell, each line could run as it's typed).
+ */
+function typeHere(text, panel) {
   const s = currentSession();
   if (!s) return;
   if (s.startsOnOpen) { expand(s.id); toast(`Starting "${s.name}". Try again once Claude is up.`); return; }
   if (!s.running) { toast(`"${s.name}" isn't running. Start it, then try again.`, true); return; }
-  if (state.expandedId !== s.id) expand(s.id);
-  s.term.paste(text);
-  setTimeout(() => s.term.focus(), 40);
+  text = typeable(text, '\n');
+  if (!text) return;
+  const type = () => {
+    if (state.byId.get(s.id) !== s || !s.running) { toast(`"${s.name}" isn't running any more.`, true); return; }
+    if (state.expandedId !== s.id) expand(s.id);
+    s.term.paste(text);   // bracketed when the program asked for it, and never followed by Enter
+    setTimeout(() => s.term.focus(), 40);
+  };
+  const other = panel && panel.owner !== s.id;
+  const lines = text.split('\n').length;
+  if (!panel || (!other && lines === 1)) { type(); return; }
+  const owner = state.byId.get(panel.owner);
+  openModal(`Type into “${s.name}”?`, h('div', {},
+    other && h('p', {}, `This button is from the “${panel.title}” panel of ${owner ? `“${owner.name}”` : 'a removed session'}, not of “${s.name}”, which it would type into.`),
+    lines > 1 && h('p', {}, `It is ${lines} lines. In a plain shell, each line could run as it is typed.`),
+    h('p', { class: 'dim' }, 'LlamaTree doesn’t press Enter: read it, then send it yourself.'),
+    h('pre', { class: 'spawn-prompt' }, text)), [
+    h('button', { class: 'btn', 'data-autofocus': true, onclick: closeModal }, 'Cancel'),
+    h('button', { class: 'btn primary', onclick: () => { closeModal(); type(); } }, `Type into “${s.name}”`),
+  ]);
 }
 
 /** Every item in a panel, wherever it sits. */
@@ -4583,12 +4612,17 @@ function showExampleSkill() {
   $('#modalHost .modal').classList.add('wide');
 }
 
-/** Refresh asks the session that made the panel to rebuild it (the prompt it gave, e.g. the slash command). */
+/**
+ * Refresh asks the session that made the panel to rebuild it: its slash command, typed as a paste (never as keys) and
+ * sent. The host accepts only a one-line slash command; this checks again, so nothing else is ever sent with Enter.
+ */
 function refreshPanel(p) {
   const owner = state.byId.get(p.owner);
   if (owner?.startsOnOpen) { startSession(owner); toast(`Starting "${owner.name}". Refresh again once Claude is up.`); return; }
   if (!owner?.running) { toast(`"${owner?.name ?? 'Its session'}" isn't running, so it can't refresh this panel.`, true); return; }
-  post({ type: 'input', id: owner.id, data: p.refresh });
+  const command = typeable(p.refresh);
+  if (command !== p.refresh || !/^\/[A-Za-z0-9][A-Za-z0-9_:.-]*( .*)?$/.test(command)) { toast(`This panel's refresh isn't a slash command, so it wasn't sent.`, true); return; }
+  owner.term.paste(command);
   enterAfterTyping(owner);
   toast(`Asked ${owner.name} to refresh "${p.title}".`);
 }
@@ -4596,7 +4630,7 @@ function refreshPanel(p) {
 /** A first prompt that couldn't go on Claude's command line: typed once Claude is up, for you to send. */
 function typePrompt(id, text) {
   const s = state.byId.get(id);
-  if (s?.running && text) s.term.paste(text);
+  if (s?.running && text) s.term.paste(typeable(text, '\n\t'));
 }
 
 function panelMarkdown(p) {
@@ -8491,7 +8525,7 @@ function controlPrompt(id, text, tries = 0) {
     return;
   }
   // The host refuses control characters already; this keeps a paste from ever carrying keys of its own.
-  text = text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '');
+  text = typeable(text, '\n\t');
   s.term.paste(text);
   enterAfterTyping(s);
 }

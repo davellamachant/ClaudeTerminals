@@ -171,9 +171,55 @@ internal static partial class PanelSpec
         if (args.TryGetProperty("refresh", out _))
         {
             var refresh = String(args, "refresh", 500);
-            if (refresh != null && refresh.IndexOfAny(['\r', '\n']) >= 0) throw new PanelException("refresh must be one line (it is sent to the session as typed).");
+            if (refresh != null && RefreshProblem(refresh) is { } problem) throw new PanelException(problem);
             panel.Refresh = refresh;
         }
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex("^/[A-Za-z0-9][A-Za-z0-9_:.-]*( .*)?$")]
+    private static partial System.Text.RegularExpressions.Regex SlashCommand();
+
+    /// <summary>
+    /// Why a refresh line can't be used, or null. Refresh is typed into the owning session and sent with Enter, so it
+    /// is only ever one slash command (with arguments): no control characters (Esc would send keys of its own, such as
+    /// Shift+Tab), and nothing else, such as ! (the agent's shell mode) or a prompt.
+    /// </summary>
+    internal static string? RefreshProblem(string refresh)
+    {
+        if (refresh.IndexOfAny(['\r', '\n']) >= 0) return "refresh must be one line (it is sent to the session as typed).";
+        if (Relay.SessionControl.HasControl(refresh)) return "refresh can't hold control characters (escape sequences and the like).";
+        return SlashCommand().IsMatch(refresh) ? null : "refresh must be a slash command, such as /my-tasks (it is sent to the session and run).";
+    }
+
+    /// <summary>
+    /// Why a button's text can't be used, or null. A "here" or "new" prompt is typed into a terminal (for the person to
+    /// send), so it may hold new lines but no other control characters (Esc, tabs, a carriage return that would send it),
+    /// and can't start with ! (the agent's shell mode). Copied text may also hold tabs.
+    /// </summary>
+    internal static string? PromptProblem(string target, string prompt)
+    {
+        if (target == "copy")
+            return Relay.SessionControl.HasControl(prompt, "\n\r\t") ? "A copy button's text can't hold control characters (escape sequences and the like), other than new lines and tabs." : null;
+        if (Relay.SessionControl.HasControl(prompt, "\n"))
+            return "A button's prompt can't hold control characters (escape sequences, tabs and the like), other than new lines: it is typed into a terminal.";
+        return prompt.StartsWith('!') ? "A button's prompt can't start with ! (running a shell command); give the command on a copy button instead." : null;
+    }
+
+    /// <summary>
+    /// A panel read back from panels.json, which may have been saved before today's checks: a refresh or a button
+    /// that would be refused now is dropped, and the rest of the panel kept.
+    /// </summary>
+    internal static Panel Loaded(Panel panel)
+    {
+        if (panel.Refresh != null && RefreshProblem(panel.Refresh) != null) panel.Refresh = null;
+        foreach (var item in AllItems(panel))
+        {
+            if (item.Buttons == null) continue;
+            foreach (var b in item.Buttons.Where(b => b.Target != "copy")) b.Prompt = (b.Prompt ?? "").ReplaceLineEndings("\n");
+            item.Buttons.RemoveAll(b => !Targets.Contains(b.Target) || string.IsNullOrEmpty(b.Prompt) || PromptProblem(b.Target, b.Prompt) != null);
+            if (item.Buttons.Count == 0) item.Buttons = null;
+        }
+        return panel;
     }
 
     private static List<PanelGroup> Groups(JsonElement groups)
@@ -410,7 +456,9 @@ internal static partial class PanelSpec
             var field = target == "copy" ? (Present(b, "text") ? "text" : "prompt") : (Present(b, "prompt") ? "prompt" : "text");
             var prompt = String(b, field, int.MaxValue, required: false)
                 ?? throw new PanelException(target == "copy" ? "A copy button needs text." : "prompt is required.");
+            if (target != "copy") prompt = prompt.ReplaceLineEndings("\n");
             if (prompt.Length > MaxPrompt) throw new PanelException($"A button's {field} is too long (at most {MaxPrompt} characters).");
+            if (PromptProblem(target, prompt) is { } problem) throw new PanelException(problem);
             return new PanelButton
             {
                 Label = String(b, "label", 40, required: true)!,

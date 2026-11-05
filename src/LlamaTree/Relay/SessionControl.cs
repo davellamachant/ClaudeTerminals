@@ -231,11 +231,17 @@ internal sealed class SessionControl
     {
         if (prompt.Length == 0) throw new ControlException("There's no prompt: say what the session should do.");
         if (prompt.Length > MaxPrompt) throw new ControlException($"A prompt can be up to {MaxPrompt} characters; this one is {prompt.Length}.");
-        if (prompt.Any(c => char.IsControl(c) && c is not ('\n' or '\t' or '\r')))
+        if (HasControl(prompt, "\n\t\r"))
             throw new ControlException("A prompt can't hold control characters (escape sequences and the like); send plain text.");
         if (prompt[0] is '/' or '!')
             throw new ControlException("A prompt can't start with / or ! (the agent's own commands, and running shell commands): only the person types those.");
     }
+
+    /// <summary>
+    /// Whether text to be typed into a terminal holds a control character (C0, DEL or C1: Esc and the keys it starts,
+    /// Enter, Ctrl+C and the like) other than those in <paramref name="allowed"/>. Panels check what they type with it too.
+    /// </summary>
+    internal static bool HasControl(string text, string allowed = "") => text.Any(c => char.IsControl(c) && !allowed.Contains(c));
 
     /// <summary>
     /// The folder a new session may use: the starter's own, one another session of its project uses, or a folder inside
