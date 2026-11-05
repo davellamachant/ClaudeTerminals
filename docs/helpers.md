@@ -6,7 +6,7 @@ An agent can start sessions of its own: another agent like itself, working in pa
 
 Ask a session something like "split out the flaky test fix into its own branch and keep going on the webhook". The agent starts a helper named *fix-flaky-tests*, on a new branch in a worktree of its own, with the whole task as its first prompt. The helper appears as a tile in the same project, with its own Git panel. The first agent carries on, checks back when it's ready, reads what the helper did, and closes it.
 
-![The dialog asking whether checkout-api may start a session](images/spawn-ask.webp)
+![The dialog asking whether checkout-api may start a session](images/spawn-ask.png)
 
 ## What an agent can do
 

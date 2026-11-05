@@ -11,7 +11,7 @@ Run agents on another machine (a build box, a cloud VM, a beefy desktop) and wor
 
 These are the same for sessions among your own and for a [server in a window of its own](#a-server-in-a-window-of-its-own).
 
-![Session tiles with build-box and gpu-rig server badges, one showing Can't reach gpu-rig](images/servers.webp)
+![Session tiles with build-box and gpu-rig server badges, one showing Can't reach gpu-rig](images/servers.png)
 
 *payments-refactor runs on build-box; gpu-rig is offline, so its session says it can't be reached.*
 
@@ -23,7 +23,7 @@ In **New Session**, *Computer* picks where the session runs: this computer, or a
 - `ssh://user@server:port`
 - a `Host` from your SSH config, with its user, port, key and jump hosts
 
-![The New session dialog with Computer set to dev@build-box and a folder on the server](images/new-session-server.webp)
+![The New session dialog with Computer set to dev@build-box and a folder on the server](images/new-session-server.png)
 
 The server's sessions show with your local ones, in your projects, with the server's name on their tile and a link mark on their tab. Typing, Git, diffs, *Browse…*, opening files and pasting pictures all work as for a local session, on that server. Once LlamaTree has connected to a server, every session that server's LlamaTree has shows here too.
 

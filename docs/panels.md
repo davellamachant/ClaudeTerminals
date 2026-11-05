@@ -6,9 +6,9 @@ LlamaTree starts each Claude and Codex session with a small MCP server built int
 
 A panel is a tab next to Git Changes and Git Repository that an agent fills: your task list, an error summary, a checklist. It holds Markdown, or a list of items (a key, title, badges, a link and buttons), optionally in groups up to three levels deep. Groups and Markdown headings fold with a click, and the app remembers what you folded in each panel. When there are more tabs than fit, ◀ ▶ arrows scroll them, as in the other tab rows.
 
-![A My tasks list panel grouped by status](images/panel-my-tasks.webp)
+![A My tasks list panel grouped by status](images/panel-my-tasks.png)
 
-![A Markdown panel reviewing a branch](images/panel-review.webp)
+![A Markdown panel reviewing a branch](images/panel-review.png)
 
 LlamaTree has no code for any tracker or service. Agents fill panels with whatever they can reach through your own MCP servers and skills, so a team can share a `/my-tasks` skill that reads their tracker and shows the result in a panel.
 

@@ -43,7 +43,7 @@ They sit on the Git panel's toolbar, next to the branch and its outgoing and inc
 
 Click the branch name on the Git toolbar, or in Git Changes' status bar, for the **branch picker**: filter as you type, with *Locals* and *Remotes* tabs. Picking a remote branch switches to its local branch, creating one that tracks it if needed.
 
-![The branch picker under the Git toolbar, with a filter box, New Branch, and Locals and Remotes tabs](images/branch-picker.webp)
+![The branch picker under the Git toolbar, with a filter box, New Branch, and Locals and Remotes tabs](images/branch-picker.png)
 
 - **New Branch** (in the picker, the ⋯ menu, or a commit's right-click menu in Git Repository) takes a name and what to base it on, a branch or a commit, and can switch to it.
 - **Switching with uncommitted changes** asks first: bring the changes with you, or stash them and continue. If the switch fails, the stash is put back.
