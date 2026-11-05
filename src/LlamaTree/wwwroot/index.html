@@ -2,6 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <!-- Windows: frames only at plugins' addresses, so a plugin's frame can't go to a page elsewhere and speak for it (see
+       pluginFrame). The Photino window's local site serves its own policy in place of this one (see LocalSite). -->
+  <meta http-equiv="Content-Security-Policy" content="frame-src https://*.plugin.local; object-src 'none'; base-uri 'none'">
   <title>LlamaTree</title>
   <link rel="stylesheet" href="lib/xterm/xterm.css">
   <link rel="stylesheet" href="app.css">

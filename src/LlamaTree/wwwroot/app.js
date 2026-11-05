@@ -6061,7 +6061,7 @@ function applyTheme(before = null) {
   if (window.monaco) monaco.editor.setTheme(diffTheme(look));
   applyAccent();
   rainColours();   // the rain takes the accent, which is only now on the page
-  for (const f of pluginFrames.values()) postPluginTheme(f.frame);
+  for (const f of pluginFrames.values()) if (f.ready) postPluginTheme(f.frame);   // one still loading gets it on its load
   // A theme's window and title bar take its own background; Light and Dark keep Windows' own.
   post({ type: 'theme', light: isLight(), background: look?.colors.chrome ?? null });
   if (before && before !== name) offerClaudeRestart();
@@ -7091,6 +7091,15 @@ function pluginMenuSight(p, s, scopeKey = null) {
 /**
  * The plugin's frame, made on first use and kept until its tab closes, so switching tabs doesn't reload it. (Moving it
  * to another place in the page does: dragging its side panel tab to another group starts it again.)
+ *
+ * Only the plugin's own page speaks for it. The frame can navigate itself (a link followed, say), and the page it lands
+ * on would otherwise get the plugin's messages and grants: the app page's frame-src keeps the frame on plugin addresses
+ * (see index.html and LocalSite), and this keeps it on the page it was opened at. A page we load into the frame is
+ * trusted from its load on (what it sends before then is held until that load, see pluginMessage). A later load in
+ * the same window that we didn't start is a page the frame went to by itself: what it sent is dropped, nothing more is
+ * sent to it, and the plugin's page is put back, starting again. (A frame put back into the page, moved to another
+ * group, gets a new window, which loads the plugin's page afresh.) A plugin is one page: following a link to another
+ * of its own pages also brings it back to its page.
  */
 function pluginFrame(p) {
   let f = pluginFrames.get(p.id);
@@ -7101,9 +7110,20 @@ function pluginFrame(p) {
   url.searchParams.set('placement', pluginPlacement(p));
   // No allow-same-origin: the page gets an opaque origin, so it can't reach this page, and has no storage to share.
   const frame = h('iframe', { class: 'plugin-frame', sandbox: 'allow-scripts allow-forms allow-modals', referrerpolicy: 'no-referrer', title: p.title, src: url.href });
-  f = { frame, ready: false, queue: [], badge: null, title: null };
+  // window: the frame's window when its page last loaded; opened: a load of its page is on its way (we started it);
+  // page: counts the page's loads, so an answer for a page that has gone isn't given to the next; early: what it sent
+  // before its load; strikes: times in a row it left its page straight after loading.
+  f = { frame, url: url.href, ready: false, queue: [], badge: null, title: null,
+    window: null, opened: true, page: 0, early: [], loadedAt: 0, strikes: 0, stopped: false };
   const entry = f;
   frame.addEventListener('load', () => {
+    if (entry.stopped) return;
+    const w = frame.contentWindow;
+    if (!entry.opened && w === entry.window) { pluginLeftPage(p, entry); return; }
+    entry.opened = false;
+    entry.window = w;
+    entry.page++;
+    entry.loadedAt = performance.now();
     entry.ready = true;
     postPluginTheme(frame);
     if (pluginHandover.has(p.id)) {   // it was just moved: the state it sent along, back to it
@@ -7112,9 +7132,36 @@ function pluginFrame(p) {
       postToPlugin(frame, { type: 'llamatree:state', placement: pluginPlacement(p), state });
     }
     for (const m of entry.queue.splice(0)) postToPlugin(frame, m);
+    for (const data of entry.early.splice(0)) if (pluginFrames.get(p.id) === entry && entry.ready) pluginMessage(p.id, entry, data);
   });
   pluginFrames.set(p.id, f);
   return f;
+}
+
+/** Starts the plugin's page again in its frame (a load we started, so the page is trusted once it has loaded). */
+function restartPlugin(f) {
+  f.ready = false;
+  f.stopped = false;
+  f.opened = true;
+  f.early.length = 0;
+  f.frame.src = f.url;
+}
+
+/**
+ * The plugin's frame loaded a page we didn't open: it went somewhere by itself. What it sent is dropped and its page
+ * put back. One that keeps leaving its page as soon as it's back is stopped until its tab is opened again.
+ */
+function pluginLeftPage(p, f) {
+  f.ready = false;
+  f.early.length = 0;
+  f.strikes = performance.now() - f.loadedAt < 3000 ? f.strikes + 1 : 1;
+  if (f.strikes > 3) {
+    f.stopped = true;
+    f.frame.src = 'about:blank';
+    toast(`${p.title} kept leaving its page, so it has been stopped. Close its tab and open it again to start it again.`, true);
+    return;
+  }
+  restartPlugin(f);
 }
 
 function sendToPlugin(p, message) {
@@ -7126,6 +7173,8 @@ function sendToPlugin(p, message) {
 // Plugins written before the rename listen for 'claude-terminals:<name>': each message also goes under that
 // name, and what they send under it is taken as 'llamatree:<name>'.
 const OLD_PLUGIN_PREFIX = 'claude-terminals:';
+// To '*': the frame is sandboxed without allow-same-origin, so its page's origin is opaque ("null"), which postMessage
+// can't name. What makes it the plugin's page is that it's only sent once that page has loaded (see pluginFrame).
 function postToPlugin(frame, message) {
   const w = frame.contentWindow;
   if (!w) return;
@@ -7187,16 +7236,16 @@ function showPlugin(tab) {
   const p = pluginById(tab.pluginId);
   if (!p) { toast(`The plugin "${tab.pluginId}" isn't in the plugins folder any more.`, true); closeDoc(tab.key); return; }
   const host = $('#pluginDoc');
-  const { frame } = pluginFrame(p);
-  if (frame.parentNode !== host) host.append(frame);
+  const pf = pluginFrame(p), { frame } = pf;
+  if (frame.parentNode !== host) { pf.ready = false; host.append(frame); }   // put in the page, it loads its page afresh
   for (const f of host.children) f.hidden = f !== frame;
   frame.focus();
 }
 
 /** A side panel plugin, open in its group. */
 function showDockPlugin(g, t) {
-  const { frame } = pluginFrame(pluginById(pluginOfTab(t)));
-  if (frame.parentNode !== g.frames) g.frames.append(frame);
+  const pf = pluginFrame(pluginById(pluginOfTab(t))), { frame } = pf;
+  if (frame.parentNode !== g.frames) { pf.ready = false; g.frames.append(frame); }
   for (const f of g.frames.children) f.hidden = f !== frame;
 }
 
@@ -7373,7 +7422,7 @@ function setPluginAccess(id, kind, to) {
   sendGrant('plugins.grant', { id, kind, state: to });
   // Taken away: the page starts over, so it no longer holds what it was shown.
   const f = pluginFrames.get(id);
-  if (was === 'allow' && to !== 'allow' && f) { f.ready = false; f.frame.src = f.frame.src; }
+  if (was === 'allow' && to !== 'allow' && f) restartPlugin(f);
   checkPluginSight();
   permissionsChanged();
 }
@@ -7386,7 +7435,7 @@ function forgetPlugin(id) {
   sendGrant('plugins.forget', { id });
   // Taken away: the page starts over, so it no longer holds what it was shown.
   const f = pluginFrames.get(id);
-  if (had && f) { f.ready = false; f.frame.src = f.frame.src; }
+  if (had && f) restartPlugin(f);
   checkPluginSight();
   permissionsChanged();
 }
@@ -7433,7 +7482,7 @@ function checkPluginSight() {
     const before = pluginSaw.get(p.id);
     pluginSaw.set(p.id, now);
     const f = pluginFrames.get(p.id);
-    if (before && f && [...before].some((sid) => !now.has(sid))) { f.ready = false; f.frame.src = f.frame.src; }
+    if (before && f && [...before].some((sid) => !now.has(sid))) restartPlugin(f);
   }
 }
 
@@ -8331,17 +8380,27 @@ async function pluginRequest(p, m) {
 }
 
 // What a plugin asks for its own tab, and its requests. Only its own frame is listened to, so it can't speak for
-// another plugin (and the host keeps each plugin's frame on its own address).
+// another plugin (and the host keeps each plugin's frame on its own address), and only while its own page is in it
+// (see pluginFrame): what comes before its page has loaded waits for that load, and goes if the load isn't its page.
 addEventListener('message', (e) => {
   const id = [...pluginFrames].find(([, f]) => f.frame.contentWindow === e.source)?.[0];
   if (!id || typeof e.data?.type !== 'string') return;
-  const old = e.data.type.startsWith(OLD_PLUGIN_PREFIX);
-  const m = old ? { ...e.data, type: 'llamatree:' + e.data.type.slice(OLD_PLUGIN_PREFIX.length) } : e.data;
   const f = pluginFrames.get(id);
+  if (f.stopped) return;
+  if (!f.ready) { if (f.early.length < 100) f.early.push(e.data); return; }
+  pluginMessage(id, f, e.data);
+});
+
+function pluginMessage(id, f, data) {
+  const old = data.type.startsWith(OLD_PLUGIN_PREFIX);
+  const m = old ? { ...data, type: 'llamatree:' + data.type.slice(OLD_PLUGIN_PREFIX.length) } : data;
   if (m.type === 'llamatree:request') {
-    const p = pluginById(id), frame = f.frame;
-    // Answered under the name it asked by, once.
-    const reply = (answer) => frame.contentWindow?.postMessage({ type: (old ? OLD_PLUGIN_PREFIX : 'llamatree:') + 'response', requestId: m.requestId, ...answer }, '*');
+    const p = pluginById(id), frame = f.frame, page = f.page;
+    // Answered under the name it asked by, once, and only to the page that asked: not one loaded since.
+    const reply = (answer) => {
+      if (pluginFrames.get(id) !== f || !f.ready || f.page !== page) return;
+      frame.contentWindow?.postMessage({ type: (old ? OLD_PLUGIN_PREFIX : 'llamatree:') + 'response', requestId: m.requestId, ...answer }, '*');
+    };
     pluginRequest(p, m).then((result) => reply({ result: result ?? null }), (err) => reply({ error: err.message }));
     return;
   }
@@ -8357,7 +8416,7 @@ addEventListener('message', (e) => {
     f.title = t || null;
   } else return;
   renderPluginTab(id);
-});
+}
 
 // Side panel plugins kept from last time show once the folder has been read.
 loadPlugins().then(() => renderGit());
