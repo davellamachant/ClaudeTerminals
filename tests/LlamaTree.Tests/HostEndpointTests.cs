@@ -149,6 +149,27 @@ public class HostEndpointTests : IDisposable
         Assert.Equal(Path.Combine(sharedRoot, "llamatree-" + Me, Sock), PathFor([], linked));
     }
 
+    /// <summary>
+    /// A host from before the move is still connected to where it listened (/tmp, say), but only if that's a socket of
+    /// yours: anyone can make a file of that name there.
+    /// </summary>
+    [UnixFact]
+    public void An_old_hosts_socket_is_used_only_if_its_yours_and_not_a_link()
+    {
+        var socket = Path.Combine(root, "llamatree.host.sock");
+        using var listener = new System.Net.Sockets.Socket(System.Net.Sockets.AddressFamily.Unix, System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Unspecified);
+        listener.Bind(new System.Net.Sockets.UnixDomainSocketEndPoint(socket));
+        Assert.Equal(socket, HostEndpoint.LegacySocket(socket, Me));
+        Assert.Null(HostEndpoint.LegacySocket(socket, Me + 1));   // another account's
+        var link = Path.Combine(root, "link.sock");
+        File.CreateSymbolicLink(link, socket);
+        Assert.Null(HostEndpoint.LegacySocket(link, Me));
+        var plain = Path.Combine(root, "plain.sock");
+        File.WriteAllText(plain, "");
+        Assert.Null(HostEndpoint.LegacySocket(plain, Me));   // not a socket
+        Assert.Null(HostEndpoint.LegacySocket(Path.Combine(root, "missing.sock"), Me));
+    }
+
     [UnixFact]
     public void Lstat_tells_the_owner_and_a_link()
     {

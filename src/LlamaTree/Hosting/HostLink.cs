@@ -97,15 +97,12 @@ internal sealed class HostLink
     {
         Stream? stream;
         string? failure = null;
-        if (Remote == null && HostEndpoint.Problem is { } problem)
-        {
-            stream = null;   // no safe place for the host's socket: said, not waited out
-            failure = problem;
-        }
-        else if (Remote == null)
+        if (Remote == null)
         {
             stream = await HostEndpoint.ConnectAsync(TimeSpan.FromMilliseconds(300));
-            if (stream == null && SessionHost.StartDetached())
+            // No safe place for the host's socket: said, not waited out.
+            if (stream == null && HostEndpoint.Problem is { } problem) failure = problem;
+            else if (stream == null && SessionHost.StartDetached())
                 for (var i = 0; i < 60 && stream == null; i++) stream = await HostEndpoint.ConnectAsync(TimeSpan.FromMilliseconds(250));
         }
         else

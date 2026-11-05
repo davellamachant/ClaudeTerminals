@@ -36,7 +36,7 @@ internal static class HostEndpoint
         if (OperatingSystem.IsWindows()) return name;
         return SocketPath(name.ToLowerInvariant() + ".sock",
             [Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR"), Environment.GetEnvironmentVariable("TMPDIR")],
-            () => Path.Combine(AppProfile.LocalFolder, "run"), "/tmp", Libc.Instance.EffectiveUserId(),OperatingSystem.IsMacOS() ? 103 : 107);
+            () => Path.Combine(AppProfile.LocalFolder, "run"), "/tmp", Libc.Instance.EffectiveUserId(), OperatingSystem.IsMacOS() ? 103 : 107);
     }
 
     private const UnixFileMode OwnerOnly = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
@@ -148,12 +148,50 @@ internal static class HostEndpoint
             PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
     }
 
-    /// <summary>A connection to this profile's session host, or null if none answers within <paramref name="timeout"/> (or there's no path for one: see <see cref="Problem"/>).</summary>
+    /// <summary>
+    /// A connection to this profile's session host, or null if none answers within <paramref name="timeout"/> (or there's
+    /// no path for one: see <see cref="Problem"/>). On macOS and Linux, when nothing answers at <see cref="Name"/>, a host
+    /// from before the socket left the shared temp folder is looked for where it listened (see <see cref="LegacyName"/>).
+    /// </summary>
     public static async Task<Stream?> ConnectAsync(TimeSpan timeout)
     {
-        NamedPipeClientStream client;
-        try { client = new NamedPipeClientStream(".", Name, PipeDirection.InOut, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly); }
-        catch (IOException) { return null; }
+        string? name = null;
+        try { name = Name; }
+        catch (IOException) { }
+        if (name != null && await ConnectAsync(name, timeout) is { } stream) return stream;
+        if (OperatingSystem.IsWindows() || LegacySocket(LegacyName(), Libc.Instance.EffectiveUserId()) is not { } legacy || legacy == name) return null;
+        // A live host answers at once: a socket file left behind isn't waited on long.
+        return await ConnectAsync(legacy, TimeSpan.FromMilliseconds(Math.Min(timeout.TotalMilliseconds, 100)));
+    }
+
+    /// <summary>
+    /// Where the host listened before its socket was kept out of the shared temp folder: the runtime folder, else the
+    /// temp folder (/tmp on Linux). Only ever connected to, never listened on: a host still running from before an
+    /// update that didn't end it (apt upgrade on a server, say) stays reachable until it ends, then everything is at
+    /// <see cref="Name"/>.
+    /// </summary>
+    private static string LegacyName()
+    {
+        var folder = Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR") is { Length: > 0 } runtime && Directory.Exists(runtime)
+            ? runtime : Path.GetTempPath();
+        return Path.Combine(folder, ("LlamaTree.Host" + AppProfile.InstanceSuffix).ToLowerInvariant() + ".sock");
+    }
+
+    /// <summary>
+    /// <paramref name="path"/> if it is itself (not a link) a socket owned by <paramref name="uid"/>: in a shared folder
+    /// anyone can make a file of that name, and the window mustn't talk to another account's. Null otherwise, or where
+    /// that can't be told.
+    /// </summary>
+    [System.Runtime.Versioning.UnsupportedOSPlatform("windows")]
+    internal static string? LegacySocket(string path, uint uid)
+    {
+        var libc = Libc.Instance;
+        return libc.CanLStat && libc.LStat(path, out var owner, out var mode) && (mode & 0xF000) == 0xC000 && owner == uid ? path : null;
+    }
+
+    private static async Task<Stream?> ConnectAsync(string name, TimeSpan timeout)
+    {
+        var client = new NamedPipeClientStream(".", name, PipeDirection.InOut, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
         try
         {
             await client.ConnectAsync((int)timeout.TotalMilliseconds);
