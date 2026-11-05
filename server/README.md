@@ -50,7 +50,7 @@ The app's `TelemetryService.PingUrl` is that address plus `/ping`.
 npx azurite --silent --location $env:TEMP\azurite     # the storage emulator, in another window
 cd server\Count
 func start                                            # Azure Functions Core Tools
-# http://localhost:7071/ping?id=1868c4d72ca345de80adb48806e14052&v=1.2.0&os=10.0.26300
+# http://localhost:7071/ping?id=1868c4d72ca345de80adb48806e14052&v=1.2.0&os=windows&osv=10.0.26300&projects=1&sessions=2
 # http://localhost:7071/stats?days=7   (no key needed locally)
 ```
 

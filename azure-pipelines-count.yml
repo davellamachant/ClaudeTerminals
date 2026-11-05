@@ -1,5 +1,5 @@
 # Builds, tests and deploys the opt-in user count's service (server/Count, an Azure Function app on Flex
-# Consumption) with its storage (server/count.bicep). Copies of the app that have said yes ping it once a day; see
+# Consumption) with its storage (server/count.bicep). Copies of the app that have said yes ping it once an hour; see
 # server/README.md for what it keeps and how to read the numbers.
 #
 # Run by hand (Run pipeline) on main after changing server/. Untick "Deploy" for a run that only builds and tests.
