@@ -31,7 +31,7 @@ Directory.CreateDirectory(output);
 
 const string Name = "llamatree";
 const string Maintainer = "LLAMACHANT TECHNOLOGY LTD <support@llamachant.com>";
-const string Homepage = "https://www.llamatree.dev";
+const string Homepage = "https://llamatree.dev";
 const string Summary = "Many Claude Code and Codex sessions in one window, with Visual Studio-style Git views";
 const string Description = """
     LlamaTree runs many local Claude Code and Codex sessions side by side, each in a real terminal,
