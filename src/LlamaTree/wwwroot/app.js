@@ -76,6 +76,7 @@ const PATHS = {
   pr: 'M4 4.5a1.5 1.5 0 1 0 0-.01M4 6v4.5M4 13a1.5 1.5 0 1 0 0-.01M12 13a1.5 1.5 0 1 0 0-.01M12 11.5V6.5A2 2 0 0 0 10 4.5H7M8.5 3 7 4.5 8.5 6',
   checkOn: 'M2.5 2.5h11v11h-11zM5 8.2l2 2 4-4.4',
   checkOff: 'M2.5 2.5h11v11h-11z',
+  pin: 'M5.5 2h5M6.5 2v4.2L4.5 9h7l-2-2.8V2M8 9v5',   // a pushpin: a project tab kept on the row
   chat: 'M2.5 3h11v7.5H7.5l-3 2.5v-2.5h-2z',
   bulb: 'M6 12.5h4M6.5 14.5h3M8 1.5a4.5 4.5 0 0 0-2.6 8.2c.4.3.6.7.6 1.2v.6h4v-.6c0-.5.2-.9.6-1.2A4.5 4.5 0 0 0 8 1.5z',
   gift: 'M2.5 6h11v2.5h-11zM3.5 8.5h9v6h-9zM8 6v8.5M8 6C6.5 3 4 3.5 4.5 5c.3.8 2 1 3.5 1zM8 6c1.5-3 4-2.5 3.5-1-.3.8-2 1-3.5 1z',
@@ -278,6 +279,10 @@ const state = {
   navLayout: ['hybrid', 'left'].includes(store.get('navLayout')) ? store.get('navLayout') : 'top',
   navWidth: store.get('navWidth', 230),
   navBranches: store.get('navBranches', true),   // each session's branch beneath its name, down the left
+  // In the Top layout, projects as tabs (a click shows only that project) rather than as filters to tick.
+  projectTabs: store.get('projectTabs', false),
+  // Projects (and Unknown) taken off the tab row into its ▾ list. Unpinned rather than pinned, so new projects start pinned.
+  unpinnedProjects: new Set(store.get('unpinnedProjects', [])),
 };
 
 // ------------------------------------------------------------------ projects: which sessions are visible
@@ -349,7 +354,7 @@ function applyProjectFilter(instant = false) {
   $('#empty').hidden = shown.length > 0;
   $('#empty .empty-title').textContent = anySessions ? 'No sessions in the selected projects' : 'No sessions yet';
   $('#empty .empty-sub').textContent = anySessions
-    ? `Tick a project ${state.navLayout === 'top' ? 'above' : 'on the left'} (Unknown holds sessions with no project), or choose All.`
+    ? `${tabbedProjects() ? 'Pick' : 'Tick'} a project ${state.navLayout === 'top' ? 'above' : 'on the left'} (Unknown holds sessions with no project), or choose All.`
     : 'Add a session for each worktree you want Claude to work in.';
   layout(instant);
   for (const s of state.sessions) renderTileHeader(s);
@@ -392,16 +397,151 @@ function hideAllProjects() {
  */
 function renderProjectBar() {
   const bar = $('#projectTabs');   // the grid button sits before it in the same row and is left alone
+  $('#projectBar').classList.toggle('tabbed', tabbedProjects());   // tabs sit on the row's bottom edge (see app.css)
   if (state.navLayout !== 'top') { bar.replaceChildren(); renderNav(); return; }   // the projects are on the left
   const groups = projectGroups();
   fill(bar,
     h('span', { class: 'project-bar-label' }, 'Projects'),
-    groups.map((p) => projectTab(p)),
-    projectAllButtons(groups),
+    tabbedProjects() ? projectTabRow(groups) : [...groups.map((p) => projectTab(p)), ...projectAllButtons(groups)],
     projectAddButton(),
   );
   syncStatus(bar);
 }
+
+// ------------------------------------------------------------------ projects as tabs (Top layout)
+
+/** Projects shown as tabs rather than filters: an option of the Top layout only, and only once there are projects. */
+const tabbedProjects = () => state.projectTabs && state.navLayout === 'top' && state.projects.length > 0;
+const isPinned = (id) => !state.unpinnedProjects.has(id);
+const groupMembers = (id) => state.sessions.filter((s) => groupOf(s) === id);
+const allProjectsShown = () => allGroups().every((g) => !state.hiddenProjects.has(g));
+/** The one project shown on its own, or null when several (or none, or all) are. */
+function onlyShownProject() {
+  const shown = allGroups().filter((g) => !state.hiddenProjects.has(g));
+  return shown.length === 1 ? shown[0] : null;
+}
+
+/**
+ * The project row as tabs: All, then the pinned projects, then any unpinned project that's being shown (a preview tab
+ * with its pin showing, as Visual Studio's), then a ▾ listing the projects that aren't pinned.
+ */
+function projectTabRow(groups) {
+  const unpinned = groups.filter((g) => !isPinned(g.id));
+  return [
+    h('button', { class: 'project-all' + (allProjectsShown() ? ' active' : ''), title: 'Show every project, Unknown included', onclick: showAllProjects }, 'All'),
+    ...groups.filter((g) => isPinned(g.id) || (!state.hiddenProjects.has(g.id) && !allProjectsShown())).map((g) => projectTabbed(g)),
+    unpinned.length ? projectMoreButton(unpinned) : null,
+  ];
+}
+
+/**
+ * A project as a tab: a click shows only it (again, all of them), Ctrl+click shows or hides it alongside the others.
+ * It's active while shown, unless every project is (then All is). Its pin takes it off the row, or puts it back.
+ */
+function projectTabbed(p) {
+  const members = groupMembers(p.id);
+  const waiting = members.filter(waitingForYou).length;
+  const active = !state.hiddenProjects.has(p.id) && !allProjectsShown();
+  const only = onlyShownProject() === p.id;
+  const pinned = isPinned(p.id);
+  const what = p.unknown ? 'sessions with no project' : p.name;
+  return h('div', {
+    class: 'project-tab tabbed' + (active ? ' shown' : '') + (p.unknown ? ' unknown' : '') + (pinned ? '' : ' preview'),
+    style: p.unknown ? null : `--proj:${projectColor(p)}`,
+    'data-id': p.id,
+    oncontextmenu: (e) => { e.preventDefault(); projectMenu(p, e.clientX, e.clientY); },
+  },
+  h('button', {
+    class: 'project-name',
+    title: `${only ? 'Back to every project' : `Show only ${what}`} · Ctrl+click to ${active ? 'hide it, keeping' : 'show it alongside'} the others\n` +
+      `${members.length} session${members.length === 1 ? '' : 's'} · right-click for options`,
+    onclick: (e) => (e.ctrlKey ? toggleProject(p.id) : only ? showAllProjects() : showOnlyProject(p.id)),
+  }, h('span', { class: 'project-label' }, p.name),
+  projectDot(members),
+  waiting ? h('span', { class: 'badge', title: `${waiting} session${waiting === 1 ? '' : 's'} waiting for you` }, String(waiting)) : null),
+  h('button', {
+    class: 'project-pin' + (pinned ? '' : ' unpinned'),
+    title: pinned ? 'Unpin: move it to the ▾ list after the tabs' : 'Pin: keep this tab on the row',
+    onclick: () => setPinned(p.id, !pinned),
+  }, iconEl('pin')));
+}
+
+/** The ▾ after the tabs: the projects that aren't pinned, with a dot and a count if any of their sessions want you. */
+function projectMoreButton(unpinned) {
+  return h('button', {
+    class: 'project-more', 'aria-haspopup': 'menu',
+    title: `${unpinned.length} more project${unpinned.length === 1 ? '' : 's'}, not pinned`,
+    onclick: (e) => { const r = e.currentTarget.getBoundingClientRect(); projectMoreMenu(r.left, r.bottom + 2); },
+  }, iconEl('chevD'), projectMoreIndicators(unpinned));
+}
+
+function projectMoreIndicators(unpinned) {
+  const members = unpinned.flatMap((g) => groupMembers(g.id));
+  const waiting = members.filter(waitingForYou).length;
+  return [projectDot(members), waiting ? h('span', { class: 'badge', title: `${waiting} session${waiting === 1 ? '' : 's'} waiting for you` }, String(waiting)) : null];
+}
+
+/** Refreshes the ▾'s dot and count in place, as updateProjectIndicators does a tab's. */
+function updateProjectMoreIndicators() {
+  const more = document.querySelector('#projectTabs .project-more');
+  if (!more) return;
+  const want = projectMoreIndicators(projectGroups().filter((g) => !isPinned(g.id)));
+  // A dot in the same state stays, so its animation isn't restarted on every update.
+  const dot = more.querySelector('.dot');
+  if (!want[0]) dot?.remove();
+  else if (dot?.className !== want[0].className) { dot?.remove(); more.append(want[0]); syncStatus(more); }
+  more.querySelector('.badge')?.remove();
+  if (want[1]) more.append(want[1]);
+}
+
+function projectMoreMenu(x, y) {
+  const groups = projectGroups(), only = onlyShownProject();
+  const onlyGroup = only && !isPinned(only) ? groups.find((g) => g.id === only) : null;
+  showMenu(x, y, [
+    { header: 'Not pinned' },
+    ...groups.filter((g) => !isPinned(g.id)).map((g) => {
+      const waiting = groupMembers(g.id).filter(waitingForYou).length;
+      return {
+        icon: h('span', { class: 'accent-dot', style: `background:${g.unknown ? 'var(--text-faint)' : projectColor(g)}` }),
+        checked: only === g.id || undefined,
+        label: g.name,
+        kbd: waiting ? `${waiting} waiting` : '',
+        action: () => showOnlyProject(g.id),
+      };
+    }),
+    '-',
+    onlyGroup && { icon: 'pin', label: `Pin ${onlyGroup.name}`, action: () => setPinned(onlyGroup.id, true) },
+    { icon: 'pin', label: 'Pin them all', action: pinAllProjects },
+  ]);
+}
+
+function saveUnpinnedProjects() {
+  store.set('unpinnedProjects', [...state.unpinnedProjects]);
+}
+
+function setPinned(id, pinned) {
+  if (pinned) state.unpinnedProjects.delete(id);
+  else state.unpinnedProjects.add(id);
+  saveUnpinnedProjects();
+  renderProjectBar();
+}
+
+function pinAllProjects() {
+  state.unpinnedProjects.clear();
+  saveUnpinnedProjects();
+  renderProjectBar();
+}
+
+function setProjectTabs(on) {
+  state.projectTabs = on;
+  store.set('projectTabs', on);
+  applyProjectFilter();   // the bar, and the empty grid's hint
+}
+
+/** Pin or Unpin, for a project's right-click menu while projects are tabs. */
+const pinMenuItems = (id) => (!tabbedProjects() ? [] : [isPinned(id)
+  ? { label: 'Unpin (move to the ▾ list)', action: () => setPinned(id, false) }
+  : { label: 'Pin (keep it on the tab row)', action: () => setPinned(id, true) }]);
 
 /** The groups the projects bar lists: the projects, then Unknown. With no projects there is nothing to toggle, so none. */
 const projectGroups = () => (state.projects.length ? [...state.projects, { id: UNKNOWN, name: UNKNOWN_NAME, unknown: true }] : []);
@@ -490,6 +630,7 @@ function projectMenu(p, x, y) {
       '-',
       { label: 'Show only sessions with no project', action: () => showOnlyProject(UNKNOWN) },
       { label: state.hiddenProjects.has(UNKNOWN) ? 'Show alongside the others' : 'Hide', action: () => toggleProject(UNKNOWN) },
+      ...pinMenuItems(UNKNOWN),
       ...pluginMenuItems('project', { project: null }, NO_PROJECT),
     ]);
     return;
@@ -501,6 +642,7 @@ function projectMenu(p, x, y) {
     '-',
     { label: 'Show only this project', action: () => showOnlyProject(p.id) },
     { label: state.hiddenProjects.has(p.id) ? 'Show alongside the others' : 'Hide', action: () => toggleProject(p.id) },
+    ...pinMenuItems(p.id),
     '-',
     { label: 'Edit project (name, colour)…', action: () => showEditProjectDialog(p) },
     i > 0 && { label: across ? 'Move left' : 'Move up', action: () => moveProject(p, -1) },
@@ -1058,6 +1200,8 @@ function syncSessions(list, projects) {
   const known = new Set([...projects.map((p) => p.id), UNKNOWN]);
   for (const id of [...state.hiddenProjects]) if (!known.has(id)) state.hiddenProjects.delete(id);
   saveHiddenProjects();
+  for (const id of [...state.unpinnedProjects]) if (!known.has(id)) state.unpinnedProjects.delete(id);
+  saveUnpinnedProjects();
 
   const seen = new Set();
   const stopped = [];
@@ -1496,6 +1640,7 @@ function projectDot(members) {
 
 /** Refreshes one project tab's dot and waiting badge in place (rebuilding the bar would drop keyboard focus). */
 function updateProjectIndicators(projectId) {
+  if (tabbedProjects() && !isPinned(projectId)) updateProjectMoreIndicators();
   const name = document.querySelector(`.project-tab[data-id="${projectId}"] .project-name`);
   if (!name) return;
   const members = state.sessions.filter((x) => groupOf(x) === projectId);
@@ -8328,6 +8473,9 @@ const navLayoutItems = () => [
   { header: 'Layout' },
   ...NAV_LAYOUTS.map((l) => ({ label: l.label, checked: state.navLayout === l.id, action: () => setNavLayout(l.id) })),
   // With the sessions down the left, their branches can go (a row each, rather than two).
+  // Across the top, projects can be tabs (a click shows only that one) rather than filters to tick.
+  state.navLayout === 'top' && '-',
+  state.navLayout === 'top' && { label: 'Projects as tabs', checked: state.projectTabs, action: () => setProjectTabs(!state.projectTabs) },
   state.navLayout === 'left' && '-',
   state.navLayout === 'left' && { label: 'Show branches', checked: state.navBranches, action: () => setNavBranches(!state.navBranches) },
 ].filter(Boolean);
