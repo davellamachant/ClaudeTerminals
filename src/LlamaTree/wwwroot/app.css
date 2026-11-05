@@ -661,6 +661,8 @@ textarea.commit-msg { resize: vertical; min-height: 54px; height: 54px; user-sel
 }
 .infobar.error { background: var(--error-bg); border-color: var(--error-border); }
 .infobar .msg { flex: 1; }
+.trust-bar { align-items: center; }
+.trust-bar .btn { flex: none; }
 
 .git-scroll { flex: 1; overflow: auto; padding-bottom: 12px; min-height: 0; }
 .git-message { padding: 16px 12px; color: var(--text-dim); }

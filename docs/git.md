@@ -49,6 +49,19 @@ Click the branch name on the Git toolbar, or in Git Changes' status bar, for the
 - **Switching with uncommitted changes** asks first: bring the changes with you, or stash them and continue. If the switch fails, the stash is put back.
 - **The status bar** under Git Changes shows the outgoing and incoming counts (click for Git Repository), the number of changed files and the branch.
 
+## Repositories that can run programs
+
+A repository's own settings (its `.git/config`, a file that config includes, a submodule's config, its hooks) can tell git to run a program: a filter, an ssh command, a credential helper, a hook. LlamaTree runs git by itself, on start and every few seconds, so a folder you copied or unpacked could otherwise run something you never looked at. Your own global and system git settings always apply as usual.
+
+When a repository has settings like these, Git Changes asks above the file list: *This repository's own settings can run programs: filter.lfs.clean, hook pre-commit. Trust it?* Hover over the question to see each setting and its value.
+
+- **Trust** lets them apply again, in every worktree of that repository. LlamaTree remembers it.
+- **Not now** keeps them off. LlamaTree turns off the repository's filters for its own git calls (Git LFS files may then show as changed), and won't fetch, pull, push, commit, stage, undo, switch branches or add a worktree there. If you ask for one of those, the question shows again.
+- If the settings change (one is added, or a value or hook changes), you're asked again.
+- To take trust back, open the ⋯ menu on the Git toolbar › *Stop Trusting This Repository's Settings*.
+
+Repositories without such settings, such as a plain clone, never ask.
+
 ## Git Repository
 
 Outgoing commits and history, with each commit's files. Click a file for that commit's diff.
