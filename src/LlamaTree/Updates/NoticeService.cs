@@ -1,7 +1,4 @@
 using System.Net.Http.Headers;
-using System.Security.Cryptography;
-using System.Security.Cryptography.Pkcs;
-using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -46,7 +43,7 @@ internal static partial class NoticeService
     {
         var json = GetAsync(FeedUrl, ct);
         var signature = GetAsync(FeedUrl + ".p7s", ct);
-        if (await json is not { } content || await signature is not { } sig || !Verify(content, sig)) return [];
+        if (await json is not { } content || await signature is not { } sig || !Publisher.VerifyDetached(content, sig)) return [];
         return Parse(System.Text.Encoding.UTF8.GetString(content), UpdateService.CurrentVersion, DateTime.UtcNow);
     }
 
@@ -56,60 +53,6 @@ internal static partial class NoticeService
         if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return null;
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadAsByteArrayAsync(ct);
-    }
-
-    /// <summary>Who signs the notices: the company named in our code signing certificate, as on the installer.</summary>
-    internal const string Publisher = "Llamachant Technology Ltd";
-
-    private const string CodeSigning = "1.3.6.1.5.5.7.3.3";
-    private const string Organization = "2.5.4.10";
-
-    /// <summary>
-    /// Whether <paramref name="signature"/> (a detached CMS signature, notices.json.p7s) is <see cref="Publisher"/>'s
-    /// over exactly <paramref name="json"/>: the signature checks out, and the certificate is for code signing, issued
-    /// to that organisation and chains to a root Windows trusts (or one of <paramref name="trustedRoots"/>, for tests).
-    /// It's judged as of when it was signed, so the notices don't vanish when the certificate expires.
-    /// </summary>
-    internal static bool Verify(byte[] json, byte[] signature, X509Certificate2Collection? trustedRoots = null)
-    {
-        try
-        {
-            var cms = new SignedCms(new ContentInfo(json), detached: true);
-            cms.Decode(signature);
-            if (cms.SignerInfos.Count != 1 || cms.SignerInfos[0] is not { Certificate: { } certificate } signer) return false;
-            signer.CheckSignature(verifySignatureOnly: true);   // the content's digest and the signature over it
-
-            if (!certificate.SubjectName.EnumerateRelativeDistinguishedNames().Any(n =>
-                    n.GetSingleElementType().Value == Organization && n.GetSingleElementValue() == Publisher))
-                return false;
-
-            var signed = signer.SignedAttributes.Cast<CryptographicAttributeObject>().SelectMany(a => a.Values.Cast<AsnEncodedData>())
-                .OfType<Pkcs9SigningTime>().Select(t => (DateTime?)t.SigningTime.ToUniversalTime()).FirstOrDefault();
-            if (signed > DateTime.UtcNow.AddDays(1)) return false;   // from the future
-
-            using var chain = new X509Chain();
-            var policy = chain.ChainPolicy;
-            policy.ApplicationPolicy.Add(new Oid(CodeSigning));
-            policy.ExtraStore.AddRange(cms.Certificates);
-            policy.VerificationTime = (signed ?? DateTime.UtcNow).ToLocalTime();
-            if (trustedRoots != null)
-            {
-                policy.TrustMode = X509ChainTrustMode.CustomRootTrust;
-                policy.CustomTrustStore.AddRange(trustedRoots);
-                policy.RevocationMode = X509RevocationMode.NoCheck;
-            }
-            else
-            {
-                // A revoked certificate is refused; one whose status can't be fetched (offline) isn't held against it.
-                policy.RevocationMode = X509RevocationMode.Online;
-                policy.VerificationFlags = X509VerificationFlags.IgnoreEndRevocationUnknown | X509VerificationFlags.IgnoreCertificateAuthorityRevocationUnknown;
-            }
-            return chain.Build(certificate);
-        }
-        catch (CryptographicException)
-        {
-            return false;
-        }
     }
 
     [GeneratedRegex(@"^[a-z0-9][a-z0-9._-]{0,63}$")]

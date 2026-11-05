@@ -2,9 +2,9 @@
 #
 #   powershell -c "irm https://github.com/LlamachantTechnology/LlamaTree/releases/latest/download/install.ps1 | iex"
 #
-# Downloads LlamaTree-Setup-<version>.exe, checks it against the SHA-256 GitHub publishes for it (as the in-app
-# updater does), and runs it silently. Setup installs for this user only, with no admin, to
-# %LOCALAPPDATA%\Programs\LlamaTree, or upgrades the copy there is.
+# Downloads LlamaTree-Setup-<version>.exe, checks it against the SHA-256 GitHub publishes for it (the in-app
+# updater checks more: the release's signed SHA256SUMS and the installer's own signature), and runs it silently.
+# Setup installs for this user only, with no admin, to %LOCALAPPDATA%\Programs\LlamaTree, or upgrades the copy there is.
 #
 #   $env:LLAMATREE_UPDATE_URL   a stand-in for the GitHub API's latest release, for tests (downloads may then be local)
 #

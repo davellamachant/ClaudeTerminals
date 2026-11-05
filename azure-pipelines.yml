@@ -101,6 +101,32 @@ steps:
   - powershell: Copy-Item "artifacts/LlamaTree-Setup-$(AppVersion).exe" "artifacts/ClaudeTerminals-Setup-$(AppVersion).exe"
     displayName: 'Copy the installer under its old name'
 
+  # SHA256SUMS lists every file the release carries, and SHA256SUMS.p7s is its signature by the same certificate (on
+  # the token, so it never leaves this agent). The app installs an update only when the download matches its line
+  # there and the signature is ours, so a release changed on GitHub afterwards, with a stolen token, isn't installed.
+  # Keep this list and the release's assets below the same.
+  - task: PowerShell@2
+    displayName: 'Sign the checksums'
+    inputs:
+      pwsh: false
+      targetType: inline
+      script: |
+        dotnet run tools/sign-checksums.cs -- artifacts/checksums `
+          "artifacts/LlamaTree-Setup-$(AppVersion).exe" `
+          "artifacts/ClaudeTerminals-Setup-$(AppVersion).exe" `
+          "artifacts/linux/llamatree_$(AppVersion)_amd64.deb" `
+          "artifacts/linux/llamatree-$(AppVersion)-1.x86_64.rpm" `
+          "artifacts/linux/LlamaTree-$(AppVersion)-linux-x64.tar.gz" `
+          tools/install/install.ps1 `
+          tools/install/install.sh
+        if ($LASTEXITCODE) { throw 'Signing the checksums failed.' }
+
+  - task: PublishPipelineArtifact@1
+    displayName: 'Keep the signed checksums on the run'
+    inputs:
+      targetPath: 'artifacts/checksums'
+      artifact: 'checksums'
+
   - task: PublishPipelineArtifact@1
     displayName: 'Keep the signed installer on the run'
     inputs:
@@ -137,5 +163,7 @@ steps:
           artifacts/linux/LlamaTree-$(AppVersion)-linux-x64.tar.gz
           tools/install/install.ps1
           tools/install/install.sh
+          artifacts/checksums/SHA256SUMS
+          artifacts/checksums/SHA256SUMS.p7s
         isDraft: true
         addChangeLog: false

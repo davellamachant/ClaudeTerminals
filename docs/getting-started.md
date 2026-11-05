@@ -97,7 +97,7 @@ Plain <kbd>Esc</kbd> always goes to the terminal, because Claude Code uses it to
 
 A few seconds after starting, and every 15 minutes, LlamaTree checks the latest GitHub release (an anonymous request; nothing about you or your sessions is sent). When there's a newer version, an **Update to x.y.z** button appears in the title bar, showing what's new.
 
-*Update and restart* downloads the new version, checks it against the SHA-256 GitHub publishes for it (it won't run a file that doesn't match), closes the app, installs it and reopens it. Running sessions carry on in the conversations they were in.
+*Update and restart* downloads the new version, checks it against the checksum signed for the release with our code signing certificate and, on Windows, checks that the installer itself is signed by Llamachant Technology Ltd (it won't run a file that fails either), closes the app, installs it and reopens it. Running sessions carry on in the conversations they were in.
 
 - **Windows:** the installer runs silently.
 - **Linux, from a package:** the `.deb` or `.rpm` you installed from is downloaded and checked the same way, then installed with apt, dnf or zypper behind your desktop's administrator password prompt. A cancelled prompt leaves things as they were.
