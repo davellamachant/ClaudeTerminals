@@ -6194,7 +6194,8 @@ const notices = { list: [], shown: null, waiting: false, dismissed: new Set(stor
 // answered either way, and offers the switch in the version menu.
 
 const count = { enabled: undefined };   // undefined: not read yet; null: not asked yet; true or false: your answer
-const COUNT_SENT = "Everything it sends is anonymous: nothing in it says who you are, and nothing can be traced back to you. Once an hour while it's open, the app makes one request to api.llamatree.dev that says six things: a random id made when you said yes (so a copy counts once, however often it asks), the app's version, the operating system and its version, and how many projects and sessions are open. Only how many: never their names, their folders or anything in them, and nothing about you. We don't keep your IP address, your user agent or anything else about the request. Saying no, or turning it off later, throws the id away.";
+const COUNT_SENT = "Once an hour while it's open, the app makes one request to api.llamatree.dev that says six things: a random id made when you said yes, the app's version, the operating system and its version, and how many projects and sessions are open. Only how many: never their names, their folders or anything in them, and nothing that says who you are. The id stays the same from one request to the next (that's how a copy counts once), so the count shows which hours this copy was open; like any server, ours also sees the IP address each request comes from. We keep the id and those numbers by the hour for 400 days, and not the IP address, the user agent or anything else about the request. Turning it off throws the id away here, so turning it on again starts over with a new one.";
+const PRIVACY_URL = 'https://github.com/LlamachantTechnology/LlamaTree/blob/main/docs/privacy.md#counting-users';
 
 async function loadCount() {
   try { count.enabled = (await request('count.state')).enabled; } catch { count.enabled = false; }
@@ -6211,6 +6212,7 @@ function showCountDialog() {
   openModal('Counting users', [
     h('div', {}, "We'd like to know how many people use LlamaTree, on which versions and systems, and how much, and we don't want to know anything else."),
     h('div', {}, COUNT_SENT),
+    h('div', {}, h('a', { href: '#', onclick: (e) => { e.preventDefault(); request('openUrl', { uri: PRIVACY_URL }); } }, 'Privacy and network, in full')),
   ], [
     h('label', { class: 'check-field' }, h('input', { type: 'checkbox', checked: count.enabled === true, onchange: (e) => setCount(e.target.checked) }), 'Count me among the users'),
     h('div', { class: 'spacer' }),
@@ -6226,7 +6228,7 @@ function renderCountAsk(bar) {
   bar.style.setProperty('--notice', '');
   bar.replaceChildren(
     h('span', { class: 'notice-kind' }, iconEl('info'), 'A question'),
-    h('span', { class: 'notice-text' }, "May we count you? Everything it would send is anonymous: once an hour, one request with the app's version, your operating system and how many projects and sessions are open. Just the numbers, never their names or what's in them, and nothing that says who you are. ",
+    h('span', { class: 'notice-text' }, "May we count you? Once an hour, one request with a random id that stays the same, the app's version, your operating system and how many projects and sessions are open. Never their names or what's in them. With the IP address the request comes from, that shows when this copy is running (we don't keep the address). ",
       h('a', { class: 'notice-inline-link', href: '#', onclick: (e) => { e.preventDefault(); showCountDialog(); } }, 'What it sends')),
     h('span', { class: 'notice-actions' },
       h('button', { class: 'btn primary', onclick: () => setCount(true) }, 'Yes, count me'),

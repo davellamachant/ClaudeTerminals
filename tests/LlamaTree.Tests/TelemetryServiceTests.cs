@@ -42,6 +42,7 @@ public sealed class TelemetryServiceTests : IDisposable
         Assert.Null(no.LastSent);
         Assert.False(TelemetryService.IsDue(no, Now));
         Assert.Equal(no, TelemetryService.Load(folder));
+        Assert.DoesNotContain(first.Id!, File.ReadAllText(Path.Combine(folder, TelemetryService.FileName)));   // gone from disk, not just ignored
 
         var again = TelemetryService.SetEnabled(true, folder);
         Assert.NotEqual(first.Id, again.Id);
