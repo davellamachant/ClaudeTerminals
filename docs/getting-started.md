@@ -23,7 +23,7 @@ Run this in PowerShell:
 powershell -c "irm https://github.com/LlamachantTechnology/LlamaTree/releases/latest/download/install.ps1 | iex"
 ```
 
-It downloads the latest installer, checks it against the SHA-256 GitHub publishes for it, and installs it silently for your account. No administrator rights are needed. The script is in [tools/install](https://github.com/LlamachantTechnology/LlamaTree/tree/main/tools/install) if you'd like to read it first.
+It downloads the latest installer, checks that it's ours (it must match the release's checksums signed with our code signing certificate, and carry our own signature, *Llamachant Technology Ltd*), and installs it silently for your account. No administrator rights are needed. The script is in [tools/install](https://github.com/LlamachantTechnology/LlamaTree/tree/main/tools/install) if you'd like to read it first.
 
 Or download `LlamaTree-Setup-<version>.exe` from the [latest release](https://github.com/LlamachantTechnology/LlamaTree/releases/latest) and run it. It also installs for your account only, and later versions install themselves from inside the app (see [Updates](#updates)).
 
@@ -37,7 +37,7 @@ LlamaTree needs the WebView2 runtime. It's built into Windows 11, and setup offe
 curl -fsSL https://github.com/LlamachantTechnology/LlamaTree/releases/latest/download/install.sh | sh
 ```
 
-It downloads the latest release and checks it against the SHA-256 GitHub publishes for it. When there's apt, dnf or zypper and you can use sudo, it installs the `.deb` or `.rpm` (it asks for your password), so WebKitGTK and libnotify come with it. Otherwise it unpacks the `.tar.gz` into `~/.local/share/LlamaTree`, with a `llamatree` command in `~/.local/bin` and a menu entry, for your account only. To choose that anyway, set `LLAMATREE_INSTALL=tar`:
+It downloads the latest release and checks that it's ours: it must match the release's checksums, signed with our code signing certificate, which the script checks with `openssl` (installed on most systems; without it the script stops and says so). When there's apt, dnf or zypper and you can use sudo, it installs the `.deb` or `.rpm` (it asks for your password), so WebKitGTK and libnotify come with it. Otherwise it unpacks the `.tar.gz` into `~/.local/share/LlamaTree`, with a `llamatree` command in `~/.local/bin` and a menu entry, for your account only. To choose that anyway, set `LLAMATREE_INSTALL=tar`:
 
 ```sh
 curl -fsSL https://github.com/LlamachantTechnology/LlamaTree/releases/latest/download/install.sh | LLAMATREE_INSTALL=tar sh
