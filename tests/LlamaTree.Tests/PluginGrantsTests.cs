@@ -58,13 +58,71 @@ public class PluginGrantsTests
     }
 
     [Fact]
-    public void AnswersFromBeforeHashesTakeTheCurrentOne()
+    public void AnswersFromBeforeHashesAreAskedAgain()
     {
         var g = new PluginGrants(null);
-        g.Import(new() { ["floor"] = new PluginGrant(["sessions"], [], null, [], null) });
-        Assert.Empty(g.Reconcile([Plugin("floor", "H1")]));
+        g.Import(new() { ["floor"] = new PluginGrant(["sessions"], ["message"], ["billing"], ["s1"], null) });
+        Assert.Equal(["floor"], g.Reconcile([Plugin("floor", "H1")]));
+        Assert.Equal("ask", g.State("floor", "sessions"));
+        var kept = g.Snapshot()["floor"];
+        Assert.True(kept.Changed);
+        Assert.Equal(["message"], kept.Denied);   // what it was refused, and what it sees, stay
+        Assert.Equal(["billing"], kept.Projects);
+        Assert.Equal(["s1"], kept.Hidden);
+
+        g.Set("floor", "sessions", "allow", "H1");
         Assert.Equal("allow", g.State("floor", "sessions"));
+        Assert.Equal("H1", g.Snapshot()["floor"].Manifest);
+        Assert.Empty(g.Reconcile([Plugin("floor", "H1")]));
         Assert.Equal(["floor"], g.Reconcile([Plugin("floor", "H2")]));
+    }
+
+    [Fact]
+    public void AnswersFromBeforeHashesOnDiskAreAskedAgain()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "lt-grants-" + Guid.NewGuid().ToString("N"));
+        var path = Path.Combine(dir, "plugin-grants.json");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            File.WriteAllText(path, """{ "floor": { "allowed": ["sessions"], "denied": [], "projects": null, "hidden": [] } }""");
+            var g = new PluginGrants(path);
+            Assert.Equal("ask", g.State("floor", "sessions"));   // not allowed even before it's checked against the plugin
+            Assert.Empty(g.Allowed("floor"));
+            Assert.Equal(["floor"], g.Reconcile([Plugin("floor", "H1")]));
+            Assert.Equal("ask", new PluginGrants(path).State("floor", "sessions"));
+            Assert.True(new PluginGrants(path).Snapshot()["floor"].Changed);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public void AGrantGoesByThePluginJsonThereNow()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"grants-{Guid.NewGuid():N}.json");
+        try
+        {
+            var before = new PluginGrants(path);
+            before.Set("dash", "message", "allow", "H1");
+            before.Set("old", "message", "deny", null);
+            var g = new PluginGrants(path);
+            Assert.Equal("allow", g.State("dash", "message"));   // it remembers a plugin.json, and none has been read to say otherwise
+
+            // Once the plugins are read, a plugin not among them (a server's, not yet listed) is allowed nothing.
+            var session = new RelayPeer("s1", "api", null, null, "Claude", true);
+            var dash = new RelayPeer("plugin:dash", "Dash", null, null, "Plugin", true, true);
+            g.Reconcile([Plugin("other", "H9")]);
+            Assert.Equal("ask", g.State("dash", "message"));
+            Assert.Equal(RelayDecision.Deny, g.RelayGate(dash, session, isReply: false));
+            Assert.Empty(g.Allowed("dash"));
+            Assert.Equal("deny", g.State("old", "message"));   // what you refused stays refused
+            Assert.Equal(["message"], g.Snapshot()["dash"].Allowed);   // and the answer is kept for when it's listed
+
+            g.Reconcile([Plugin("dash", "H1")]);
+            Assert.Equal("allow", g.State("dash", "message"));
+            Assert.Equal(RelayDecision.Allow, g.RelayGate(dash, session, isReply: false));
+        }
+        finally { File.Delete(path); }
     }
 
     [Fact]

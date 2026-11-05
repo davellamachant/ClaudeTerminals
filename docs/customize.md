@@ -202,7 +202,7 @@ The most specific rule decides: one for that very session, then the session's ru
 
 **Reset.** A plugin's card in By plugin has **Reset** once you've answered anything about it: it forgets what it may do, its projects and the sessions hidden from it, so it asks again. A session's card in By session has **Reset** once it has rules of its own: they're cleared, and All sessions' rules decide.
 
-**Where your answers are kept.** Your answers about plugins (what each may do, its projects, the sessions you hid) are kept in `plugin-grants.json` next to `sessions.json`, where both the page and the message relay read them. Each answer that allows something remembers the plugin's `plugin.json`: if that file changes, what you allowed is asked again, and Permissions marks the plugin **Changed since you allowed it**.
+**Where your answers are kept.** Your answers about plugins (what each may do, its projects, the sessions you hid) are kept in `plugin-grants.json` next to `sessions.json`, where both the page and the message relay read them. Each answer that allows something remembers the plugin's `plugin.json`: if that file changes, what you allowed is asked again, and Permissions marks the plugin **Changed since you allowed it**. Access you allowed in a version that didn't yet remember `plugin.json` is asked again the same way, once, since there's no telling whether the plugin's files were swapped since; what you refused it, its projects and the sessions you hid from it are kept. Answers are checked against the plugins folder when LlamaTree starts, before any message goes by them; a server's plugin is allowed nothing until LlamaTree has read it from its server.
 
 ### What a plugin can't do
 
