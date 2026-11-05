@@ -102,6 +102,36 @@ public sealed class UnixCommandLineTests : IDisposable
         Assert.DoesNotContain(tree, Alive);
     }
 
+    /// <summary>
+    /// Both sides of the terminal this process holds are close-on-exec (opened with O_CLOEXEC), so a program another
+    /// thread starts never inherits them. Linux, where /proc/self/fdinfo shows each descriptor's flags.
+    /// </summary>
+    [UnixFact]
+    public async Task The_terminal_is_never_inherited_by_other_programs()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        using var p = PtyProcess.Create();
+        var ready = new TaskCompletionSource();
+        p.Output += t => { if (t.Contains("ready")) ready.TrySetResult(); };
+        p.Start("echo ready; sleep 10", top, SessionEnvironment.Build(), 80, 24);
+        await ready.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var terminals = 0;
+        foreach (var fd in Directory.EnumerateFileSystemEntries("/proc/self/fd"))
+        {
+            string? target;
+            try { target = new FileInfo(fd).LinkTarget; }
+            catch (IOException) { continue; }   // closed meanwhile
+            if (target is not ("/dev/ptmx" or "/dev/pts/ptmx") && target?.StartsWith("/dev/pts/") != true) continue;
+            string info;
+            try { info = File.ReadAllText($"/proc/self/fdinfo/{Path.GetFileName(fd)}"); }
+            catch (IOException) { continue; }
+            var flags = Convert.ToInt32(info.Split('\n').First(l => l.StartsWith("flags:"))[6..].Trim(), 8);
+            Assert.True((flags & 0x80000) != 0, $"{target} (fd {Path.GetFileName(fd)}) isn't close-on-exec");
+            terminals++;
+        }
+        Assert.True(terminals >= 2, $"expected the terminal's two sides, found {terminals}");
+    }
+
     private static bool Alive(int pid)
     {
         try

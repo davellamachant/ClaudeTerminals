@@ -29,6 +29,11 @@ internal static class HostBridge
     private static async Task<int> RunAsync()
     {
         var host = await HostEndpoint.ConnectAsync(TimeSpan.FromMilliseconds(300));
+        if (host == null && HostEndpoint.Problem is { } problem)
+        {
+            Console.Error.WriteLine("LlamaTree: " + problem);
+            return 1;
+        }
         // Started again every few seconds while none answers: one still ending (quit to restart on a new version, say)
         // holds its lock a moment, and the one started meanwhile sees it and leaves.
         for (var i = 0; i < 120 && host == null; i++)
