@@ -49,15 +49,25 @@ internal static partial class PullRequestService
     [GeneratedRegex(@"^(?:git@|ssh://git@)ssh\.dev\.azure\.com(?::v3/|/v3/)(?<org>[^/]+)/(?<project>[^/]+)/(?<repo>[^/]+?)/?$", RegexOptions.IgnoreCase)]
     private static partial Regex AzureSshUrl();
 
+    /// <remarks>
+    /// The names end up in credential fill's input, one attribute per line, so one holding a control character (a
+    /// line break, raw or escaped as %0A) is refused outright rather than cleaned up.
+    /// </remarks>
     public static RepoHost? ParseRemote(string url)
     {
         url = url.Trim();
         if (GitHubUrl().Match(url) is { Success: true } g)
-            return new RepoHost("github", "github.com", g.Groups["owner"].Value, "", g.Groups["repo"].Value);
+        {
+            var (owner, repo) = (g.Groups["owner"].Value, g.Groups["repo"].Value);
+            return HasControl(owner, repo) ? null : new RepoHost("github", "github.com", owner, "", repo);
+        }
         foreach (var re in new[] { AzureUrl(), VisualStudioUrl(), AzureSshUrl() })
             if (re.Match(url) is { Success: true } a)
-                return new RepoHost("azure", "dev.azure.com",
-                    Uri.UnescapeDataString(a.Groups["org"].Value), Uri.UnescapeDataString(a.Groups["project"].Value), Uri.UnescapeDataString(a.Groups["repo"].Value));
+            {
+                var (org, project, repo) = (Uri.UnescapeDataString(a.Groups["org"].Value), Uri.UnescapeDataString(a.Groups["project"].Value),
+                    Uri.UnescapeDataString(a.Groups["repo"].Value));
+                return HasControl(org, project, repo) ? null : new RepoHost("azure", "dev.azure.com", org, project, repo);
+            }
         return null;
     }
 
@@ -71,9 +81,9 @@ internal static partial class PullRequestService
     }
 
     /// <summary>The open pull request whose source is <paramref name="branch"/>, or null if there is none or it can't be asked.</summary>
-    public static async Task<PullRequestInfo?> FindAsync(string root, RepoHost host, string branch)
+    public static async Task<PullRequestInfo?> FindAsync(RepoHost host, string branch)
     {
-        var token = await GetTokenAsync(root, host);
+        var token = await GetTokenAsync(host);
         return host.IsGitHub ? await FindOnGitHubAsync(host, branch, token) : await FindOnAzureAsync(host, branch, token);
     }
 
@@ -118,17 +128,36 @@ internal static partial class PullRequestService
         return null;
     }
 
+    internal static readonly string[] CredentialFillArgs = ["-c", "credential.interactive=false", "credential", "fill"];
+
+    internal static readonly IReadOnlyDictionary<string, string?> CredentialEnvironment = new Dictionary<string, string?>
+    {
+        ["GCM_INTERACTIVE"] = "never", ["GIT_TERMINAL_PROMPT"] = "0", ["GIT_ASKPASS"] = "", ["SSH_ASKPASS"] = "",
+    };
+
+    /// <summary>
+    /// What credential fill is asked, one attribute per line; null if a part of the host would break a line (a control
+    /// character, which <see cref="ParseRemote"/> already refuses) and so could add attributes of its own.
+    /// </summary>
+    internal static string? CredentialInput(RepoHost host)
+    {
+        if (HasControl(host.Host, host.Owner, host.Project, host.Repo)) return null;
+        var path = host.IsGitHub ? "" : $"path={host.Owner}/{host.Project}/_git/{host.Repo}\n";
+        return $"protocol=https\nhost={host.Host}\n{path}\n";
+    }
+
+    private static bool HasControl(params string[] parts) => parts.Any(p => p.Any(char.IsControl));
+
     /// <summary>
     /// Asks Git Credential Manager for the stored credential of this host without any sign-in prompt (it fails instead),
-    /// and never stores or rejects anything. Null when there is none.
+    /// and never stores or rejects anything. Null when there is none. This runs without the person doing anything, so
+    /// git runs outside the repository (<see cref="GitService.RunOutsideRepositoryAsync"/>) and reads only their own
+    /// config: a repository's credential.helper can name any command.
     /// </summary>
-    private static async Task<string?> GetTokenAsync(string root, RepoHost host)
+    private static async Task<string?> GetTokenAsync(RepoHost host)
     {
-        var path = host.IsGitHub ? "" : $"path={host.Owner}/{host.Project}/_git/{host.Repo}\n";
-        var input = $"protocol=https\nhost={host.Host}\n{path}\n";
-        var result = await GitService.RunAsync(root, ["-c", "credential.interactive=false", "credential", "fill"], input,
-            environment: new Dictionary<string, string> { ["GCM_INTERACTIVE"] = "never", ["GIT_TERMINAL_PROMPT"] = "0", ["GIT_ASKPASS"] = "", ["SSH_ASKPASS"] = "" },
-            timeout: TimeSpan.FromSeconds(20));
+        if (CredentialInput(host) is not { } input) return null;
+        var result = await GitService.RunOutsideRepositoryAsync(CredentialFillArgs, input, CredentialEnvironment, TimeSpan.FromSeconds(20));
         if (!result.Ok) return null;
         foreach (var line in result.Text.Split('\n'))
             if (line.StartsWith("password=", StringComparison.Ordinal))

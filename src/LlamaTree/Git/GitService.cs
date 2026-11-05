@@ -74,10 +74,10 @@ internal static class GitService
     private const int MaxDiffBytes = 4 * 1024 * 1024;
 
     /// <param name="maxOutputBytes">Stop reading (and end git) once stdout exceeds this; the result is then <see cref="GitResult.Truncated"/>.</param>
-    /// <param name="environment">Extra environment variables for git (e.g. to forbid credential prompts).</param>
+    /// <param name="environment">Extra environment variables for git (e.g. to forbid credential prompts); a null value removes one.</param>
     /// <param name="timeout">Ends git and returns a failed result if it runs longer than this.</param>
     public static async Task<GitResult> RunAsync(string dir, IEnumerable<string> args, string? stdin = null, CancellationToken ct = default,
-        int? maxOutputBytes = null, IReadOnlyDictionary<string, string>? environment = null, TimeSpan? timeout = null)
+        int? maxOutputBytes = null, IReadOnlyDictionary<string, string?>? environment = null, TimeSpan? timeout = null)
     {
         if (timeout is { } limit)
         {
@@ -92,26 +92,7 @@ internal static class GitService
                 return new GitResult(1, [], $"git {args.FirstOrDefault(a => !a.StartsWith('-') && !a.Contains('='))} was stopped after {limit.TotalSeconds:0} s without finishing.");
             }
         }
-        var psi = new ProcessStartInfo("git")
-        {
-            WorkingDirectory = dir,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            RedirectStandardInput = stdin != null,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            StandardErrorEncoding = Encoding.UTF8,
-        };
-        // Commit messages and pathspec lists go through stdin; without this they use the OEM code page.
-        if (stdin != null) psi.StandardInputEncoding = new UTF8Encoding(false);
-        // Don't take index.lock for read-only commands; the Claude sessions are using these repos concurrently.
-        psi.Environment["GIT_OPTIONAL_LOCKS"] = "0";
-        psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
-        if (environment != null)
-            foreach (var (name, value) in environment) psi.Environment[name] = value;
-        foreach (var a in new[] { "-c", "core.quotepath=false", "-c", "color.ui=false", "-c", "core.safecrlf=false" })
-            psi.ArgumentList.Add(a);
-        foreach (var a in args) psi.ArgumentList.Add(a);
+        var psi = CreateStartInfo(dir, args, stdin != null, environment);
 
         using var process = Process.Start(psi) ?? throw new InvalidOperationException("Could not start git");
         void Kill()
@@ -147,6 +128,96 @@ internal static class GitService
         {
             Kill();   // cancelled or failed part-way: don't leave git running (disposing Process doesn't end it)
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Given to every git call, ahead of its own arguments. Most of the app's git commands run by themselves (status on
+    /// start, on every change and every 15 s, in each worktree of the Project view), in folders the person may not have
+    /// looked at yet: an extracted archive, a copied project, a nested repository. A repository's own config can name
+    /// programs for git to run, so the ones these commands could start are turned off: the file system monitor
+    /// (core.fsmonitor runs its command on every status) and the untracked cache that works with it, signature checks
+    /// on log and show (log.showSignature runs gpg.program), and any pager. Diffs the app reads also pass --no-ext-diff
+    /// and --no-textconv, which have no config equivalent. Hooks are left alone: a commit the person makes should run
+    /// theirs, and the read-only commands run none.
+    /// </summary>
+    internal static readonly string[] SafeConfig =
+    [
+        "--no-pager",
+        "-c", "core.quotepath=false", "-c", "color.ui=false", "-c", "core.safecrlf=false",
+        "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-c", "log.showSignature=false",
+    ];
+
+    /// <summary>How <see cref="RunAsync"/> starts git: in <paramref name="dir"/>, with <see cref="SafeConfig"/> before <paramref name="args"/>.</summary>
+    /// <param name="environment">Set on top of this process's own variables; a null value removes that variable.</param>
+    internal static ProcessStartInfo CreateStartInfo(string dir, IEnumerable<string> args, bool redirectStdin = false,
+        IReadOnlyDictionary<string, string?>? environment = null)
+    {
+        var psi = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = dir,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            RedirectStandardInput = redirectStdin,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            StandardErrorEncoding = Encoding.UTF8,
+        };
+        // Commit messages and pathspec lists go through stdin; without this they use the OEM code page.
+        if (redirectStdin) psi.StandardInputEncoding = new UTF8Encoding(false);
+        // Don't take index.lock for read-only commands; the Claude sessions are using these repos concurrently.
+        psi.Environment["GIT_OPTIONAL_LOCKS"] = "0";
+        psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
+        psi.Environment["GIT_PAGER"] = "cat";   // outranks core.pager, should anything still ask for one
+        if (environment != null)
+            foreach (var (name, value) in environment)
+                if (value == null) psi.Environment.Remove(name);
+                else psi.Environment[name] = value;
+        foreach (var a in SafeConfig) psi.ArgumentList.Add(a);
+        foreach (var a in args) psi.ArgumentList.Add(a);
+        return psi;
+    }
+
+    /// <summary>Variables that point git at a repository, or add config, whatever folder it starts in.</summary>
+    internal static readonly string[] RepositoryVariables =
+    [
+        "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_NAMESPACE", "GIT_PREFIX", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT", "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+    ];
+
+    /// <summary>
+    /// The environment for git started in <paramref name="neutralDir"/> so that no repository applies: the variables
+    /// that name one (or add config) are cleared, and git doesn't look above that folder for one. Only the person's
+    /// global and system config are read. <paramref name="extra"/> is applied first, so it can't undo any of that.
+    /// </summary>
+    internal static Dictionary<string, string?> OutsideRepositoryEnvironment(string neutralDir, IReadOnlyDictionary<string, string?>? extra = null)
+    {
+        var env = new Dictionary<string, string?>(extra ?? new Dictionary<string, string?>(), StringComparer.Ordinal);
+        foreach (var name in RepositoryVariables) env[name] = null;
+        foreach (var name in Environment.GetEnvironmentVariables().Keys.OfType<string>())
+            if (name.StartsWith("GIT_CONFIG_KEY_", StringComparison.OrdinalIgnoreCase) || name.StartsWith("GIT_CONFIG_VALUE_", StringComparison.OrdinalIgnoreCase))
+                env[name] = null;
+        env["GIT_CEILING_DIRECTORIES"] = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(Path.GetFullPath(neutralDir))) ?? neutralDir;
+        return env;
+    }
+
+    /// <summary>
+    /// Runs git outside any repository, for a command that must see only the person's own config: credential fill, where
+    /// a repository's credential.helper = !command would otherwise run. It starts in a new empty folder, deleted after.
+    /// </summary>
+    public static async Task<GitResult> RunOutsideRepositoryAsync(IEnumerable<string> args, string? stdin = null,
+        IReadOnlyDictionary<string, string?>? environment = null, TimeSpan? timeout = null, CancellationToken ct = default)
+    {
+        var neutral = Directory.CreateTempSubdirectory("llamatree-git-").FullName;
+        try
+        {
+            return await RunAsync(neutral, args, stdin, ct, environment: OutsideRepositoryEnvironment(neutral, environment), timeout: timeout);
+        }
+        finally
+        {
+            try { Directory.Delete(neutral, recursive: true); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
         }
     }
 
@@ -294,7 +365,7 @@ internal static class GitService
         var parents = f.Length > 4 ? f[4].Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries) : [];
 
         var r = parents.Length > 0
-            ? await RunAsync(dir, ["diff", "--name-status", "-z", "-M", parents[0], sha])
+            ? await RunAsync(dir, ["diff", "--no-ext-diff", "--no-textconv", "--name-status", "-z", "-M", parents[0], sha])
             : await RunAsync(dir, ["diff-tree", "--root", "-r", "-M", "--no-commit-id", "--name-status", "-z", sha]);
 
         var files = new List<FileChange>();
@@ -624,7 +695,7 @@ internal static class GitService
     /// <summary>Reads one side of a diff from git, giving up (and ending git) as soon as it is too large to show.</summary>
     internal static async Task<Blob> ShowAsync(string dir, string spec)
     {
-        var r = await RunAsync(dir, ["show", spec], maxOutputBytes: MaxDiffBytes);
+        var r = await RunAsync(dir, ["show", "--no-textconv", spec], maxOutputBytes: MaxDiffBytes);
         return r.Truncated ? Blob.Large : r.Ok ? new Blob(true, r.Output) : Blob.Empty;
     }
 
