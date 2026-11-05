@@ -5,7 +5,7 @@
   </picture>
 </h1>
 
-*Formerly Claude Terminals.*
+**[www.llamatree.dev](https://www.llamatree.dev)** · *Formerly Claude Terminals.*
 
 One window for many local Claude Code and Codex sessions, with a Visual Studio–style Git Changes / Git Repository view and diff viewer for each session's worktree.
 
