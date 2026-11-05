@@ -8133,7 +8133,7 @@ function applyNavLayout(render = true) {
   const docRow = $('#docTools').parentElement;
   if (left) $('#main').prepend(docRow);
   else $('#stage').prepend(docRow);
-  if (left) $('#docTools').append($('#btnUpdate'), $('#pluginButtons'), $('#btnGit').parentElement, $('#appVersion'), $('#btnTheme'));
+  if (left) $('#docTools').append($('#btnUpdate'), $('#pluginButtons'), $('#appVersion'), $('#btnGit').parentElement, $('#btnTheme'));
   else {
     $('#titlebar').append($('#btnUpdate'), $('#btnAdd'), $('#btnGit').parentElement, $('#pluginButtons'));   // as index.html has them
     const row = top ? $('#projectBar') : $('#titlebar');
