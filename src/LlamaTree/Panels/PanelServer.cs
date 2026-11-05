@@ -31,6 +31,12 @@ internal sealed class PanelServer : IDisposable
 
     public string Url { get; }
 
+    /// <summary>
+    /// Answers a session's tool call somewhere else instead, when it returns a task (see IHostWindow.ForwardToolCall).
+    /// The rest of the conversation (initialize, the list of tools) is answered here as always.
+    /// </summary>
+    public Func<string, JsonElement, Task<System.Text.Json.Nodes.JsonObject?>?>? ForwardToolCall { get; set; }
+
     /// <summary>Starts on a free port; null if none could be had (sessions then start without panels).</summary>
     public static PanelServer? TryStart(PanelMcp mcp)
     {
@@ -132,7 +138,16 @@ internal sealed class PanelServer : IDisposable
             try
             {
                 using var doc = JsonDocument.Parse(body.ToArray());
-                reply = await mcp.HandleAsync(session, doc.RootElement);
+                var root = doc.RootElement;
+                var toolCall = root.ValueKind == JsonValueKind.Object && root.TryGetProperty("method", out var method) && method.ValueKind == JsonValueKind.String && method.GetString() == "tools/call";
+                Task<System.Text.Json.Nodes.JsonObject?>? elsewhere = null;
+                if (toolCall) elsewhere = ForwardToolCall?.Invoke(session, root);
+                if (elsewhere != null)
+                {
+                    try { reply = await elsewhere; }
+                    catch (Exception) { reply = await mcp.HandleAsync(session, root); }   // the window went: answered here
+                }
+                else reply = await mcp.HandleAsync(session, root);
             }
             catch (JsonException)
             {

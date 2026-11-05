@@ -51,7 +51,7 @@ internal sealed class PhotinoHost : HostLink.IWindow
         site = LocalSite.Start(Path.Combine(AppContext.BaseDirectory, "wwwroot"), bridgeToken);
         window = new PhotinoWindow
         {
-            Title = AppHost.Title,
+            Title = HostLink.WindowTitle,
             UseOsDefaultSize = false,
             Size = new System.Drawing.Size(1600, 1000),
             Centered = true,
