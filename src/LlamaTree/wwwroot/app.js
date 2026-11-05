@@ -277,6 +277,7 @@ const state = {
   // Where projects and sessions go (see NAV_LAYOUTS): 'top', 'hybrid' (projects on the left) or 'left' (both, as a tree).
   navLayout: ['hybrid', 'left'].includes(store.get('navLayout')) ? store.get('navLayout') : 'top',
   navWidth: store.get('navWidth', 230),
+  navBranches: store.get('navBranches', true),   // each session's branch beneath its name, down the left
 };
 
 // ------------------------------------------------------------------ projects: which sessions are visible
@@ -474,9 +475,10 @@ function renderNav() {
       ? h('div', { class: 'nav-sessions unnamed' }, shown.map(tabOf), sessionPlus(shown, 'like these'))
       : h('div', { class: 'nav-hint' }, 'Projects group your sessions, so you can show and hide them together.'));
   }
-  fill($('#navHead'), h('span', { class: 'project-bar-label' }, 'Projects'), h('span', { class: 'spacer' }), projectAllButtons(groups));
+  // In Left there's no title bar (see applyNavLayout): All sessions heads the bar, and New Session joins + Project.
+  fill($('#navHead'), tree && $('#btnGrid'), h('span', { class: 'project-bar-label' }, 'Projects'), h('span', { class: 'spacer' }), projectAllButtons(groups));
   fill($('#navList'), rows);
-  fill($('#navFoot'), projectAddButton());
+  fill($('#navFoot'), tree && $('#btnAdd'), projectAddButton());
   syncStatus($('#navList'));
   if (tree) revealActive($('#navList'), '.session-tab.active');
 }
@@ -1423,7 +1425,7 @@ function renderTileHeader(s) {
 }
 
 function sessionTabTitle(s) {
-  return [s.directory, s.server && serverTitle(serverOf(s)), statusText(s), conversationLine(s), 'Click again to go back to all sessions · middle-click to close'].filter(Boolean).join('\n');
+  return [s.directory, s.git?.branch && `Branch: ${s.git.branch}`, s.server && serverTitle(serverOf(s)), statusText(s), conversationLine(s), 'Click again to go back to all sessions · middle-click to close'].filter(Boolean).join('\n');
 }
 
 /**
@@ -1476,12 +1478,28 @@ function sessionTab(s, i, marks = false) {
     onauxclick: (e) => { if (e.button === 1) confirmRemove(s); },
     oncontextmenu: (e) => { e.preventDefault(); sessionMenu(s, e.clientX, e.clientY, 'sessionTab'); },
   }, h('button', { class: 'tab-label' },
-    statusDot(s), h('span', { class: 'tab-name' }, s.name),
+    statusDot(s),
+    // Down the left, its branch beneath the name.
+    marks ? h('span', { class: 'tab-text' }, h('span', { class: 'tab-name' }, s.name), tabBranch(s)) : h('span', { class: 'tab-name' }, s.name),
     // Down the left, icons for its agent and where it runs; across the top, the server's name for a session on one.
-    marks ? sessionMarks(s) : s.server && h('span', { class: 'tab-server' + (serverDown(s) ? ' down' : ''), title: serverTitle(serverOf(s)) }, iconEl('server'), h('span', {}, serverName(serverOf(s)))),
+    marks ? sessionMarks(s) : s.server &&h('span', { class: 'tab-server' + (serverDown(s) ? ' down' : ''), title: serverTitle(serverOf(s)) }, iconEl('server'), h('span', {}, serverName(serverOf(s)))),
     i < 9 ? h('span', { class: 'key' }, `Ctrl+${i + 1}`) : null),
   // Closing a session tab removes the session, after the same confirmation as "Remove session…".
   h('button', { class: 'icon-btn small tab-close', title: 'Close session…', onclick: () => confirmRemove(s) }, iconEl('close')));
+}
+
+/** The branch the session's folder is on, for its row down the left; always there (empty until Git has said, or outside a repository) so it updates in place. */
+function tabBranch(s) {
+  const b = s.git?.branch || '';
+  return h('span', { class: 'tab-branch' }, b && iconEl('branch'), b && h('span', {}, b));   // empty (and hidden) without one
+}
+
+/** Puts the session's branch on its tabs after a Git status: beneath the name down the left, and in their tooltips. */
+function updateTabBranch(s) {
+  for (const tab of document.querySelectorAll(`.session-tab[data-id="${s.id}"]`)) {
+    tab.title = sessionTabTitle(s);
+    tab.querySelector('.tab-branch')?.replaceWith(tabBranch(s));
+  }
 }
 
 const AGENT_ICONS = { claude: 'agentClaude', codex: 'agentCodex' };   // by AgentProfile.Id
@@ -2676,6 +2694,7 @@ function onGitStatus(m) {
   }
   s.git = m;
   renderTileHeader(s);
+  updateTabBranch(s);
   refreshOpenDiff(s);   // the visible diff follows its own session, whichever one the Git panel shows
   projectViewChanged(s);
   const historyPending = !s.log && !logFailed(s);
@@ -8050,6 +8069,7 @@ $('#btnAddEmpty').addEventListener('click', () => showAddDialog());
 makeScrollable($('#projectTabs'));
 makeScrollable($('#sessionTabs'));
 makeScrollable($('#docTabs'), 'doc');
+$('#docTabs').parentElement.append(h('div', { id: 'docTools' }));   // the title bar's buttons, in Left (see applyNavLayout)
 
 /** Moves `id` before or after `targetId` in a list of ids. */
 function moveId(ids, id, targetId, before) {
@@ -8100,15 +8120,26 @@ const NAV_LAYOUTS = [
 ];
 
 /**
- * Applies the layout: Top keeps the two rows of tabs; Hybrid and Left drop the projects row for the bar down the left
- * (see renderNav), and the buttons that row held join the title bar, All sessions first and the version and theme last.
+ * Applies the layout: Top keeps the two rows of tabs; Hybrid drops the projects row for the bar down the left (see
+ * renderNav), and the buttons that row held join the title bar, All sessions first and the version and theme last.
+ * Left drops the title bar too, with no session tabs left in it: All sessions and New Session go to the bar down the
+ * left (renderNav puts them there), and the rest to the end of the tab row above the terminals (#docTools).
  */
 function applyNavLayout(render = true) {
-  const top = state.navLayout === 'top';
+  const top = state.navLayout === 'top', left = state.navLayout === 'left';
   document.body.dataset.nav = state.navLayout;
-  const row = top ? $('#projectBar') : $('#titlebar');
-  row.prepend($('#btnGrid'));
-  row.append($('#appVersion'), $('#btnTheme'));
+  document.body.classList.toggle('no-nav-branches', !state.navBranches);
+  // In Left the tab row runs across the side panel too (a grid row of #main), so these stay put as it opens and closes.
+  const docRow = $('#docTools').parentElement;
+  if (left) $('#main').prepend(docRow);
+  else $('#stage').prepend(docRow);
+  if (left) $('#docTools').append($('#btnUpdate'), $('#pluginButtons'), $('#appVersion'), $('#btnGit').parentElement, $('#btnTheme'));
+  else {
+    $('#titlebar').append($('#btnUpdate'), $('#btnAdd'), $('#btnGit').parentElement, $('#pluginButtons'));   // as index.html has them
+    const row = top ? $('#projectBar') : $('#titlebar');
+    row.prepend($('#btnGrid'));
+    row.append($('#appVersion'), $('#btnTheme'));
+  }
   $('#navBar').style.width = state.navWidth + 'px';
   if (render) applyProjectFilter();   // redraws both bars, and the empty grid's hint says where the projects are
 }
@@ -8122,7 +8153,16 @@ function setNavLayout(id) {
 const navLayoutItems = () => [
   { header: 'Layout' },
   ...NAV_LAYOUTS.map((l) => ({ label: l.label, checked: state.navLayout === l.id, action: () => setNavLayout(l.id) })),
-];
+  // With the sessions down the left, their branches can go (a row each, rather than two).
+  state.navLayout === 'left' && '-',
+  state.navLayout === 'left' && { label: 'Show branches', checked: state.navBranches, action: () => setNavBranches(!state.navBranches) },
+].filter(Boolean);
+
+function setNavBranches(on) {
+  state.navBranches = on;
+  store.set('navBranches', on);
+  document.body.classList.toggle('no-nav-branches', !on);
+}
 
 applyNavLayout(false);   // the bars are filled once the sessions arrive
 
