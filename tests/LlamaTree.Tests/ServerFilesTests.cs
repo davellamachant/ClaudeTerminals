@@ -99,6 +99,54 @@ public class ServerFilesTests : IDisposable
         ServerCopies.MarkFromInternet(Path.Combine(root, "missing", "x.txt"));
     }
 
+    [LinuxUserXattrFact]
+    public void On_Linux_a_servers_file_records_where_it_came_from()
+    {
+        var copies = new ServerCopies(root, "dave@build.example");
+        copies.ExpectFile("report.pdf");
+        var path = copies.FilePart("origin", "report.pdf", Part("%PDF"), 0, true)!;
+        Assert.Equal("%PDF", File.ReadAllText(path));
+        Assert.Equal("llamatree-server://build.example/report.pdf", Platform.ExtendedAttributes.TryGet(path, "user.xdg.origin.url"));
+        // It's still made read-only after.
+        Assert.False(File.GetUnixFileMode(path).HasFlag(UnixFileMode.UserWrite));
+    }
+
+    [UnixFact]
+    public void Where_a_file_cant_be_marked_nothing_fails()
+    {
+        ServerCopies.MarkFromInternet(Path.Combine(root, "missing", "x.txt"), "llamatree-server://s/x.txt");
+        Assert.False(Platform.ExtendedAttributes.TrySet(Path.Combine(root, "missing", "x.txt"), "user.test", "x"));
+        Assert.Null(Platform.ExtendedAttributes.TryGet(Path.Combine(root, "missing", "x.txt"), "user.test"));
+    }
+
+    [Fact]
+    public void The_macOS_quarantine_value_says_downloaded_and_unapproved()
+    {
+        var at = new DateTimeOffset(2026, 11, 5, 12, 0, 0, TimeSpan.Zero);
+        var fields = ServerCopies.QuarantineValue(at).Split(';');
+        Assert.Equal(4, fields.Length);
+        Assert.Equal("0081", fields[0]);                                               // in quarantine, downloaded
+        Assert.Matches("^[0-9a-f]{8}$", fields[1]);
+        Assert.Equal(at.ToUnixTimeSeconds(), Convert.ToInt64(fields[1], 16));
+        Assert.Equal("LlamaTree", fields[2]);
+        Assert.Equal("", fields[3]);                                                   // no QuarantineEvents entry
+    }
+
+    [Fact]
+    public void Where_a_file_came_from_is_a_url_of_the_server_and_its_name()
+    {
+        Assert.Equal("llamatree-server://host/a%20b%23c.txt", ServerCopies.OriginUrl("me@host", "a b#c.txt"));
+        Assert.Equal("llamatree-server://build-box/x.txt", ServerCopies.OriginUrl("build-box", "x.txt"));
+        Assert.Equal("llamatree-server:///server/x.txt", ServerCopies.OriginUrl(null, "x.txt"));
+        Assert.Equal("llamatree-server:///my%20box/x.txt", ServerCopies.OriginUrl("me@my box", "x.txt"));
+        foreach (var server in new[] { "me@host", "build-box", "me@my box", "a@b@c:22", "" })
+        {
+            Assert.True(Uri.TryCreate(ServerCopies.OriginUrl(server, "y z.txt"), UriKind.Absolute, out var url), server);
+            Assert.Equal("llamatree-server", url.Scheme);
+            Assert.DoesNotContain("me", url.AbsoluteUri.Replace("llamatree-server", ""));   // no user name
+        }
+    }
+
     [Fact]
     public void A_typed_path_starts_from_the_home_folder()
     {
@@ -340,5 +388,25 @@ public class ServerFilesTests : IDisposable
         uploads.AbandonAll();
         Assert.False(File.Exists(second));
         Assert.Throws<InvalidOperationException>(() => uploads.End("t2"));
+    }
+}
+
+/// <summary>A test of Linux user extended attributes: skipped elsewhere, and where the temp folder's file system has none (tmpfs, some overlays).</summary>
+public sealed class LinuxUserXattrFactAttribute : FactAttribute
+{
+    public LinuxUserXattrFactAttribute()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            Skip = "Linux only";
+            return;
+        }
+        var probe = Path.Combine(Path.GetTempPath(), "lt-xattr-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            File.WriteAllText(probe, "");
+            if (!LlamaTree.Platform.ExtendedAttributes.TrySet(probe, "user.llamatree.probe", "1")) Skip = "The temp folder's file system has no user extended attributes";
+        }
+        finally { File.Delete(probe); }
     }
 }

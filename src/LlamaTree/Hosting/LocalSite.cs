@@ -121,6 +121,9 @@ internal sealed class LocalSite : IDisposable
             // The files only change when the app (or a plugin) does; never serve an old copy after that.
             response.Headers["Cache-Control"] = "no-store";
             response.Headers["X-Content-Type-Options"] = "nosniff";
+            // The window's web view has the clipboard throughout (for the app page's copy and paste); a plugin's frame is
+            // kept off it by its sandbox, and by this as well, where the engine honours it.
+            if (IsPluginPath(request.Url?.AbsolutePath)) response.Headers["Permissions-Policy"] = PluginPermissions;
             if (file == Path.Combine(root, "index.html"))
             {
                 // The app page, with the bridge token for its script. Never in a frame: a frame of it would get the token too.
@@ -147,12 +150,18 @@ internal sealed class LocalSite : IDisposable
         }
     }
 
+    /// <summary>What every plugin page and file is served with: no clipboard, read or write.</summary>
+    internal const string PluginPermissions = "clipboard-read=(), clipboard-write=()";
+
+    private static bool IsPluginPath(string? urlPath) =>
+        urlPath != null && Uri.UnescapeDataString(urlPath).StartsWith("/plugin/", StringComparison.Ordinal);
+
     /// <summary>The file a request path names, inside wwwroot or a plugin's folder; null for anything else.</summary>
     private string? Resolve(string urlPath)
     {
         var path = Uri.UnescapeDataString(urlPath);
         string folder;
-        if (path.StartsWith("/plugin/", StringComparison.Ordinal))
+        if (IsPluginPath(urlPath))
         {
             var rest = path["/plugin/".Length..];
             var slash = rest.IndexOf('/');
@@ -196,6 +205,8 @@ internal sealed class LocalSite : IDisposable
 
     public void Dispose()
     {
-        try { listener.Stop(); listener.Close(); } catch (ObjectDisposedException) { }
+        // Close alone (it stops too): on macOS and Linux, Stop then Close lets go of the port and then binds it again to
+        // let go a second time, which fails, or holds it, if something else has the port by then.
+        try { listener.Close(); } catch (Exception ex) when (ex is ObjectDisposedException or HttpListenerException) { }
     }
 }

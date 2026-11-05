@@ -1,3 +1,4 @@
+using LlamaTree.Platform;
 using LlamaTree.Plugins;
 
 namespace LlamaTree.Hosting;
@@ -8,9 +9,10 @@ namespace LlamaTree.Hosting;
 /// server sends is checked as it would be from anyone: names can't reach out of their folder; a file to open is taken
 /// only when this computer asked to open one (<see cref="ExpectFile"/>); and the number and size of transfers, files
 /// and plugins are capped, so a server can't fill this computer's disk or hold its files open. Called on the window's
-/// (or this computer's host's) UI thread.
+/// (or this computer's host's) UI thread. <paramref name="server"/> is how the server is reached (user@server, or a Host
+/// from the SSH config), recorded on Linux as where a file to open came from (see <see cref="MarkFromInternet"/>).
 /// </summary>
-internal sealed class ServerCopies(string folder)
+internal sealed class ServerCopies(string folder, string? server = null)
 {
     private readonly Dictionary<string, Incoming> files = [];
     private readonly Dictionary<string, long> pluginBytes = [];
@@ -69,8 +71,8 @@ internal sealed class ServerCopies(string folder)
     /// A part of a file to open. Returns its path here once the last part has come, else null. A file nobody asked
     /// for, one whose name isn't that of a file asked for, one past the number on their way at once, one whose parts
     /// come out of order, and one that grows too big are dropped. The name it's kept under is the one asked for (made
-    /// safe), as the file system really made it; and on Windows it's marked as having come from the internet, so
-    /// Windows and the apps that open it treat it as they would a download.
+    /// safe), as the file system really made it; and it's marked as having come from the internet (see
+    /// <see cref="MarkFromInternet"/>), so the system and the apps that open it treat it as they would a download.
     /// </summary>
     public string? FilePart(string token, string name, string data, int index, bool last)
     {
@@ -100,23 +102,55 @@ internal sealed class ServerCopies(string folder)
         var done = Append(token, data, index, last, ServerFiles.MaxFile, out _);
         if (done != null)
         {
-            MarkFromInternet(done);
+            MarkFromInternet(done, OriginUrl(server, Path.GetFileName(done)));
             ReadOnly(done);
         }
         return done;
     }
 
     /// <summary>
-    /// Windows: the file is marked as from the internet (the Mark of the Web, a Zone.Identifier stream with ZoneId 3), as
-    /// a browser marks a download: SmartScreen checks it before it runs, and Office and others open it protected. A
-    /// file system without such streams (FAT, some network drives) can't be marked: the copy is kept all the same.
+    /// Where a file to open came from, as Linux records it: llamatree-server://&lt;server&gt;/&lt;name&gt;, the server as
+    /// it's reached without the user name (user@server); one that isn't a host name is kept, escaped, in the path instead.
     /// </summary>
-    internal static void MarkFromInternet(string path)
+    internal static string OriginUrl(string? server, string name)
     {
-        if (!OperatingSystem.IsWindows()) return;
-        try { File.WriteAllText(path + ":Zone.Identifier", "[ZoneTransfer]\r\nZoneId=3\r\n"); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException) { }
+        var host = server?[(server.LastIndexOf('@') + 1)..] ?? "";
+        return Uri.CheckHostName(host) != UriHostNameType.Unknown
+            ? $"llamatree-server://{host}/{Uri.EscapeDataString(name)}"
+            : $"llamatree-server:///{Uri.EscapeDataString(host.Length > 0 ? host : "server")}/{Uri.EscapeDataString(name)}";
     }
+
+    /// <summary>
+    /// The file is marked as from the internet, as a browser marks a download, while it can still be written (Linux
+    /// lets only those who may write a file set its user attributes). Where it can't be marked (a file system without the place for it: FAT,
+    /// some network drives, tmpfs...), the copy is kept all the same.
+    /// <list type="bullet">
+    /// <item>Windows: the Mark of the Web, a Zone.Identifier stream with ZoneId 3. SmartScreen checks it before it runs,
+    /// and Office and others open it protected.</item>
+    /// <item>macOS: the com.apple.quarantine attribute (see <see cref="QuarantineValue"/>). Gatekeeper checks it before
+    /// it runs, and asks before it's first opened.</item>
+    /// <item>Linux: user.xdg.origin.url, <paramref name="origin"/> (freedesktop.org's attribute for where a file was
+    /// downloaded from). Nothing enforces it, but it's there for file managers and the person to see.</item>
+    /// </list>
+    /// </summary>
+    internal static void MarkFromInternet(string path, string? origin = null)
+    {
+        try
+        {
+            if (OperatingSystem.IsWindows()) File.WriteAllText(path + ":Zone.Identifier", "[ZoneTransfer]\r\nZoneId=3\r\n");
+            else if (OperatingSystem.IsMacOS()) ExtendedAttributes.TrySet(path, "com.apple.quarantine", QuarantineValue(DateTimeOffset.UtcNow));
+            else if (origin != null) ExtendedAttributes.TrySet(path, "user.xdg.origin.url", origin);
+        }
+        catch (Exception) { /* never a reason to lose the copy */ }
+    }
+
+    /// <summary>
+    /// macOS's quarantine value, "flags;time;agent;event". Flags 0081: 0x0080, still in quarantine (macOS adds 0x0040
+    /// once the person has approved it), and 0x0001, downloaded (QTN_FLAG_DOWNLOAD); not 0x0002 (QTN_FLAG_SANDBOX, written
+    /// by a sandboxed app), which this isn't. The time as hex seconds since 1970; this app as the agent; and no event id,
+    /// as nothing is added to the system's QuarantineEvents database.
+    /// </summary>
+    internal static string QuarantineValue(DateTimeOffset at) => $"0081;{at.ToUnixTimeSeconds():x8};LlamaTree;";
 
     /// <summary>A plugin's copy starts afresh (its folder here is emptied). Past <see cref="MaxPlugins"/>, refused.</summary>
     public void PluginBegin(string id)

@@ -31,7 +31,7 @@ internal sealed class ServerConnection : IDisposable
     {
         Target = target;
         this.runOnUi = runOnUi;
-        copies = new ServerCopies(Path.Combine(AppProfile.CustomFolder ?? AppProfile.LocalFolder, "servers", HostLink.RemoteKey(target)));
+        copies = new ServerCopies(Path.Combine(AppProfile.CustomFolder ?? AppProfile.LocalFolder, "servers", HostLink.RemoteKey(target)), target);
     }
 
     /// <summary>How the server is reached: user@server, or a Host from the SSH config.</summary>
