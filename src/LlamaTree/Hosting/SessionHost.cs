@@ -48,6 +48,8 @@ internal sealed class SessionHost : IHostWindow
     {
         using var mutex = InstanceLock.Take(MutexName + AppProfile.InstanceSuffix, out var first);
         if (!first) return 0;
+        using var acrossSessions = InstanceLock.TakeAcrossSessions(MutexName + AppProfile.InstanceSuffix, out first);
+        if (!first) return 0;
         var signals = new List<PosixSignalRegistration>();
         if (!OperatingSystem.IsWindows())
         {

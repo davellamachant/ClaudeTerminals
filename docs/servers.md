@@ -129,8 +129,44 @@ LlamaTree --remote user@server
 
 That opens a window for just that server's sessions. They run on the server, in its folders, and keep running there when the window closes or the connection drops; the window reconnects by itself when the connection comes back. The server can also be `ssh://user@server:port` or a `Host` from your SSH config.
 
+## A Windows PC as the server
+
+If you work across several Windows PCs, any of them can be the server: a desktop's sessions, from your laptop. Windows has an SSH server built in, *OpenSSH Server*, which is all it needs.
+
+> [!IMPORTANT]
+> The server PC's account must be a **local account, a Microsoft account, or an on-premises domain account**. Windows' SSH server can't sign in a Microsoft Entra ID (work or school, "AzureAD\…") account with a key, and LlamaTree only signs in with one.
+
+On the PC that will be the server:
+
+1. **Turn on OpenSSH Server.** In PowerShell, as administrator:
+
+   ```powershell
+   Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+   Set-Service sshd -StartupType Automatic
+   Start-Service sshd
+   ```
+
+   Or in *Settings → System → Optional features → Add a feature*, then start the *OpenSSH SSH Server* service. Either way, Windows opens port 22 in its firewall for it.
+2. **Add your other computer's public key** (the contents of its `~/.ssh/id_ed25519.pub`):
+   - **If your account on the server is an administrator** (usually it is, on your own PC), the key goes in `C:\ProgramData\ssh\administrators_authorized_keys`, not in your own `.ssh` folder. Windows ignores that file unless only Administrators and SYSTEM can use it, so, in PowerShell as administrator:
+
+     ```powershell
+     Add-Content -Path C:\ProgramData\ssh\administrators_authorized_keys -Value '<your public key>'
+     icacls C:\ProgramData\ssh\administrators_authorized_keys /inheritance:r /grant "*S-1-5-32-544:F" /grant "*S-1-5-18:F"
+     ```
+
+   - **Otherwise**, it goes in `C:\Users\<you>\.ssh\authorized_keys`, as on Linux.
+3. **Install LlamaTree** there as usual, or let LlamaTree on your other computer install it when you first add a session there (it runs the release's `install.ps1`: setup for your account, no admin).
+
+Then add a session with *Computer* set to `you@that-pc`. Connect once from a terminal first (`ssh you@that-pc`) so the PC's host key is known.
+
+- **Stay signed in on the server.** Its sessions run in your desktop session there, as they would if you'd opened LlamaTree on it, so Git's sign-ins (Credential Manager) and everything else work as usual, and LlamaTree on that PC shows the same sessions. A locked screen is fine. If you aren't signed in, LlamaTree still starts them, but under your SSH sign-in, which can't use Credential Manager, and (for an administrator) LlamaTree opened on that PC can't show them until they've ended.
+- **Commands run in cmd**, the OpenSSH Server's default. If you've made PowerShell its default shell (`DefaultShell`), LlamaTree can't connect.
+- **Updating:** update LlamaTree on that PC itself (*Check for updates* in its menu). Updating it from your other computer is for Linux servers.
+- **Other networks:** to reach a PC that isn't on your network, put both computers on [Tailscale](https://tailscale.com) or another VPN, and use the address it gives. Don't forward port 22 on your router.
+
 ## How it works
 
-LlamaTree runs `ssh -T -o BatchMode=yes <server> llamatree --attach` and talks to the server's session host over that connection, the same way your window talks to your own. Nothing listens on a network port, so there's nothing to open in a firewall. When SSH drops, only that connection ends; the sessions don't.
+LlamaTree runs `ssh -T -o BatchMode=yes <server> llamatree --attach` and talks to the server's session host over that connection, the same way your window talks to your own. (On a Windows server, whose shell has no `sh`, it runs `LlamaTree.exe --attach` from where setup put it.) Nothing listens on a network port of LlamaTree's own, so there's nothing to open in a firewall beyond SSH's. When SSH drops, only that connection ends; the sessions don't.
 
 A server can't take over this computer: files it sends are accepted only when you asked to open something, its plugins get ids of their own, and there are limits on how much it can send. To use a different ssh program, set `LLAMATREE_SSH`; to run something other than `llamatree --attach` on the server, set `LLAMATREE_REMOTE_COMMAND`.

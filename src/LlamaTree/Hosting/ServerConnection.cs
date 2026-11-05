@@ -129,8 +129,22 @@ internal sealed class ServerConnection : IDisposable
         channel.Closed += () =>
         {
             // ssh's last words say why, when the server never answered.
-            _ = (welcomed ? Task.FromResult("") : ssh.ErrorsAsync(TimeSpan.FromSeconds(2))).ContinueWith(t =>
-                runOnUi(() => Lost(mine, t.Result, welcomed)), TaskScheduler.Default);
+            _ = Task.Run(async () =>
+            {
+                var why = welcomed ? "" : await ssh.ErrorsAsync(TimeSpan.FromSeconds(2));
+                // It runs Windows, found just now: connected to again at once, with the bridge command for Windows.
+                var windows = !welcomed && await ssh.FoundWindowsAsync(why);
+                runOnUi(() =>
+                {
+                    if (windows && mine == attempt && !disposed)
+                    {
+                        pending = null;
+                        _ = ConnectAsync(++attempt);
+                        return;
+                    }
+                    Lost(mine, why, welcomed);
+                });
+            });
         };
         channel.Start();
         // To the server's host this is a window on another computer: it opens nothing on its own desktop, sending files
