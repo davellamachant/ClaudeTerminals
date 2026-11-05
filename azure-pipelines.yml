@@ -114,6 +114,8 @@ steps:
       artifact: 'linux'
 
   # Left out of a trial run entirely, so trying the signing doesn't need the GitHub connection.
+  # The install scripts (tools/install) go on every release, so the README's one-line installs, which fetch
+  # .../releases/latest/download/install.ps1 and install.sh, always get the newest: keep those names.
   - ${{ if parameters.createRelease }}:
     - task: GitHubRelease@1
       displayName: 'Create draft GitHub release'
@@ -133,5 +135,7 @@ steps:
           artifacts/linux/llamatree_$(AppVersion)_amd64.deb
           artifacts/linux/llamatree-$(AppVersion)-1.x86_64.rpm
           artifacts/linux/LlamaTree-$(AppVersion)-linux-x64.tar.gz
+          tools/install/install.ps1
+          tools/install/install.sh
         isDraft: true
         addChangeLog: false

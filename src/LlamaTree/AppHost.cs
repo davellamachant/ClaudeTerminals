@@ -18,7 +18,7 @@ namespace LlamaTree;
 /// so sessions carry on while no window is open; the window that shows the page attaches to it (<see cref="IHostWindow"/>).
 /// Everything here runs on the host's app thread.
 /// </summary>
-internal sealed class AppHost
+internal sealed partial class AppHost
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -49,12 +49,45 @@ internal sealed class AppHost
     /// <summary>The app should end: the sessions were stopped on the way out, or an update is about to install.</summary>
     public event Action? QuitRequested;
 
+    /// <summary>
+    /// How the window reached this host when it's on another computer (its SSH target), else null. Then nothing opens on
+    /// this machine's desktop (no one is looking at it): a file opens on the window's computer, which is sent a copy,
+    /// and a folder in the page's folder browser. This copy isn't updated from the window: a server updates its
+    /// LlamaTree as it does its other packages.
+    /// </summary>
+    public string? Remote { get; set; }
+
+    /// <summary>Files on their way from a window on another computer, pasted into a session.</summary>
+    private readonly ServerFiles.Uploads uploads = new(ServerFiles.UploadFolder);
+
+    /// <summary>Opens a folder: in the file manager, or for a window on another computer, in the page's folder browser.</summary>
+    private void OpenFolder(string path)
+    {
+        if (Remote != null) Post(new { type = "files.browse", path });
+        else Desktop.OpenExternal(path);
+    }
+
+    /// <summary>Shows a file or folder in the folder it's in.</summary>
+    private void ShowInFolder(string path)
+    {
+        if (Remote != null) Post(new { type = "files.browse", path = Path.GetDirectoryName(path) ?? path, select = Path.GetFileName(path) });
+        else Desktop.ShowInFolder(path);
+    }
+
+    /// <summary>Opens a file for viewing (never running it): here, or on a window's computer, which is sent a copy. Off the app thread.</summary>
+    private void OpenFile(string path)
+    {
+        if (Remote != null) window.SendFile(path);
+        else Desktop.OpenFileForViewing(path);
+    }
+
     /// <summary>Each session's conversation, noted just before an update restarts the app (see <see cref="TerminalSession.ResumeOnce"/>).</summary>
     private static string ResumeFile => Path.Combine(SessionStore.AppDataFolder, "resume-after-update.json");
 
     public AppHost(IHostWindow window)
     {
         this.window = window;
+        appThread = Environment.CurrentManagedThreadId;   // made on the host's app thread
         Terminal.SessionEnvironment.Warm();   // macOS, Linux: the login shell's environment, read while the page loads
         // Output is sent to the page in batches, at most 60 times a second.
         flushTimer = new System.Threading.Timer(_ =>
@@ -69,6 +102,11 @@ internal sealed class AppHost
         {
             // A session whose project no longer exists (e.g. projects.json was lost) just has no project.
             if (info.Project != null && !projects.Any(p => p.Id == info.Project)) info.Project = null;
+            if (info.Server != null)
+            {
+                AddServerSession(info);   // run by its server's LlamaTree (see AppHost.Servers)
+                continue;
+            }
             tidied |= TidyConversation(info);
             AddSessionRuntime(info);
         }
@@ -180,13 +218,221 @@ internal sealed class AppHost
     /// <summary>Your answers about plugins (see PluginGrants), kept in plugin-grants.json.</summary>
     private readonly PluginGrants grants = new(Path.Combine(SessionStore.AppDataFolder, "plugin-grants.json"));
 
+    /// <summary>Sessions starting and driving others (start_session and the rest); what each may do is kept in control.json.</summary>
+    private SessionControl? control;
+
+    /// <summary>The host's app thread, where everything here runs (see ControlHost.OnUi).</summary>
+    private readonly int appThread;
+
+    private SessionControl Driving => control ??= new SessionControl(
+        new ControlPolicy(Path.Combine(SessionStore.AppDataFolder, "control.json")), new ControlHost(this), () => relay.Policy.Paused);
+
+    /// <summary>What may be done, what's being asked, and the log's version, as the page reads them.</summary>
+    private object ControlState() => new
+    {
+        rules = Driving.Policy.Rules().Select(r => new { ability = r.Ability.ToString().ToLowerInvariant(), scope = r.Scope, decision = r.Decision.ToString().ToLowerInvariant() }),
+        pending = Driving.Pending().Select(SpawnAsk),
+        logVersion = Driving.LogVersion,
+    };
+
+    private static object SpawnAsk(SpawnRequest r) => new { id = r.Id, from = r.From, name = r.Name, directory = r.Directory, branch = r.Branch, prompt = r.Prompt };
+
+    /// <summary>
+    /// The app's sessions as <see cref="SessionControl"/> sees and changes them, here and on servers. It calls from the
+    /// panel server's threads (a session here) or the app thread (a session on a server, see AppHost.Servers), and
+    /// everything is done on the app thread.
+    /// </summary>
+    private sealed class ControlHost(AppHost app) : IControlHost
+    {
+        private T OnUi<T>(Func<T> f)
+        {
+            if (Environment.CurrentManagedThreadId == app.appThread) return f();
+            var done = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+            app.RunOnUi(() =>
+            {
+                try { done.SetResult(f()); }
+                catch (Exception ex) { done.SetException(ex); }
+            });
+            return done.Task.GetAwaiter().GetResult();
+        }
+
+        private void OnUi(Action a) => OnUi(() => { a(); return 0; });
+
+        private Task<T> OnUiAsync<T>(Func<Task<T>> f) => OnUi(f);
+
+        public IReadOnlyList<ControlSession> Sessions() => OnUi(() => app.order.Select(id => app.sessions.TryGetValue(id, out var s)
+            ? new ControlSession(s.Id, s.Info.Name.Length > 0 ? s.Info.Name : s.Id, s.Info.Directory, s.Info.Project, s.Info.StartedBy, s.Agent != null, s.IsRunning, null)
+            : app.serverSessions[id] is var x
+                ? new ControlSession(x.Info.Id, x.Info.Name.Length > 0 ? x.Info.Name : x.Info.Id, x.Info.Directory, x.Info.Project, x.Info.StartedBy, Agents.For(x.Info.Command) != null, x.Running, x.Info.Server)
+                : null!).ToList());
+
+        /// <summary>The starter's own agent and options, never a command of the agent's choosing, in a conversation of its own.</summary>
+        private static string CommandLike(string command) => TerminalSession.StripContinue(TerminalSession.TakeConversation(command).Command);
+
+        public Task<string> StartAsync(string parent, string name, string directory, string prompt, string? within) => OnUiAsync(async () =>
+        {
+            if (app.serverSessions.TryGetValue(parent, out var sp))
+            {
+                // A session on a server starts one on the same server: its folders are there.
+                // The server checks the folder is really inside the allowed one (within), links resolved there; one too old
+                // to check isn't asked to start it there at all.
+                var c = app.ServerFor(sp.Info.Server!);
+                await c.WhenSettledAsync(TimeSpan.FromSeconds(30));
+                if (within != null && c.IsOnline && !c.Supports("confined-start"))
+                    throw new ControlException($"LlamaTree on {c.Target} is too old to check where a new session's folder leads, so a session can't be started there. Update it first (the server's badge or its sessions' menu).");
+                var before = app.serverSessions.Keys.ToHashSet();
+                app.addingTo[c.Target] = sp.Info.Project;
+                JsonElement made;
+                try
+                {
+                    await c.WhenSettledAsync(TimeSpan.FromSeconds(30));
+                    made = await c.RequestAsync(new { type = "addSessions", sessions = new[] { new { directory, name, command = CommandLike(sp.Info.Command), prompt, within } } });
+                }
+                catch (InvalidOperationException ex) { throw new ControlException(ex.Message); }
+                finally { app.addingTo.Remove(c.Target); }
+                // The session the server says it made (it's in its session list by now); a server from before it said
+                // so: the one new session of it here.
+                var added = StartedOnServer(made, rid => app.FindServerSession(c.Target, rid),
+                    app.serverSessions.Values.Where(x => !before.Contains(x.Info.Id) && x.Info.Server == sp.Info.Server));
+                if (added == null) throw new ControlException($"{c.Target} didn't add the session.");
+                added.Info.StartedBy = parent;
+                app.SaveSessions();
+                app.Post(app.SessionList());
+                app.Post(new { type = "control.start", id = added.Info.Id });   // the page starts it, at its tile's size
+                return added.Info.Id;
+            }
+            var p = app.sessions.GetValueOrDefault(parent) ?? throw new ControlException("That session isn't in LlamaTree any more.");
+            if (!Directory.Exists(directory)) throw new ControlException($"{directory} doesn't exist.");
+            // Every session an agent starts is held to a folder: the one it was allowed, resolved once here, the folder
+            // checked against that very value, which is what's kept (and checked again as its process starts).
+            var confined = PathText.Confine(directory, within ?? throw new ControlException("A started session needs the folder it's allowed."))
+                ?? throw new ControlException($"{directory} isn't inside {within} (a folder on the way leads elsewhere, or isn't there), so a session can't be started there.");
+            var info = new SessionInfo
+            {
+                Name = name, Directory = confined.Folder, Command = CommandLike(p.Info.Command), Project = p.Info.Project, StartedBy = parent,
+                Within = confined.Root,
+            };
+            if (TerminalSession.NeedsOwnConversation(info)) info.Conversation = Guid.NewGuid().ToString();
+            var session = app.AddSessionRuntime(info);
+            session.FirstPromptOnce = prompt;
+            app.SaveSessions();
+            app.Post(app.SessionList());
+            app.Post(new { type = "control.start", id = info.Id });   // the page starts it, at its tile's size
+            return info.Id;
+        });
+
+        public Task<string> AddWorktreeAsync(string parent, string branch) => OnUiAsync(async () =>
+        {
+            if (app.serverSessions.TryGetValue(parent, out var sp)) return await ServerWorktreeAsync(sp, branch);
+            var p = app.sessions.GetValueOrDefault(parent) ?? throw new ControlException("That session isn't in LlamaTree any more.");
+            var root = await GitService.GetTopLevelAsync(p.RepoRoot ?? p.Info.Directory)
+                ?? throw new ControlException("This session's folder isn't in a Git repository, so there's no worktree to make; give a folder instead.");
+            root = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var slug = System.Text.RegularExpressions.Regex.Replace(branch, "[^A-Za-z0-9._-]+", "-").Trim('-', '.');
+            var path = $"{root}-{(slug.Length > 0 ? slug : "worktree")}";
+            for (var i = 2; Directory.Exists(path) || File.Exists(path); i++) path = $"{root}-{slug}-{i}";
+            var result = await GitService.AddWorktreeAsync(root, path, branch, null);
+            if (!result.Ok) throw new ControlException(string.IsNullOrWhiteSpace(result.Error) ? "git couldn't make the worktree." : result.Error.Trim());
+            return path;
+        });
+
+        /// <summary>
+        /// A new worktree of a server session's repository, beside it on the server (its folder's name with the branch's
+        /// after it, numbered if that's taken), made by the server's LlamaTree as for its own sessions.
+        /// </summary>
+        private async Task<string> ServerWorktreeAsync(ServerSession sp, string branch)
+        {
+            var root = sp.RepoRoot?.TrimEnd('/')
+                ?? throw new ControlException("This session's folder isn't in a Git repository (or its server hasn't said yet), so there's no worktree to make; give a folder instead.");
+            var c = app.ServerFor(sp.Info.Server!);
+            var slug = System.Text.RegularExpressions.Regex.Replace(branch, "[^A-Za-z0-9._-]+", "-").Trim('-', '.');
+            var name = root[(root.LastIndexOf('/') + 1)..] + "-" + (slug.Length > 0 ? slug : "worktree");
+            var parentDir = root[..Math.Max(root.LastIndexOf('/'), 1)];
+            try
+            {
+                // What's already beside it there, to pick a free name.
+                var listing = await c.RequestAsync(new { type = "fs.list", path = parentDir });
+                var taken = listing.TryGetProperty("entries", out var entries)
+                    ? entries.EnumerateArray().Select(e => e.GetProperty("name").GetString()).ToHashSet(StringComparer.Ordinal) : [];
+                var pick = name;
+                for (var i = 2; taken.Contains(pick); i++) pick = $"{name}-{i}";
+                var path = parentDir.TrimEnd('/') + "/" + pick;
+                var made = await c.RequestAsync(new { type = "worktree.add", id = sp.Info.RemoteId, branch, path, @base = (string?)null });
+                return made.ValueKind == JsonValueKind.String ? made.GetString()! : path;
+            }
+            catch (InvalidOperationException ex) { throw new ControlException(ex.Message); }
+        }
+
+        // Typed by the page, as you would: a session on a server gets it there.
+        public void TypePrompt(string id, string text) => app.RunOnUi(() => app.Post(new { type = "control.prompt", id, text }));
+
+        public void SendKeys(string id, string keys) => app.RunOnUi(() =>
+        {
+            if (app.sessions.GetValueOrDefault(id) is { } s) s.Write(keys);
+            else if (app.serverSessions.GetValueOrDefault(id) is { } x && app.servers.GetValueOrDefault(x.Info.Server!) is { IsOnline: true } c)
+                c.Send(JsonSerializer.Serialize(new { type = "input", id = x.Info.RemoteId, data = keys }, JsonOptions));
+        });
+
+        public void Stop(string id) => app.RunOnUi(() =>
+        {
+            if (app.serverSessions.GetValueOrDefault(id) is { } x)
+            {
+                if (app.servers.GetValueOrDefault(x.Info.Server!) is { IsOnline: true } c)
+                    _ = c.RequestAsync(new { type = "stop", id = x.Info.RemoteId }).ContinueWith(_ => { }, TaskScheduler.Default);
+                return;
+            }
+            if (app.sessions.GetValueOrDefault(id) is not { } s) return;
+            app.CatchUpConversation(s);
+            if (!s.Stop()) return;
+            app.FlushOutput();
+            app.Post(new { type = "exited", id, code = (int?)null });
+            app.RunningChanged?.Invoke();
+        });
+
+        public void Remove(string id) => OnUi(() =>
+        {
+            if (app.sessions.GetValueOrDefault(id) is { } s)
+            {
+                app.RemoveSession(s);
+                return;
+            }
+            if (app.serverSessions.GetValueOrDefault(id) is not { } x) return;
+            // Removed on its server too, as when you close it (one that can't be reached keeps it, and shows it again).
+            if (app.servers.GetValueOrDefault(x.Info.Server!) is { IsOnline: true } c)
+                _ = c.RequestAsync(new { type = "removeSession", id = x.Info.RemoteId }).ContinueWith(_ => { }, TaskScheduler.Default);
+            app.ForgetServerSession(x);
+            app.ForgetPanels(id);
+            app.SaveSessions();
+            app.Post(app.SessionList());
+        });
+
+        public SessionReport? Report(string id)
+        {
+            // A session on a server: its conversation is there (what it shows comes through its terminal and status).
+            // The session's process is read on the app thread, as everywhere; its conversation file off it.
+            var (s, running, pids) = OnUi(() => app.sessions.GetValueOrDefault(id) is { } x ? ((TerminalSession?)x, x.IsRunning, (int[]?)x.ProcessIds()) : (null, false, null));
+            var agent = s?.Agent;
+            if (s == null || agent == null) return null;
+            var conv = (running && pids != null ? agent.ReadConversation(s, pids) : null) ?? agent.ReadSavedConversation(s);
+            if (conv?.Turns.LastOrDefault() is not { } turn) return null;
+            var said = turn.Items.Where(i => i.Kind == "text").Select(i => i.Text).ToList();
+            var last = turn.Items.LastOrDefault();
+            return new SessionReport(turn.Prompt, said.Count > 0 ? string.Join("\n\n", said) : null,
+                last?.Kind == "tool" ? $"{last.Tool}: {last.Text}" : null);
+        }
+    }
+
     private List<RelayPeer> RelayPeers()
     {
         // A session counts in a project only while that project exists (as the page shows it), for plugins' projects too.
-        string? ProjectOf(TerminalSession s) => projects.Any(p => p.Id == s.Info.Project) ? s.Info.Project : null;
-        var list = order.Select(id => sessions[id]).Where(s => s.Agent != null).Select(s => new RelayPeer(
-            s.Id, s.Info.Name.Length > 0 ? s.Info.Name : s.Id, ProjectOf(s), projects.FirstOrDefault(p => p.Id == s.Info.Project)?.Name,
+        string? ProjectOf(SessionInfo s) => projects.Any(p => p.Id == s.Project) ? s.Project : null;
+        var list = order.Where(sessions.ContainsKey).Select(id => sessions[id]).Where(s => s.Agent != null).Select(s => new RelayPeer(
+            s.Id, s.Info.Name.Length > 0 ? s.Info.Name : s.Id, ProjectOf(s.Info), projects.FirstOrDefault(p => p.Id == s.Info.Project)?.Name,
             s.Agent?.Name, s.IsRunning)).ToList();
+        // Sessions on servers too: their tool calls are answered here while their server is connected (AppHost.Servers).
+        list.AddRange(order.Where(serverSessions.ContainsKey).Select(id => serverSessions[id]).Where(x => Agents.For(x.Info.Command) != null).Select(x => new RelayPeer(
+            x.Info.Id, x.Info.Name.Length > 0 ? x.Info.Name : x.Info.Id, ProjectOf(x.Info), projects.FirstOrDefault(p => p.Id == x.Info.Project)?.Name,
+            Agents.For(x.Info.Command)?.Name, x.Running)));
         // Plugins allowed to message sessions take part too, as "plugin:<id>" (see PluginGrants.RelayGate).
         list.AddRange(plugins.Values.Where(p => p.Access.Contains("message") && grants.State(p.Id, "message") == "allow")
             .Select(p => new RelayPeer(PluginGrants.PeerPrefix + p.Id, p.Title, null, null, "Plugin", true, p.Inbox)));
@@ -221,6 +467,7 @@ internal sealed class AppHost
         _ => throw new ArgumentException($"There's no decision \"{s}\"."),
     };
     private PanelServer? panelServer;
+    private PanelMcp? mcp;   // the tools sessions call (panels, messages), here and on servers (see AppHost.Servers)
 
     private static string PanelConfigFolder => Path.Combine(SessionStore.AppDataFolder, "panels");
 
@@ -238,6 +485,7 @@ internal sealed class AppHost
     private (List<PluginInfo> Found, List<string> Problems) LoadPlugins()
     {
         var (found, problems) = PluginCatalog.Load(PluginFolder);
+        AddServerPlugins(found, problems);   // and connected servers' (see AppHost.Servers)
         foreach (var gone in plugins.Keys.Except(found.Select(p => p.Id)).ToList())
         {
             window.StopServingPlugin(gone);
@@ -254,9 +502,9 @@ internal sealed class AppHost
 
     private void StartPanels()
     {
-        panelStore.KeepOwners(sessions.Keys);
+        panelStore.KeepOwners(order);
         panelStore.Changed += change => RunOnUi(() => Post(PanelsMessage(change)));
-        relay.Policy.KeepSessions(sessions.Keys);
+        relay.Policy.KeepSessions(order);
         relay.Gate = grants.RelayGate;
         relay.SetPeers(RelayPeers());
         // Answers about plugins change which plugins take part in messages, so the peers are read again too.
@@ -266,10 +514,16 @@ internal sealed class AppHost
         relay.Delivered += m => RunOnUi(() => Post(new { type = "relay.message", to = m.To, from = m.From, unread = relay.Unread(m.To) }));
         relay.Changed += () => RunOnUi(() => Post(new { type = "relay", state = RelayState() }));
         relay.Policy.Changed += () => RunOnUi(() => Post(new { type = "relay", state = RelayState() }));
-        var mcp = new PanelMcp(panelStore, relay);
+        Driving.Policy.Keep(order, projects.Select(p => p.Id));
+        Driving.Asked += r => RunOnUi(() => Post(new { type = "control.ask", request = SpawnAsk(r) }));
+        Driving.Settled += id => RunOnUi(() => Post(new { type = "control.settled", id }));
+        Driving.Changed += () => RunOnUi(() => Post(new { type = "control", state = ControlState() }));
+        Driving.Policy.Changed += () => RunOnUi(() => Post(new { type = "control", state = ControlState() }));
+        mcp = new PanelMcp(panelStore, relay, Driving);
         // A first prompt that couldn't go on the command line is typed once Claude is up (it connects as it starts).
         mcp.Initialized += id => RunOnUi(async () =>
         {
+            Post(new { type = "agent.ready", id });   // the page tells a session it woke of its messages once it's up
             if (!sessions.TryGetValue(id, out var s) || s.PromptToType is not { } prompt) return;
             s.PromptToType = null;
             await Task.Delay(1500);
@@ -277,6 +531,8 @@ internal sealed class AppHost
         });
         try { panelServer = PanelServer.TryStart(mcp); }
         catch (Exception) { /* sessions start without panels */ }
+        // Shown among another computer's sessions: its window answers the sessions' tool calls while it's attached.
+        if (panelServer != null) panelServer.ForwardToolCall = (session, m) => Remote != null ? window.ForwardToolCall(session, m) : null;
     }
 
     private object PanelsMessage(PanelChange? change = null) => new
@@ -312,8 +568,10 @@ internal sealed class AppHost
     private void ForgetPanels(string sessionId)
     {
         panelServer?.Forget(sessionId);
-        panelStore.KeepOwners(sessions.Keys);
-        relay.Policy.KeepSessions(sessions.Keys);
+        panelStore.KeepOwners(order);
+        relay.Policy.KeepSessions(order);
+        Driving.Policy.Keep(order, projects.Select(p => p.Id));
+        Driving.Forget(sessionId);
         try { File.Delete(Path.Combine(PanelConfigFolder, $"mcp-{sessionId}.json")); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
@@ -356,6 +614,7 @@ internal sealed class AppHost
     {
         webReady = false;
         lock (pendingOutput) pendingOutput.Clear();
+        uploads.AbandonAll();
     }
 
     /// <summary>The app is ending: stop the sessions, each noting the conversation it's in so it reopens there. Once only.</summary>
@@ -368,6 +627,7 @@ internal sealed class AppHost
         foreach (var s in sessions.Values) CatchUpConversation(s);   // so each reopens where it was
         foreach (var s in sessions.Values) s.Dispose();
         panelServer?.Dispose();
+        DisposeServers();
         relay.Flush();   // unread and waiting messages, for next time
     }
 
@@ -431,12 +691,27 @@ internal sealed class AppHost
         return s;
     }
 
-    private void SaveSessions() => SessionStore.Save(order.Select(id => sessions[id].Info));
+    /// <summary>Removes a session here: its process ends, its panels go with it (its conversation stays, to resume).</summary>
+    private void RemoveSession(TerminalSession s)
+    {
+        CatchUpConversation(s);
+        s.Dispose();
+        sessions.Remove(s.Id);
+        order.Remove(s.Id);
+        tails.Remove(s.Id);
+        repaint.Remove(s.Id);
+        RunningChanged?.Invoke();
+        SaveSessions();
+        ForgetPanels(s.Id);
+        Post(SessionList());
+    }
+
+    private void SaveSessions() => SessionStore.Save(order.Select(id => sessions.TryGetValue(id, out var s) ? s.Info : serverSessions[id].Info));
 
     private object SessionList()
     {
         relay.SetPeers(RelayPeers());   // the list goes out whenever sessions or projects change
-        grants.Keep(sessions.Keys.ToHashSet(), projects.Select(p => p.Id).ToHashSet());
+        grants.Keep(order.ToHashSet(), projects.Select(p => p.Id).ToHashSet());
         return SessionListMessage();
     }
 
@@ -445,16 +720,19 @@ internal sealed class AppHost
         type = "sessions",
         agents = Agents.All.Select(a => a.Describe()),
         projects = projects.Select(p => new { id = p.Id, name = p.Name, color = p.Color }),
-        sessions = order.Select(id => sessions[id]).Select(s => new
+        sessions = order.Select(id => sessions.TryGetValue(id, out var s) ? (s.Info, s.IsRunning) : (serverSessions[id].Info, serverSessions[id].Running)).Select(x => new
         {
-            id = s.Id,
-            name = s.Info.Name,
-            directory = s.Info.Directory,
-            command = s.Info.Command,
-            project = s.Info.Project,
-            conversation = s.Info.Conversation,
-            running = s.IsRunning,
+            id = x.Info.Id,
+            name = x.Info.Name,
+            directory = x.Info.Directory,
+            command = x.Info.Command,
+            project = x.Info.Project,
+            conversation = x.Info.Conversation,
+            running = x.Item2,
+            server = x.Info.Server,
+            startedBy = x.Info.StartedBy,
         }),
+        servers = ServersState(),
     };
 
     /// <summary>A project id from the page, or null for "no project" (empty or unknown ids included).</summary>
@@ -530,18 +808,20 @@ internal sealed class AppHost
 
     private async Task<object?> HandleAsync(string type, JsonElement msg)
     {
+        if (await TryForwardAsync(type, msg) is (true, var forwarded)) return forwarded;
         switch (type)
         {
             case "ready":
                 window.PostJson(AccentMessage());   // first: with Windows' app mode the page knows its theme before sessions start
                 Post(SessionList());
                 // Sessions that ran on while no window was open: what they showed, and a redraw at the page's size.
-                foreach (var s in order.Select(id => sessions[id]).Where(s => s.IsRunning))
+                foreach (var s in order.Where(sessions.ContainsKey).Select(id => sessions[id]).Where(s => s.IsRunning))
                 {
                     if (tails[s.Id].ToString() is { Length: > 0 } shown) Post(new { type = "replay", id = s.Id, data = shown });
                     repaint.Add(s.Id);
                 }
                 webReady = true;   // after the replay, so live output follows it
+                ServersPageReady();
                 Post(PanelsMessage());
                 if (newConversations.Count > 0)
                 {
@@ -555,9 +835,10 @@ internal sealed class AppHost
             {
                 var s = Get(msg);
                 tails[s.Id].Clear();
+                var prompted = s.FirstPromptOnce != null;   // starts on a prompt: its first output is work, not start-up
                 s.Start(Int(msg, "cols"), Int(msg, "rows"), OptStr(msg, "theme"), PanelLinkFor(s));
                 RunningChanged?.Invoke();
-                return null;
+                return new { prompted };
             }
             case "input":
                 Get(msg).Write(Str(msg, "data"));
@@ -587,9 +868,10 @@ internal sealed class AppHost
                     s.ResumeOnce = live;
                 s.Stop();
                 tails[s.Id].Clear();
+                var prompted = s.FirstPromptOnce != null;
                 s.Start(Int(msg, "cols"), Int(msg, "rows"), OptStr(msg, "theme"), PanelLinkFor(s));
                 RunningChanged?.Invoke();
-                return null;
+                return new { prompted };
             }
             case "app.closeInfo":
             {
@@ -627,12 +909,25 @@ internal sealed class AppHost
                 var items = msg.GetProperty("sessions").EnumerateArray()
                     .Select(item => (Dir: Str(item, "directory"), Name: Str(item, "name"), Command: Str(item, "command"), Project: ProjectId(item),
                         Prompt: OptStr(item, "prompt")?.Trim() is { Length: > 0 and <= PanelSpec.MaxPrompt } p ? p : null,
-                        Conversation: OptStr(item, "conversation") is { } conv && TerminalSession.IsConversationId(conv) ? conv : null))
+                        Conversation: OptStr(item, "conversation") is { } conv && TerminalSession.IsConversationId(conv) ? conv : null,
+                        Within: OptStr(item, "within")))
                     .ToList();
                 // All or nothing: check every folder before adding any. Adding as we went left the earlier sessions
                 // added but unsaved and unshown after a failure, and a retry then added them a second time.
-                foreach (var item in items)
-                    if (!Directory.Exists(item.Dir)) throw new DirectoryNotFoundException(item.Dir);
+                for (var i = 0; i < items.Count; i++)
+                {
+                    if (!Directory.Exists(items[i].Dir)) throw new DirectoryNotFoundException(items[i].Dir);
+                    // Started by another session (start_session on another computer): it must really be inside the
+                    // folder it was allowed, links resolved here, where they lead; that folder is resolved once, and the
+                    // value checked against is the one kept (see PathText.Confine).
+                    if (items[i].Within is { } within)
+                    {
+                        var confined = PathText.Confine(items[i].Dir, within)
+                            ?? throw new InvalidOperationException($"{items[i].Dir} isn't inside {within} (a folder on the way leads elsewhere, or isn't there), so a session can't be started there.");
+                        items[i] = items[i] with { Dir = confined.Folder, Within = confined.Root };
+                    }
+                }
+                var made = new List<string>();
                 foreach (var item in items)
                 {
                     var info = new SessionInfo
@@ -641,6 +936,7 @@ internal sealed class AppHost
                         Directory = item.Dir,
                         Command = string.IsNullOrWhiteSpace(item.Command) ? "claude" : item.Command.Trim(),
                         Project = item.Project,
+                        Within = item.Within,   // as resolved and checked above; checked again at each start
                     };
                     TidyConversation(info);   // a "claude --resume X" typed as the command: conversation X
                     if (item.Conversation != null && TerminalSession.CanTrackConversation(info.Command))
@@ -654,10 +950,11 @@ internal sealed class AppHost
                     if (TerminalSession.NeedsOwnConversation(info)) info.Conversation = Guid.NewGuid().ToString();
                     var added = AddSessionRuntime(info);
                     added.FirstPromptOnce = item.Prompt;   // from a panel's button: its first start is a new conversation with this prompt
+                    made.Add(info.Id);
                 }
                 SaveSessions();
                 Post(SessionList());
-                return null;
+                return made;
             }
             case "updateSession":
             {
@@ -736,19 +1033,8 @@ internal sealed class AppHost
                 return null;
             }
             case "removeSession":
-            {
-                var s = Get(msg);
-                s.Dispose();
-                sessions.Remove(s.Id);
-                order.Remove(s.Id);
-                tails.Remove(s.Id);
-                repaint.Remove(s.Id);
-                RunningChanged?.Invoke();
-                SaveSessions();
-                ForgetPanels(s.Id);   // its panels go with it
-                Post(SessionList());
+                RemoveSession(Get(msg));
                 return null;
-            }
             case "panels.scope":
                 panelStore.SetScope(Str(msg, "owner"), Str(msg, "id"), Str(msg, "scope"));
                 return null;
@@ -798,6 +1084,29 @@ internal sealed class AppHost
                 }
                 return null;
             }
+            // ---- sessions starting and driving others (SessionControl)
+            case "control.state":
+                return ControlState();
+            case "control.status":
+                Driving.SetStatus(Str(msg, "id"), Str(msg, "status"));
+                return null;
+            case "control.answer":
+                Driving.AnswerSpawn(Str(msg, "id"), Bool(msg, "allow"), OptStr(msg, "scope") ?? "once");
+                return null;
+            case "control.set":
+                Driving.Policy.Set(Str(msg, "ability") switch
+                {
+                    "spawn" => ControlAbility.Spawn,
+                    "answer" => ControlAbility.Answer,
+                    "close" => ControlAbility.Close,
+                    var a => throw new ArgumentException($"There's no ability \"{a}\"."),
+                }, Str(msg, "scope"), ParseDecision(Str(msg, "decision")));
+                return null;
+            case "control.log":
+                return Driving.Log().Select(e => new { at = e.At, from = e.From, target = e.Target, action = e.Action, detail = e.Detail, ok = e.Ok });
+            case "control.clearLog":
+                Driving.ClearLog();
+                return null;
             case "relay.pause":
                 relay.Policy.Paused = Bool(msg, "paused");
                 return null;
@@ -861,7 +1170,7 @@ internal sealed class AppHost
             }
             case "reorder":
             {
-                var ids = msg.GetProperty("ids").EnumerateArray().Select(x => x.GetString()!).Where(sessions.ContainsKey).ToList();
+                var ids = msg.GetProperty("ids").EnumerateArray().Select(x => x.GetString()!).Where(id => sessions.ContainsKey(id) || serverSessions.ContainsKey(id)).Distinct().ToList();
                 if (ids.Count == order.Count)
                 {
                     order.Clear();
@@ -963,14 +1272,8 @@ internal sealed class AppHost
                 var c = await Task.Run(() => s.Agent?.FindConversation(id, s.Info.Directory));
                 return new { id, saved = c != null, title = c?.Title, started = c?.Started, modified = c?.Modified };
             }
-            case "openUrl":
-            {
-                if (Uri.TryCreate(Str(msg, "uri"), UriKind.Absolute, out var u) && (u.Scheme == Uri.UriSchemeHttp || u.Scheme == Uri.UriSchemeHttps))
-                    Desktop.OpenExternal(u.AbsoluteUri);
-                return null;
-            }
             case "openFolder":
-                Desktop.OpenExternal(Get(msg).Info.Directory);
+                OpenFolder(Get(msg).Info.Directory);
                 return null;
             case "terminal.paths":
             {
@@ -986,14 +1289,31 @@ internal sealed class AppHost
                 var found = TerminalPaths.Resolve(Str(msg, "path"), Get(msg).Info.Directory)
                     ?? throw new InvalidOperationException("That file or folder isn't there any more.");
                 var inFolder = msg.TryGetProperty("inFolder", out var f) && f.ValueKind == JsonValueKind.True;
-                await Task.Run(() =>
-                {
-                    if (inFolder) Desktop.ShowInFolder(found.Path);
-                    else if (found.IsFolder) Desktop.OpenExternal(found.Path);
-                    else Desktop.OpenFileForViewing(found.Path);
-                });
+                if (inFolder) ShowInFolder(found.Path);
+                else if (found.IsFolder) OpenFolder(found.Path);
+                else await Task.Run(() => OpenFile(found.Path));
                 return null;
             }
+
+            // ---- a server's files, for a window on another computer (see ServerFiles)
+            case "fs.list":
+                return await Task.Run(() => ServerFiles.List(Str(msg, "path")));
+            case "fs.open":
+            {
+                var path = ServerFiles.Resolve(Str(msg, "path"), Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+                if (Directory.Exists(path)) OpenFolder(path);
+                else if (File.Exists(path)) await Task.Run(() => OpenFile(path));
+                else throw new InvalidOperationException("That file or folder isn't there any more.");
+                return null;
+            }
+            case "upload.begin":
+                uploads.Begin(Str(msg, "token"), Str(msg, "name"));
+                return null;
+            case "upload.data":
+                uploads.Write(Str(msg, "token"), Str(msg, "data"));
+                return null;
+            case "upload.end":
+                return uploads.End(Str(msg, "token"));
 
             // ---- plugins
             case "plugins.list":
@@ -1008,7 +1328,7 @@ internal sealed class AppHost
             }
             case "plugins.openFolder":
                 Directory.CreateDirectory(PluginFolder);
-                Desktop.OpenExternal(PluginFolder);
+                OpenFolder(PluginFolder);
                 return null;
             // What a plugin allowed to see sessions asks for. Only the app's page asks (as for everything here); it checks
             // the plugin was allowed before it does.
@@ -1056,7 +1376,7 @@ internal sealed class AppHost
                 return Themes.ThemeCatalog.Save(ThemeFolder, BuiltInThemeFolder, msg.GetProperty("theme"));
             case "themes.openFolder":
                 Directory.CreateDirectory(ThemeFolder);
-                Desktop.OpenExternal(ThemeFolder);
+                OpenFolder(ThemeFolder);
                 return null;
 
             // ---- git
@@ -1157,6 +1477,7 @@ internal sealed class AppHost
             case "update.check":
             {
                 // The page decides when to ask (at start, then every 15 minutes, or from the menu).
+                if (Remote != null) return new { current = UpdateService.CurrentVersion.ToString(), available = false };
                 update = await UpdateService.CheckAsync();
                 return new
                 {
@@ -1247,7 +1568,7 @@ internal sealed class AppHost
                 if (!File.Exists(full)) return null;
                 if (GitService.ExistingPathInRepo(root, path) == null)
                     throw new InvalidOperationException("That file is outside the repository (it is reached through a link).");
-                Desktop.OpenFileForViewing(full);
+                await Task.Run(() => OpenFile(full));
                 return null;
             }
             case "git.openFolder":
@@ -1260,7 +1581,7 @@ internal sealed class AppHost
                 while (path.Length > 0 && !Directory.Exists(Path.Combine(root, path))) path = Path.GetDirectoryName(path) ?? "";
                 var target = path.Length == 0 ? root
                     : GitService.ExistingPathInRepo(root, path) ?? throw new InvalidOperationException("That folder is outside the repository (it is reached through a link).");
-                Desktop.OpenExternal(target);
+                OpenFolder(target);
                 return null;
             }
         }

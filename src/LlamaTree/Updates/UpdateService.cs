@@ -29,6 +29,9 @@ internal static partial class UpdateService
     private static readonly string? TestUrl =
         AppProfile.Variable("LLAMATREE_UPDATE_URL", "CLAUDE_TERMINALS_UPDATE_URL") is { } url && !string.IsNullOrWhiteSpace(url) ? url : null;   // set but empty = not set
 
+    /// <summary>Whether a local test server stands in for GitHub (LLAMATREE_UPDATE_URL).</summary>
+    public static bool Testing => TestUrl != null;
+
     private static string LatestUrl => TestUrl ?? $"https://api.github.com/repos/{Repo}/releases/latest";
 
     // Before Http: static initializers run in order, and the client's User-Agent carries the version.
@@ -65,6 +68,30 @@ internal static partial class UpdateService
         response.EnsureSuccessStatusCode();
         var info = Parse(await response.Content.ReadAsStringAsync(ct));
         return info != null && info.Version > CurrentVersion ? info : null;
+    }
+
+    /// <summary>
+    /// The files of the release for <paramref name="version"/> (a server is updated to match this computer, see
+    /// ServerUpdate), each with GitHub's SHA-256 of it: name → (download address, hash). Only files GitHub gave a digest
+    /// for are listed. Throws when there's no such release.
+    /// </summary>
+    public static async Task<Dictionary<string, (string Url, string Sha256)>> ReleaseFilesAsync(Version version, CancellationToken ct = default)
+    {
+        var url = TestUrl ?? $"https://api.github.com/repos/{Repo}/releases/tags/v{version}";
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+        using var response = await Http.SendAsync(request, ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            throw new InvalidOperationException($"There's no LlamaTree {version} release on GitHub to update to.");
+        response.EnsureSuccessStatusCode();
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+        var files = new Dictionary<string, (string, string)>(StringComparer.OrdinalIgnoreCase);
+        if (doc.RootElement.TryGetProperty("assets", out var assets) && assets.ValueKind == JsonValueKind.Array)
+            foreach (var a in assets.EnumerateArray())
+                if (Str(a, "name") is { } name && Str(a, "browser_download_url") is { } link &&
+                    Str(a, "digest") is { } digest && digest.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
+                    files[name] = (link, digest[7..].ToLowerInvariant());
+        return files;
     }
 
     [GeneratedRegex(@"SHA-256[\s\S]{0,300}?\b([0-9a-fA-F]{64})\b")]

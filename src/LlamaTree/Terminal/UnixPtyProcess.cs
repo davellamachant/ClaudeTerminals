@@ -37,8 +37,10 @@ internal sealed unsafe class UnixPtyProcess : IPtyProcess
 
     public int ProcessId { get; private set; }
 
-    public void Start(string command, string workingDirectory, IReadOnlyDictionary<string, string> environment, int cols, int rows)
+    public void Start(string command, string workingDirectory, IReadOnlyDictionary<string, string> environment, int cols, int rows, string? within = null)
     {
+        // Confined: started in the folder as opened and checked, whatever is renamed meanwhile (see ConfinedFolder).
+        using var confined = within != null ? ConfinedFolder.Open(workingDirectory, within) : null;
         var argv = CommandLineResolver.ResolveArgv(command, environment);
         if (OperatingSystem.IsMacOS() && File.Exists("/usr/bin/perl")) argv = ["/usr/bin/perl", "-e", MacControllingTerminal, "--", .. argv];
         var libc = Libc.Instance;
@@ -74,7 +76,9 @@ internal sealed unsafe class UnixPtyProcess : IPtyProcess
                 Check(libc.posix_spawn_file_actions_addopen(actions, 0, Utf8(slavePath, owned), Libc.O_RDWR, 0), "addopen");
                 Check(libc.posix_spawn_file_actions_adddup2(actions, 0, 1), "adddup2");
                 Check(libc.posix_spawn_file_actions_adddup2(actions, 0, 2), "adddup2");
-                if (libc.posix_spawn_file_actions_addchdir_np != null)
+                if (confined != null)
+                    Check(libc.posix_spawn_file_actions_addfchdir_np(actions, confined.Descriptor), "addfchdir");
+                else if (libc.posix_spawn_file_actions_addchdir_np != null)
                     Check(libc.posix_spawn_file_actions_addchdir_np(actions, Utf8(workingDirectory, owned)), "addchdir");
                 else argv = ["/bin/sh", "-c", "cd \"$0\" && exec \"$@\"", workingDirectory, .. argv];
 
@@ -316,6 +320,12 @@ internal sealed unsafe class Libc
     public readonly delegate* unmanaged<void*, int, int, int> posix_spawn_file_actions_adddup2;
     /// <summary>glibc 2.29+, macOS 10.15+; null where it's missing.</summary>
     public readonly delegate* unmanaged<void*, byte*, int> posix_spawn_file_actions_addchdir_np;
+    /// <summary>Starts the child in an open folder rather than at a path (glibc 2.29+, macOS 10.15+); null where it's missing.</summary>
+    public readonly delegate* unmanaged<void*, int, int> posix_spawn_file_actions_addfchdir_np;
+    public const int O_RDONLY = 0;
+    public readonly int O_DIRECTORY = OperatingSystem.IsMacOS() ? 0x100000 : RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? 0x4000 : 0x10000;
+    public readonly int O_CLOEXEC = OperatingSystem.IsMacOS() ? 0x1000000 : 0x80000;
+    private readonly IntPtr fcntl;
     public readonly delegate* unmanaged<void*, int> posix_spawnattr_init;
     public readonly delegate* unmanaged<void*, int> posix_spawnattr_destroy;
     public readonly delegate* unmanaged<void*, short, int> posix_spawnattr_setflags;
@@ -372,6 +382,9 @@ internal sealed unsafe class Libc
         close = (delegate* unmanaged<int, int>)Find("close");
         kill = (delegate* unmanaged<int, int, int>)Find("kill");
         ioctl = Find("ioctl");
+        fcntl = Find("fcntl");
+        posix_spawn_file_actions_addfchdir_np = NativeLibrary.TryGetExport(library, "posix_spawn_file_actions_addfchdir_np", out var fchdir)
+            ? (delegate* unmanaged<void*, int, int>)fchdir : null;
         realpath = (delegate* unmanaged<byte*, byte*, byte*>)Find("realpath");
         free = (delegate* unmanaged<void*, void>)Find("free");
     }
@@ -391,6 +404,25 @@ internal sealed unsafe class Libc
     /// ioctl(fd, request, arg). It's variadic: on Apple's arm64 a variadic argument goes on the stack rather than in a
     /// register, so there it's passed as the ninth argument (the first past the eight argument registers).
     /// </summary>
+    /// <summary>
+    /// The path of the folder or file <paramref name="fd"/> has open, as the system knows it now: wherever it has been moved
+    /// since. Linux reads /proc/self/fd; macOS asks fcntl(F_GETPATH). Null if it can't be told.
+    /// </summary>
+    public string? PathOf(int fd)
+    {
+        if (!OperatingSystem.IsMacOS())
+        {
+            try { return new FileInfo($"/proc/self/fd/{fd}").LinkTarget; }
+            catch (IOException) { return null; }
+        }
+        const int F_GETPATH = 50;
+        var buffer = stackalloc byte[1024];   // MAXPATHLEN
+        var r = RuntimeInformation.ProcessArchitecture == Architecture.Arm64
+            ? ((delegate* unmanaged<int, int, nint, nint, nint, nint, nint, nint, byte*, int>)fcntl)(fd, F_GETPATH, 0, 0, 0, 0, 0, 0, buffer)   // variadic: see Ioctl
+            : ((delegate* unmanaged<int, int, byte*, int>)fcntl)(fd, F_GETPATH, buffer);
+        return r == -1 ? null : Marshal.PtrToStringUTF8((IntPtr)buffer);
+    }
+
     public int Ioctl(int fd, nuint request, void* arg)
     {
         if (OperatingSystem.IsMacOS() && RuntimeInformation.ProcessArchitecture == Architecture.Arm64)

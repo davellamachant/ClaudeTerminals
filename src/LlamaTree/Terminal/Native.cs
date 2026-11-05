@@ -167,6 +167,51 @@ internal static class Native
     /// False to identify the directory entry itself when the last component is a symbolic link or junction (folders above
     /// it are still resolved): two different links to one file are then two different entries.
     /// </param>
+    /// <summary>
+    /// Opens a folder so that, while the handle is held, it can't be renamed, moved or deleted (nor replaced with a
+    /// link): renaming needs it opened for deleting, which this handle doesn't share. A link itself is opened, not what
+    /// it leads to, so the caller can tell (see <see cref="IsLink"/>). Null if it can't be opened.
+    /// </summary>
+    public static SafeFileHandle? HoldFolder(string path)
+    {
+        const uint listDirectory = 0x1, readAttributes = 0x80, shareReadWrite = 3, openExisting = 3, backupSemantics = 0x02000000, openReparsePoint = 0x00200000;
+        var handle = CreateFileW(path, listDirectory | readAttributes, shareReadWrite, IntPtr.Zero, openExisting, backupSemantics | openReparsePoint, IntPtr.Zero);
+        if (!handle.IsInvalid) return handle;
+        handle.Dispose();
+        return null;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FileAttributeTagInfo
+    {
+        public uint FileAttributes, ReparseTag;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetFileInformationByHandleEx(SafeFileHandle hFile, int fileInformationClass, out FileAttributeTagInfo info, uint size);
+
+    /// <summary>Whether what the handle has open is a link (a junction, a symbolic link, any reparse point) or can't be told.</summary>
+    public static bool IsLink(SafeFileHandle handle)
+    {
+        const int fileAttributeTagInfo = 9;
+        const uint reparsePoint = 0x400;
+        return !GetFileInformationByHandleEx(handle, fileAttributeTagInfo, out var info, (uint)Marshal.SizeOf<FileAttributeTagInfo>())
+            || (info.FileAttributes & reparsePoint) != 0;
+    }
+
+    /// <summary>The path of what <paramref name="handle"/> has open, as Windows gives it (\\?\C:\...), or null.</summary>
+    public static string? FinalPathOf(SafeFileHandle handle)
+    {
+        var buffer = new char[1024];
+        var length = GetFinalPathNameByHandleW(handle, buffer, (uint)buffer.Length, 0);
+        if (length > buffer.Length)
+        {
+            buffer = new char[length];
+            length = GetFinalPathNameByHandleW(handle, buffer, (uint)buffer.Length, 0);
+        }
+        return length == 0 || length > buffer.Length ? null : new string(buffer, 0, (int)length);
+    }
+
     public static string? FinalPath(string path, bool followFinalLink = true)
     {
         const uint shareAll = 7, openExisting = 3, backupSemantics = 0x02000000, openReparsePoint = 0x00200000;   // backup semantics lets folders be opened

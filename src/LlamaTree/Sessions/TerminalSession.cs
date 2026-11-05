@@ -62,6 +62,8 @@ internal sealed partial class TerminalSession : IDisposable
     public void Start(int cols, int rows, string? theme = null, PanelLink? panels = null)
     {
         if (process != null) return;
+        if (Info.StartedBy != null && Info.Within == null)
+            throw new IOException("An agent started this session before LlamaTree held such sessions to their folder, so it isn't started. Remove it, and start it again if it's still needed.");
         var generation = ++Generation;
         var p = PtyProcess.Create();
         p.Output += text => Output?.Invoke(this, text);
@@ -90,7 +92,7 @@ internal sealed partial class TerminalSession : IDisposable
             FirstPromptOnce = null;
             PromptToType = onCommandLine ? null : firstPrompt;
             StartedUtc = DateTime.UtcNow;
-            p.Start(command, Info.Directory, env, cols, rows);
+            p.Start(command, Info.Directory, env, cols, rows, Info.Within);
         }
         catch
         {

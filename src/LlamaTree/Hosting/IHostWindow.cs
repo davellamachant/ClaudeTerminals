@@ -1,3 +1,4 @@
+using System.Text.Json;
 using LlamaTree.Plugins;
 
 namespace LlamaTree.Hosting;
@@ -30,4 +31,17 @@ internal interface IHostWindow
     void ServePlugin(PluginInfo plugin);
 
     void StopServingPlugin(string pluginId);
+
+    /// <summary>
+    /// Gives a window on another computer a copy of the file, which it opens there (see
+    /// <see cref="Platform.Desktop.OpenFileForViewing"/>). Reads the file on the calling thread; any thread.
+    /// </summary>
+    void SendFile(string path);
+
+    /// <summary>
+    /// A session's call to one of LlamaTree's tools (panels, messages), answered by the attached window's computer when
+    /// it shows this computer's sessions among its own: there, panels show beside the session and messages reach that
+    /// computer's sessions too. Null when no such window is attached (it's answered here). Any thread.
+    /// </summary>
+    Task<System.Text.Json.Nodes.JsonObject?>? ForwardToolCall(string session, JsonElement message);
 }
