@@ -7,7 +7,7 @@ namespace LlamaTree.Platform;
 /// Handing files, folders and links to the desktop (Explorer, Finder, the Linux file manager and browser), and reading
 /// files or an image off the clipboard on macOS and Linux (Windows reads its clipboard in its window, see MainForm).
 /// </summary>
-internal static class Desktop
+internal static partial class Desktop
 {
     /// <summary>Opens a link, file or folder with what the desktop opens it with.</summary>
     public static void OpenExternal(string target)
@@ -178,19 +178,123 @@ internal static class Desktop
 
     // ---------------------------------------------------------------- clipboard (macOS, Linux)
 
-    /// <summary>Where an image pasted into a terminal is saved, as a file the agent can attach. Saved images go after a week.</summary>
-    public static string PastedImageFolder { get; } = Path.Combine(Path.GetTempPath(), "LlamaTree", "pasted-images");
+    /// <summary>
+    /// A new file for an image pasted into a terminal, to hand the agent; week-old ones are cleared out first. Kept where
+    /// only you can reach: on Linux the session's runtime folder ($XDG_RUNTIME_DIR, gone at logout) when there's a sound
+    /// one, else the app's local data folder. Never the shared temp folder, where another account could make the folder
+    /// first (or a link in its place) to read the pictures or have the clear-out delete files elsewhere. Throws
+    /// <see cref="IOException"/> when no such folder can be had: the paste fails rather than writing somewhere unsafe.
+    /// </summary>
+    public static string NewPastedImagePath() =>
+        NewPastedImagePath(Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR"), AppProfile.CustomFolder ?? AppProfile.LocalFolder, DateTime.Now);
 
-    /// <summary>A new file in <see cref="PastedImageFolder"/> for a pasted image, clearing out week-old ones first.</summary>
-    public static string NewPastedImagePath()
+    internal static string NewPastedImagePath(string? runtimeFolder, string dataFolder, DateTime now)
     {
-        Directory.CreateDirectory(PastedImageFolder);
-        foreach (var old in new DirectoryInfo(PastedImageFolder).EnumerateFiles("*.png").Where(f => f.LastWriteTimeUtc < DateTime.UtcNow.AddDays(-7)))
+        foreach (var folder in PastedImageFolders(runtimeFolder, dataFolder))
         {
-            try { old.Delete(); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            if (!MakePrivateFolder(folder)) continue;
+            ClearOldPastedImages(folder, now.ToUniversalTime().AddDays(-7));
+            return Path.Combine(folder, $"image-{now:yyyyMMdd-HHmmss-fff}.png");
         }
-        return Path.Combine(PastedImageFolder, $"image-{DateTime.Now:yyyyMMdd-HHmmss-fff}.png");
+        throw new IOException("The pasted image wasn't saved: its folder isn't one only you can use (it's a link, or another account's).");
     }
+
+    /// <summary>Where pasted images may go, best first: the runtime folder's (macOS and Linux, when it's sound), then the data folder's.</summary>
+    internal static IEnumerable<string> PastedImageFolders(string? runtimeFolder, string dataFolder)
+    {
+        if (!OperatingSystem.IsWindows() && runtimeFolder is { Length: > 0 } && Path.IsPathFullyQualified(runtimeFolder) && IsPrivate(runtimeFolder, OthersAny))
+            yield return Path.Combine(runtimeFolder, "LlamaTree", "pasted-images");
+        yield return Path.Combine(dataFolder, "pasted-images");
+    }
+
+    /// <summary>The names pasted images are given (see <see cref="NewPastedImagePath()"/>): the only files the clear-out deletes.</summary>
+    [System.Text.RegularExpressions.GeneratedRegex(@"^image-\d{8}-\d{6}-\d{3}\.png$")]
+    private static partial System.Text.RegularExpressions.Regex PastedImageName();
+
+    private const UnixFileMode OwnerOnly = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
+    private const UnixFileMode OthersWrite = UnixFileMode.GroupWrite | UnixFileMode.OtherWrite;
+    private const UnixFileMode OthersAny = OthersWrite | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute;
+
+    /// <summary>
+    /// Makes <paramref name="folder"/> and its parent if they're missing (0700 on macOS and Linux) and checks both are
+    /// yours: real folders, not links; and, on macOS and Linux, owned by you and writable by no one else. The folder is
+    /// then made 0700. False if they aren't yours, and nothing should be written there.
+    /// </summary>
+    internal static bool MakePrivateFolder(string folder)
+    {
+        try
+        {
+            var parent = Path.GetDirectoryName(folder)!;
+            foreach (var f in new[] { parent, folder })   // the parent checked before anything's made in it
+            {
+                if (IsLink(f)) return false;   // not made through, or checked through
+                if (OperatingSystem.IsWindows()) Directory.CreateDirectory(f);
+                else if (!Directory.Exists(f)) Directory.CreateDirectory(f, OwnerOnly);
+                if (!IsPrivate(f, OthersWrite)) return false;
+            }
+            if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(folder, OwnerOnly);   // yours, but others could read it: closed up
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// A real folder (not a link or other reparse point) that's yours: on macOS and Linux owned by you, and with none of
+    /// <paramref name="refused"/> in its mode.
+    /// </summary>
+    private static bool IsPrivate(string folder, UnixFileMode refused)
+    {
+        try
+        {
+            if (IsLink(folder) || !Directory.Exists(folder)) return false;
+            if (OperatingSystem.IsWindows()) return true;
+            var mode = File.GetUnixFileMode(folder);
+            if ((mode & refused) != 0) return false;
+            // Only a file's owner may change its mode: setting it to what it is changes nothing, and fails for anyone else's.
+            File.SetUnixFileMode(folder, mode);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>A symbolic link (dangling or not), junction or other reparse point: not looked through.</summary>
+    private static bool IsLink(string path)
+    {
+        var info = new FileInfo(path);   // for a folder too: neither looks through a link
+        if (info.LinkTarget != null) return true;
+        var attributes = info.Attributes;   // all bits set (-1) when nothing's there
+        return (int)attributes != -1 && attributes.HasFlag(FileAttributes.ReparsePoint);
+    }
+
+    /// <summary>
+    /// Deletes the pasted images in <paramref name="folder"/> last written before <paramref name="before"/>: only files
+    /// of the app's own naming, never links, and nothing in folders within.
+    /// </summary>
+    internal static void ClearOldPastedImages(string folder, DateTime before)
+    {
+        foreach (var entry in new DirectoryInfo(folder).EnumerateFileSystemInfos())
+        {
+            if (entry is not FileInfo file || !PastedImageName().IsMatch(file.Name)) continue;
+            try
+            {
+                if (file.LinkTarget != null || file.Attributes.HasFlag(FileAttributes.ReparsePoint) || file.LastWriteTimeUtc >= before) continue;
+                file.Delete();
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    /// <summary>Creates a pasted image's file: a new one (never one that's there, or a link), readable only by you (0600 on macOS and Linux).</summary>
+    public static FileStream CreatePastedImage(string path) => new(path, OperatingSystem.IsWindows()
+        ? new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write }
+        : new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write, UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite });
 
     /// <summary>
     /// macOS and Linux: the files copied in Finder or the file manager, or the image on the clipboard saved as a PNG.
@@ -239,16 +343,24 @@ internal static class Desktop
 
     private static string[] MacClipboardFiles()
     {
-        var image = NewPastedImagePath();
-        var answer = Capture("/usr/bin/osascript", ["-l", "JavaScript", "-e", MacClipboardScript, image]);
+        // The image's path is needed before it's known whether there is one: with nowhere safe to put it, copied files
+        // still paste (an image is written nowhere, as "" can't be written to).
+        string? image = null;
+        try { image = NewPastedImagePath(); }
+        catch (IOException) { }
+        var answer = Capture("/usr/bin/osascript", ["-l", "JavaScript", "-e", MacClipboardScript, image ?? ""]);
         if (answer == null) return [];
         var lines = answer.TrimEnd('\n').Split('\n');
-        return lines[0] switch
+        switch (lines[0])
         {
-            "files" => lines[1..].Where(l => l.Length > 0).ToArray(),
-            "image" when File.Exists(image) => [image],
-            _ => [],
-        };
+            case "files":
+                return lines[1..].Where(l => l.Length > 0).ToArray();
+            case "image" when image != null && File.Exists(image):
+                if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(image, UnixFileMode.UserRead | UnixFileMode.UserWrite);   // written by the script: as the umask had it
+                return [image];
+            default:
+                return [];
+        }
     }
 
     private static string[] LinuxClipboardFiles()
@@ -273,7 +385,7 @@ internal static class Desktop
         var bytes = CaptureBytes(read[0], read[1..]);
         if (bytes is not { Length: > 0 }) return [];
         var path = NewPastedImagePath();
-        File.WriteAllBytes(path, bytes);
+        using (var file = CreatePastedImage(path)) file.Write(bytes);
         return [path];
     }
 
