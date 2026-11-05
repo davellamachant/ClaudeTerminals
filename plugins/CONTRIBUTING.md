@@ -39,6 +39,10 @@ The *Release a plugin* workflow checks the plugin, zips its folder (`<id>-<versi
 
 LlamaTree will read `catalog.json` to list the plugins under *Get plugins…*, download a plugin's zip, check its hash and the manifest inside against the catalog entry, and unpack it into the plugins folder. Installing grants nothing: the app asks for the access a plugin wants the first time, and again whenever its manifest changes. The catalog will be signed with a key kept outside the repository before the app trusts it; until then it is for people, not the app.
 
+## Licence
+
+A plugin you contribute here is published under the repository's licence, the Apache License 2.0 (see [LICENSE](../LICENSE) and [NOTICE](../NOTICE)), like the app.
+
 ## Access, and why it's small
 
 `access` is the whole of what a plugin may see beyond its own page: `sessions` (the sessions and their state), `message` (send a session a message and read its answer; with `inbox: true`, sessions may message it first), `ask` (put a question about sessions to an agent, which the user is asked about separately). Ask only for what the plugin uses: the user sees the list before allowing it, and a plugin that asks for more than it needs is harder to trust.

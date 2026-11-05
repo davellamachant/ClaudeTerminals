@@ -47,7 +47,8 @@ if (args.includes('--readme')) {
   const start = '<!-- plugins:start -->', end = '<!-- plugins:end -->';
   const a = text.indexOf(start), b = text.indexOf(end);
   if (a < 0 || b < 0 || b < a) { console.error('README.md needs the markers <!-- plugins:start --> and <!-- plugins:end -->'); process.exit(1); }
-  const next = text.slice(0, a + start.length) + '\n' + readmeTable(entries()) + '\n' + text.slice(b);
+  const nl = text.includes('\r\n') ? '\r\n' : '\n';   // the file's own line endings (a Windows checkout has CRLF)
+  const next = text.slice(0, a + start.length) + nl + readmeTable(entries()).replace(/\n/g, nl) + nl + text.slice(b);
   if (args.includes('--check')) {
     if (next !== text) { console.error('README.md\'s table of plugins is out of date: run  node plugins/tools/catalog.mjs --readme  and commit it.'); process.exit(1); }
     console.log('README.md\'s table of plugins is up to date.');

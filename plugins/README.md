@@ -24,6 +24,10 @@ The table is written by `node plugins/tools/catalog.mjs --readme` from each plug
 
 LlamaTree will soon list these plugins itself under *Get plugins…* and install them from here, reading [`catalog.json`](https://github.com/LlamachantTechnology/LlamaTree/releases/tag/catalog), which the release workflow rebuilds after every plugin release.
 
+## Licence
+
+The plugins are under the same licence as the app, the Apache License 2.0: see [LICENSE](../LICENSE) and [NOTICE](../NOTICE).
+
 ## Writing one
 
 See [CONTRIBUTING.md](CONTRIBUTING.md): the folder layout, the manifest ([`schema/plugin.schema.json`](schema/plugin.schema.json)), the checks (`node plugins/tools/validate.mjs`), and how a plugin is released (a tag `<id>-v<version>` on `main`).
