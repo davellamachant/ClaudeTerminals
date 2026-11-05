@@ -4586,7 +4586,7 @@ function refreshPanel(p) {
   if (owner?.startsOnOpen) { startSession(owner); toast(`Starting "${owner.name}". Refresh again once Claude is up.`); return; }
   if (!owner?.running) { toast(`"${owner?.name ?? 'Its session'}" isn't running, so it can't refresh this panel.`, true); return; }
   post({ type: 'input', id: owner.id, data: p.refresh });
-  setTimeout(() => pressEnter(owner), 150);
+  enterAfterTyping(owner);
   toast(`Asked ${owner.name} to refresh "${p.title}".`);
 }
 
@@ -7981,18 +7981,33 @@ function relayNotify(s) {
   const names = [...(relay.from[s.id] ?? [])].map((id) => `"${relayName(id)}"`);
   const text = `[LlamaTree] ${n === 1 ? 'A message has' : `${n} messages have`} come from ${names.length ? names.join(' and ') : 'another session'}. Read ${n === 1 ? 'it' : 'them'} with the read_messages tool, and answer with send_message: the sender doesn't see what you write here.`;
   s.term.paste(text);
-  setTimeout(() => pressEnter(s), 150);
-  setTimeout(() => resendNotice(s, 3), 1500);
+  enterAfterTyping(s, () => noticeInPrompt(s));
 }
 
+const isCodex = (s) => agentOf(s.command)?.id === 'codex';
+
 /**
- * An Enter the agent missed (it was redrawing, or still starting) leaves the notice in its prompt: Enter is pressed
- * again, a few times at most, unless you've typed into the session since (then what's in the prompt is yours to send).
+ * Presses Enter to send what was just typed into a session's prompt, and again (a few times at most) if the agent
+ * missed it, unless you've typed into the session since (then what's in the prompt is yours to send).
+ *
+ * Claude Code takes a paste in one piece, so Enter can follow at once; it can still miss one while redrawing or
+ * starting, which `inPrompt` (text still in its prompt) tells. Codex on Windows gets no bracketed paste: it guesses a
+ * paste from keys arriving close together, and an Enter within ~120ms of the last one becomes a newline in its prompt
+ * rather than sending it. ConPTY hands a paste over key by key, so Codex gets longer, and Enter again while it hasn't
+ * started work: a newline at the end of the prompt changes nothing, and Enter on an empty prompt does nothing.
  */
-function resendNotice(s, tries) {
-  if (!s.running || performance.now() - s.act.lastIn < 1500 || !noticeInPrompt(s)) return;
+function enterAfterTyping(s, inPrompt) {
+  const typedAt = s.act.lastIn;
+  const codex = isCodex(s);
+  setTimeout(() => pressEnter(s), codex ? 600 : 150);
+  const unsent = codex ? () => !s.asking && s.act.state !== 'working' : inPrompt;
+  if (unsent) setTimeout(() => resendEnter(s, typedAt, unsent, 3), 1500);
+}
+
+function resendEnter(s, typedAt, unsent, tries) {
+  if (!s.running || s.act.lastIn !== typedAt || !unsent()) return;
   pressEnter(s);
-  if (tries > 1) setTimeout(() => resendNotice(s, tries - 1), 1500);
+  if (tries > 1) setTimeout(() => resendEnter(s, typedAt, unsent, tries - 1), 1500);
 }
 
 /** Whether Claude's prompt (the box between the last two rules on the screen) still holds a notice. */
@@ -8118,7 +8133,7 @@ function controlPrompt(id, text, tries = 0) {
   // The host refuses control characters already; this keeps a paste from ever carrying keys of its own.
   text = text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '');
   s.term.paste(text);
-  setTimeout(() => pressEnter(s), 150);
+  enterAfterTyping(s);
 }
 
 /** The tile's mark for a session another started: who, opening the starter. */
