@@ -18,8 +18,8 @@ AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
 AppPublisher={#AppPublisher}
-AppPublisherURL=https://www.llamatree.dev
-AppSupportURL=https://www.llamatree.dev
+AppPublisherURL=https://llamatree.dev
+AppSupportURL=https://llamatree.dev
 VersionInfoVersion={#AppVersion}
 VersionInfoProductName={#AppName}
 
