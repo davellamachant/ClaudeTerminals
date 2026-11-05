@@ -234,6 +234,7 @@ host.addEventListener('message', (e) => {
     case 'control': controlChanged(m.state); break;
     case 'control.ask': askSpawn(m.request); break;
     case 'control.settled': spawnSettled(m.id); break;
+    case 'agent.ready': { const s = state.byId.get(m.id); if (s) s.readyAt = performance.now(); break; }
     case 'control.start': { const s = state.byId.get(m.id); if (s && !s.started) startSession(s); break; }
     case 'control.prompt': controlPrompt(m.id, m.text); break;
     case 'plugins.grants': applyGrants(m.grants); break;
@@ -7622,18 +7623,54 @@ function onRelayMessage(m) {
  * Tells a session's agent it has messages, by typing a line into it and sending it, as you would: only while it's idle
  * (not working, not asking you something) and you haven't typed into it in the last few seconds, so it never lands in
  * a prompt you're writing. The messages themselves reach it only through read_messages. Each new message is told once.
+ * A session brought back with the app that hasn't been opened yet is started by its message, so another agent's
+ * question doesn't wait for you to open it; it's told once its agent is up (its MCP connection, or 20 s on).
  */
 function relayNotify(s) {
   const n = relay.unread[s.id] ?? 0;
   if (!n) { delete relay.told[s.id]; relay.from[s.id]?.clear(); return; }
   if (n <= (relay.told[s.id] ?? 0)) return;
+  if (s.startsOnOpen && agentOf(s.command) && !serverDown(s)) { s.wokenAt = performance.now(); startSession(s); return; }
   if (!s.running || s.startsOnOpen || !agentOf(s.command) || !['running', 'attention'].includes(statusClass(s))) return;
   if (performance.now() - s.act.lastIn < 5000) return;   // you're typing in it: the next check tries again
+  if (s.wokenAt) {
+    // Typed while the agent is still starting, the line can stay in its prompt unsent.
+    const now = performance.now();
+    if (s.readyAt > s.wokenAt ? now - s.readyAt < 2000 : now - s.wokenAt < 20000) return;
+    s.wokenAt = null;
+  }
   relay.told[s.id] = n;
   const names = [...(relay.from[s.id] ?? [])].map((id) => `"${relayName(id)}"`);
   const text = `[LlamaTree] ${n === 1 ? 'A message has' : `${n} messages have`} come from ${names.length ? names.join(' and ') : 'another session'}. Read ${n === 1 ? 'it' : 'them'} with the read_messages tool, and answer with send_message: the sender doesn't see what you write here.`;
   s.term.paste(text);
   setTimeout(() => post({ type: 'input', id: s.id, data: '\r' }), 150);
+  setTimeout(() => resendNotice(s, 3), 1500);
+}
+
+/**
+ * An Enter the agent missed (it was redrawing, or still starting) leaves the notice in its prompt: Enter is pressed
+ * again, a few times at most, unless you've typed into the session since (then what's in the prompt is yours to send).
+ */
+function resendNotice(s, tries) {
+  if (!s.running || performance.now() - s.act.lastIn < 1500 || !noticeInPrompt(s)) return;
+  post({ type: 'input', id: s.id, data: '\r' });
+  if (tries > 1) setTimeout(() => resendNotice(s, tries - 1), 1500);
+}
+
+/** Whether Claude's prompt (the box between the last two rules on the screen) still holds a notice. */
+function noticeInPrompt(s) {
+  const b = s.term.buffer.active;
+  const text = (i) => b.getLine(i)?.translateToString(true).trim() ?? '';
+  const rule = (i) => /^─{20,}$/.test(text(i));
+  let bottom = b.length - 1;
+  while (bottom > 0 && !text(bottom)) bottom--;   // a tall terminal has empty rows below Claude's screen
+  const from = Math.max(0, bottom - 40);
+  while (bottom >= from && !rule(bottom)) bottom--;
+  let top = bottom - 1;
+  while (top >= from && !rule(top)) top--;
+  if (top < from) return false;
+  for (let i = top + 1; i < bottom; i++) if (b.getLine(i)?.translateToString(true).includes('[LlamaTree] ')) return true;
+  return false;
 }
 
 /** A session asks to message another, with no rule to say: you're asked, one question at a time. */

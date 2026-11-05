@@ -523,6 +523,7 @@ internal sealed partial class AppHost
         // A first prompt that couldn't go on the command line is typed once Claude is up (it connects as it starts).
         mcp.Initialized += id => RunOnUi(async () =>
         {
+            Post(new { type = "agent.ready", id });   // the page tells a session it woke of its messages once it's up
             if (!sessions.TryGetValue(id, out var s) || s.PromptToType is not { } prompt) return;
             s.PromptToType = null;
             await Task.Delay(1500);
