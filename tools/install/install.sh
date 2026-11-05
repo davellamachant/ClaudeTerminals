@@ -6,14 +6,21 @@
 # With apt-get, dnf or zypper and administrator rights (root, or sudo: it asks for the password when there's a
 # terminal to ask in), it installs the .deb or .rpm, which brings WebKitGTK and libnotify with it. Otherwise it unpacks
 # the .tar.gz into ~/.local/share/LlamaTree with a `llamatree` command in ~/.local/bin; that copy updates itself too.
-# Each download is checked against the SHA-256 GitHub publishes for it (the in-app updater checks the release's signed
-# SHA256SUMS as well).
+# The download is installed only once it's shown to be the one we built, as the in-app updater checks it: it matches its
+# line in the release's SHA256SUMS, and SHA256SUMS.p7s is our signature of that list (checked with openssl), by a code
+# signing certificate issued to Llamachant Technology Ltd with its registration number and country, chaining to
+# Sectigo Public Code Signing Root R46, which is in this script. Not GitHub's word alone (its digest is checked too),
+# so someone who could only publish on GitHub can't swap the download. Releases before 1.3.1 have no SHA256SUMS, so
+# this installs 1.3.1 or later only.
 #
 #   LLAMATREE_INSTALL=tar      install for this user only, from the .tar.gz, even when a package could be installed
 #   LLAMATREE_INSTALL=package  install the package or stop: never fall back to the .tar.gz
 #   LLAMATREE_UPDATE_URL       a stand-in for the GitHub API's latest release, for tests (downloads may then be local)
+#   LLAMATREE_INSECURE_SKIP_SIGNATURE=1
+#                              where there's no openssl to check the signature with, install on GitHub's digest alone
+#                              (not recommended: install openssl instead). It changes nothing where openssl is there.
 #
-# POSIX sh, so it runs under `curl | sh` on dash, busybox and bash alike; needs curl or wget, and no jq.
+# POSIX sh, so it runs under `curl | sh` on dash, busybox and bash alike; needs curl or wget, openssl, and no jq.
 # Everything is inside main, called on the last line, so a download cut short runs nothing.
 
 set -eu
@@ -73,7 +80,148 @@ check_url() {
     die "The download address isn't a GitHub download, so it won't be used: $1"
 }
 
-# Downloads a release asset into $tmp and checks it against GitHub's digest. Prints the file's path.
+# Sectigo Public Code Signing Root R46 (SHA-1 CC:BB:F9:E1:48:5A:F6:3C:E4:7A:BF:8E:9E:64:8C:25:04:FC:31:9D, valid to
+# 2046), which our code signing certificate chains to: the certificate Publisher.cs in the app pins. It's the only
+# authority SHA256SUMS.p7s is checked against, never this system's own roots.
+r46_pem() {
+    cat <<'PEM'
+-----BEGIN CERTIFICATE-----
+MIIFeDCCA2CgAwIBAgIQSyw7AQGLrSq8jHtbPu2QVzANBgkqhkiG9w0BAQwFADBW
+MQswCQYDVQQGEwJHQjEYMBYGA1UEChMPU2VjdGlnbyBMaW1pdGVkMS0wKwYDVQQD
+EyRTZWN0aWdvIFB1YmxpYyBDb2RlIFNpZ25pbmcgUm9vdCBSNDYwHhcNMjEwMzIy
+MDAwMDAwWhcNNDYwMzIxMjM1OTU5WjBWMQswCQYDVQQGEwJHQjEYMBYGA1UEChMP
+U2VjdGlnbyBMaW1pdGVkMS0wKwYDVQQDEyRTZWN0aWdvIFB1YmxpYyBDb2RlIFNp
+Z25pbmcgUm9vdCBSNDYwggIiMA0GCSqGSIb3DQEBAQUAA4ICDwAwggIKAoICAQCN
+55QSIgQkdC7/FiMCkoq2rjaFrEfUI5ErPtx94jGgUW+shJHjUoq14pbe0IdjJImK
+/+8Skzt9u7aKvb0Ffyeba2XTpQxpsbxJOZrxbW6q5KCDJ9qaDStQ6Utbs7hkNqR+
+Sj2pcaths3OzPAsM79szV+W+NDfjlxtd/R8SPYIDdub7P2bSlDFp+m2zNKzBenjc
+klDyZMeqLQSrw2rq4C+np9xu1+j/2iGrQL+57g2extmeme/G3h+pDHazJyCh1rr9
+gOcB0u/rgimVcI3/uxXP/tEPNqIuTzKQdEZrRzUTdwUzT2MuuC3hv2WnBGsY2HH6
+zAjybYmZELGt2z4s5KoYsMYHAXVn3m3pY2MeNn9pib6qRT5uWl+PoVvLnTCGMOgD
+s0DGDQ84zWeoU4j6uDBl+m/H5x2xg3RpPqzEaDux5mczmrYI4IAFSEDu9oJkRqj1
+c7AGlfJsZZ+/VVscnFcax3hGfHCqlBuCF6yH6bbJDoEcQNYWFyn8XJwYK+pF9e+9
+1WdPKF4F7pBMeufG9ND8+s0+MkYTIDaKBOq3qgdGnA2TOglmmVhcKaO5DKYwODzQ
+RjY1fJy67sPV+Qp2+n4FG0DKkjXp1XrRtX8ArqmQqsV/AZwQsRb8zG4Y3G9i/qZQ
+p7h7uJ0VP/4gDHXIIloTlRmQAOka1cKG8eOO7F/05QIDAQABo0IwQDAdBgNVHQ4E
+FgQUMuuSmv81lkgvKEBCcCA2kVwXheYwDgYDVR0PAQH/BAQDAgGGMA8GA1UdEwEB
+/wQFMAMBAf8wDQYJKoZIhvcNAQEMBQADggIBAHZlwuPXIkrXHYle/2lexhQCTXOm
+zc0oyrA36r+nySGqql/av/aDbNCA0QpcAKTL88w5D55BcYjVPOiKe4wXI/fKNHSR
+bAauUD8AWbImPDwXg1cDPi3RGj3UzwdUskMLUnKoiPXEF/Jv0Vil0WjkPZgIGO42
+9EhImvpUcPCI1HAWMEJJ0Nk/dUtFcdiuorthDoiFUFe5uhErNikfjyBynlyeidGC
+2kWNapnahHFrM6UQu3nwl/Z0gaA/V8eGjDCMDjiVrgHGHqvcqB9vL9f/dh6uF3Nt
+5bl1s2EGqJUzwk5vsjfylb6FVBK5yL1iQnb3Kvz1NzEDJlf+0ebb8BYCcoOMCLOE
+rKnkB/ihiMQTWlBHVEKm7dBBNCyYsT6iNKEMXb2s9395p79tDFYyhRtLl7jhrOSk
+PHHxo+FOY9b0Rrr1CwjhYzztolkvCtQsayOinqFN7tESzRgzUO1Bbst/PUFgC2ML
+ePV170MVtzYLEK/cXBipmNk22R3YhLMGioLjexskp0LO7g8+VlwyfexL3lYrOzu6
++XpY0FG2bNb2WKJSJHpEhqEcYD9J0/z6+YQcBcI0v+Lm8RkqmS9WVzWctfUHw0Yv
+3jg9GQ37o/HfE57nqXJYMa+96trX1m13MzOO9Kz9wb9Jh9JwBWd0Bqb2eEAtFgSR
+Dx/TFsS4ehcNJMmy
+-----END CERTIFICATE-----
+PEM
+}
+
+# Who we are, as Publisher.cs pins it: O=, serialNumber= (the registration number) and jurisdictionC=
+# (jurisdictionCountryName), as openssl names them.
+OUR_NAME="Llamachant Technology Ltd"
+OUR_NUMBER=2469513
+OUR_COUNTRY=CA
+
+# Whether a certificate (PEM) is ours: for code signing, and naming us by each of those fields, each there once (a field
+# in a multi-valued name never matches). Says why not, on stderr.
+is_ours() {   # certificate
+    subject=$(openssl x509 -in "$1" -noout -subject -nameopt RFC2253) || return 1
+    subject=${subject#subject=}
+    subject=${subject# }
+    # One field per line: split at the commas between fields (one inside a value comes escaped, as \,).
+    fields=$(printf '%s\n' "$subject" | awk '{
+        f = ""
+        for (i = 1; i <= length($0); i++) {
+            c = substr($0, i, 1)
+            if (c == "\\") { f = f c substr($0, i + 1, 1); i++ }
+            else if (c == ",") { print f; f = "" }
+            else f = f c
+        }
+        print f }')
+    for want in "O=$OUR_NAME" "serialNumber=$OUR_NUMBER" "jurisdictionC=$OUR_COUNTRY"; do
+        if [ "$(printf '%s\n' "$fields" | grep -c "^${want%%=*}=")" != 1 ] || ! printf '%s\n' "$fields" | grep -qxF "$want"; then
+            warn "SHA256SUMS is signed by someone else ($subject)."
+            return 1
+        fi
+    done
+    if ! openssl x509 -in "$1" -noout -text | awk '/X509v3 Extended Key Usage/ { getline; print }' | grep -q 'Code Signing'; then
+        warn "SHA256SUMS's signing certificate isn't for code signing ($subject)."
+        return 1
+    fi
+}
+
+# Whether $2 (SHA256SUMS.p7s) is our signature of $1 (SHA256SUMS), exactly as it is: a valid detached CMS signature,
+# with one signer, whose certificate chains to R46 and is_ours. Says why not, on stderr.
+#   -no-CApath (and -no-CAstore, where openssl has stores): R46 alone is trusted, not the system's roots.
+#   -purpose any: openssl's default purpose is S/MIME, which a code signing certificate isn't; is_ours checks it's
+#     for code signing instead.
+#   -no_check_time: the app judges the signature as of when it was signed, so a release stays installable after the
+#     certificate that signed it expires; here, as of no particular time.
+verify_sums() {   # sums signature
+    r46_pem >"$tmp/r46.pem"
+    rm -f "$tmp/signer.pem"
+    stores=-no-CApath
+    if openssl cms -help 2>&1 | grep -q -- '-no-CAstore'; then stores="$stores -no-CAstore"; fi
+    # shellcheck disable=SC2086 # $stores is one or two options
+    if ! openssl cms -verify -binary -inform DER -in "$2" -content "$1" -CAfile "$tmp/r46.pem" $stores \
+            -purpose any -no_check_time -signer "$tmp/signer.pem" -out /dev/null 2>"$tmp/openssl.log"; then
+        warn "SHA256SUMS.p7s isn't a valid signature of SHA256SUMS by a certificate from Sectigo Public Code Signing Root R46:"
+        head -n 3 "$tmp/openssl.log" >&2
+        return 1
+    fi
+    [ "$(grep -c 'BEGIN CERTIFICATE' "$tmp/signer.pem")" = 1 ] || { warn "SHA256SUMS.p7s must have exactly one signer."; return 1; }
+    is_ours "$tmp/signer.pem"
+}
+
+# The SHA-256 the signed SHA256SUMS ($1) gives for $2 ("<hash>  <name>", as sha256sum writes it), when it lists it once.
+signed_sum() {   # sums name
+    awk -v name="$2" 'substr($0, 65) == "  " name && substr($0, 1, 64) ~ /^[0-9a-f]+$/ { n++; h = substr($0, 1, 64) }
+        END { if (n == 1) print h }' "$1"
+}
+
+# Whether the file ($2) is the release's $1 by the signed SHA256SUMS ($signed_sums, once fetch_signed_sums has checked it).
+check_signed() {   # name file
+    [ -n "$signed_sums" ] || return 0   # LLAMATREE_INSECURE_SKIP_SIGNATURE, with no openssl
+    signed=$(signed_sum "$signed_sums" "$1")
+    [ -n "$signed" ] || die "The release's signed SHA256SUMS doesn't list $1, so it wasn't installed."
+    actual=$(sha256 "$2")
+    [ "$actual" = "$signed" ] ||
+        die "$1 doesn't match its checksum in the release's signed SHA256SUMS (got $actual, signed $signed), so it wasn't installed."
+}
+
+# Downloads the release's SHA256SUMS and SHA256SUMS.p7s into $tmp and checks the signature, setting $signed_sums.
+# Fails when the release has none (before 1.3.1), or the signature isn't ours.
+fetch_signed_sums() {
+    sums_url=$(json_field "$json" url SHA256SUMS)
+    sig_url=$(json_field "$json" url SHA256SUMS.p7s)
+    [ -n "$sums_url" ] && [ -n "$sig_url" ] ||
+        die "LlamaTree $version's release has no signed checksums (SHA256SUMS and SHA256SUMS.p7s), so its download can't be checked and won't be installed. See $RELEASES"
+    signed_sums=""
+    if ! have openssl; then
+        if [ "${LLAMATREE_INSECURE_SKIP_SIGNATURE-}" != 1 ]; then
+            warn "Checking that the download is ours needs openssl, which isn't installed here, so nothing was installed."
+            warn "Install it (Debian/Ubuntu: sudo apt-get install openssl; Fedora: sudo dnf install openssl; openSUSE: sudo zypper install openssl) and run this again."
+            die "Or, to install on GitHub's checksum alone, which anyone who can publish there could fake, run it with LLAMATREE_INSECURE_SKIP_SIGNATURE=1."
+        fi
+        warn "WARNING: openssl isn't installed, so the release's signature is NOT checked (LLAMATREE_INSECURE_SKIP_SIGNATURE=1)."
+        warn "WARNING: installing on GitHub's checksum alone."
+        return 0
+    fi
+    check_url "$sums_url"
+    check_url "$sig_url"
+    download "$sums_url" "$tmp/SHA256SUMS" || die "Couldn't download $sums_url"
+    download "$sig_url" "$tmp/SHA256SUMS.p7s" || die "Couldn't download $sig_url"
+    verify_sums "$tmp/SHA256SUMS" "$tmp/SHA256SUMS.p7s" ||
+        die "The release's checksums aren't signed by Llamachant Technology Ltd, so nothing was installed."
+    signed_sums="$tmp/SHA256SUMS"
+}
+
+# Downloads a release asset into $tmp and checks it against GitHub's digest and its line in the signed SHA256SUMS.
+# Prints the file's path.
 fetch_asset() {
     url=$(json_field "$json" url "$1")
     digest=$(json_field "$json" digest "$1")
@@ -87,6 +235,7 @@ fetch_asset() {
     download "$url" "$tmp/$1" || die "Couldn't download $url"
     actual=$(sha256 "$tmp/$1")
     [ "$actual" = "$expected" ] || die "$1 doesn't match the checksum GitHub publishes for it (got $actual, expected $expected), so it wasn't installed."
+    check_signed "$1" "$tmp/$1"
     printf '%s\n' "$tmp/$1"
 }
 
@@ -225,6 +374,7 @@ main() {
     fi
 
     say "Installing LlamaTree $version ($asset)."
+    fetch_signed_sums
     file=$(fetch_asset "$asset")
 
     if [ "$kind" = tar ]; then

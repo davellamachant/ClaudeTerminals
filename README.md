@@ -51,7 +51,7 @@ powershell -c "irm https://github.com/LlamachantTechnology/LlamaTree/releases/la
 curl -fsSL https://github.com/LlamachantTechnology/LlamaTree/releases/latest/download/install.sh | sh
 ```
 
-Each downloads the latest release, checks it against the SHA-256 GitHub publishes for it, and installs it. Both scripts are in [tools/install](tools/install) if you'd like to read them first. You can also download the Windows setup, or the `.deb`, `.rpm` or `.tar.gz`, from the [latest release](https://github.com/LlamachantTechnology/LlamaTree/releases/latest).
+Each downloads the latest release, checks it against the checksums we sign for every release with our code signing certificate (and, on Windows, the installer's own signature), and installs it. Both scripts are in [tools/install](tools/install) if you'd like to read them first. You can also download the Windows setup, or the `.deb`, `.rpm` or `.tar.gz`, from the [latest release](https://github.com/LlamachantTechnology/LlamaTree/releases/latest).
 
 You need [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and/or the [Codex CLI](https://github.com/openai/codex), plus Git. LlamaTree runs on Windows 10 1809+ and Windows 11 (x64) and on 64-bit Linux; on macOS it runs built from source for now. See [Getting started](docs/getting-started.md) for the details.
 
