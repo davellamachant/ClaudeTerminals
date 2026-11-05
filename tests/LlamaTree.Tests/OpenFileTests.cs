@@ -53,6 +53,140 @@ public sealed class OpenFileTests
     public void Documents_are_not_runnable(string file) =>
         Assert.False(LlamaTree.Platform.Desktop.IsRunnable(file));
 
+    // C1: a name ending in dots or spaces is made by Windows without them, so it runs as what's before them.
+    [WindowsTheory]
+    [InlineData("x.cmd ")]
+    [InlineData("README.cmd .")]
+    [InlineData("x.exe  .")]
+    [InlineData("x.cmd . .")]
+    [InlineData("x.bat.")]
+    [InlineData("x.lnk ")]
+    [InlineData("x.msi. ")]
+    [InlineData(@"C:\work\x.ps1 ")]
+    public void A_name_ending_in_dots_or_spaces_is_judged_by_the_file_windows_makes(string file) =>
+        Assert.True(LlamaTree.Platform.Desktop.IsRunnable(file));
+
+    // M3: types that do something when opened, though they aren't programs.
+    [WindowsTheory]
+    [InlineData("x.search-ms")]
+    [InlineData("x.searchConnector-ms")]
+    [InlineData("x.library-ms")]
+    [InlineData("x.xll")]
+    [InlineData("x.docm")]
+    [InlineData("x.xlsm")]
+    [InlineData("x.diagcab")]
+    [InlineData("x.rdp")]
+    [InlineData("x.vsto")]
+    [InlineData("x.jnlp")]
+    [InlineData("x.ms-appinstaller")]
+    [InlineData("x.hta")]
+    [InlineData("x.lnk")]
+    [InlineData("x.url")]
+    public void Types_that_act_when_opened_count_as_runnable(string file) =>
+        Assert.True(LlamaTree.Platform.Desktop.IsRunnable(file));
+
+    // A web page of your own (a report Claude made) still opens in the browser.
+    [Theory]
+    [InlineData("report.html")]
+    [InlineData("report.htm")]
+    [InlineData("page.xhtml")]
+    [InlineData("chart.svg")]
+    [InlineData("saved.mht")]
+    [InlineData("saved.mhtml")]
+    public void A_local_web_page_is_not_runnable(string file) =>
+        Assert.False(LlamaTree.Platform.Desktop.IsRunnable(file));
+
+    [Fact]
+    public void A_servers_web_page_goes_to_a_text_editor_and_only_pictures_documents_and_text_to_their_app()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "lt-open-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(dir);
+        try
+        {
+            string Make(string name, byte[] bytes)
+            {
+                var p = Path.Combine(dir, name);
+                File.WriteAllBytes(p, bytes);
+                return p;
+            }
+            var text = System.Text.Encoding.UTF8.GetBytes("<script>alert(1)</script>");
+            Assert.Equal(LlamaTree.Platform.Desktop.ServerOpen.TextEditor, LlamaTree.Platform.Desktop.ServerFileOpening(Make("page.html", text)));
+            Assert.Equal(LlamaTree.Platform.Desktop.ServerOpen.TextEditor, LlamaTree.Platform.Desktop.ServerFileOpening(Make("run.cmd", text)));
+            Assert.Equal(LlamaTree.Platform.Desktop.ServerOpen.Folder, LlamaTree.Platform.Desktop.ServerFileOpening(Make("doc.docm", [0x50, 0x4B, 0x03, 0x04, 0x00])));
+            Assert.Equal(LlamaTree.Platform.Desktop.ServerOpen.App, LlamaTree.Platform.Desktop.ServerFileOpening(Make("notes.md", text)));
+        }
+        finally
+        {
+            Directory.Delete(dir, true);
+        }
+    }
+
+    // What a server sends goes to its app only when it's a type that's shown, not run (on every system).
+    [Theory]
+    [InlineData("x.cmd ")]
+    [InlineData("README.cmd .")]
+    [InlineData("x.exe  .")]
+    [InlineData("x.cmd . .")]
+    [InlineData("photo.png.")]
+    [InlineData("notes.txt ")]
+    [InlineData("x.cmd")]
+    [InlineData("x.bat")]
+    [InlineData("x.exe")]
+    [InlineData("x.lnk")]
+    [InlineData("x.msi")]
+    [InlineData("x.search-ms")]
+    [InlineData("x.xll")]
+    [InlineData("x.docm")]
+    [InlineData("x.xlsm")]
+    [InlineData("x.diagcab")]
+    [InlineData("x.rdp")]
+    [InlineData("x.vsto")]
+    [InlineData("x.jnlp")]
+    [InlineData("x.ms-appinstaller")]
+    [InlineData("x.html")]
+    [InlineData("x.htm")]
+    [InlineData("x.mht")]
+    [InlineData("x.svg")]
+    [InlineData("x.js")]
+    [InlineData("x.py")]
+    [InlineData("x.csv")]
+    [InlineData("x.docx")]
+    [InlineData("Makefile")]
+    [InlineData("x")]
+    public void A_servers_file_of_any_other_type_is_not_handed_to_its_app(string file) =>
+        Assert.False(LlamaTree.Platform.Desktop.IsViewable(file));
+
+    [Theory]
+    [InlineData("photo.png")]
+    [InlineData("Photo.JPG")]
+    [InlineData("report.pdf")]
+    [InlineData("README.md")]
+    [InlineData("notes.txt")]
+    [InlineData("build.log")]
+    [InlineData("package.json")]
+    [InlineData("Program.cs")]
+    public void A_servers_picture_document_or_text_is_handed_to_its_app(string file) =>
+        Assert.True(LlamaTree.Platform.Desktop.IsViewable(file));
+
+    [Fact]
+    public void Only_a_file_without_nul_bytes_looks_like_text()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "lt-text-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(dir);
+        try
+        {
+            File.WriteAllText(Path.Combine(dir, "a.cmd"), "@echo off\r\n");
+            File.WriteAllBytes(Path.Combine(dir, "b.exe"), [0x4D, 0x5A, 0x90, 0x00, 0x03]);
+            Assert.True(LlamaTree.Platform.Desktop.LooksLikeText(Path.Combine(dir, "a.cmd")));
+            Assert.False(LlamaTree.Platform.Desktop.LooksLikeText(Path.Combine(dir, "b.exe")));
+            Assert.False(LlamaTree.Platform.Desktop.LooksLikeText(Path.Combine(dir, "missing")));
+        }
+        finally
+        {
+            Directory.Delete(dir, true);
+        }
+    }
+
     // An extension on none of the lists, associated on some machine with a program that runs it.
     [WindowsTheory]
     [InlineData("\"%1\" %*", @"C:\tools\thing.exe", true)]               // runs the file itself, like .exe

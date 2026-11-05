@@ -37,8 +37,11 @@ internal sealed class ServerCopies(string folder)
     /// <summary>How long an asked-for file may take to start coming.</summary>
     private static readonly TimeSpan ExpectFor = TimeSpan.FromMinutes(2);
 
-    /// <summary>When this computer asked to open each file it's still waiting for (oldest first).</summary>
-    private readonly Queue<DateTime> expected = new();
+    /// <summary>
+    /// Each file this computer is still waiting for (oldest first): when it asked, and the name of what it asked to open
+    /// (made safe), or null when the request didn't name a path.
+    /// </summary>
+    private readonly List<(DateTime At, string? Name)> expected = [];
     private bool tidied;
 
     private sealed record Incoming(FileStream Stream, string Path)
@@ -51,23 +54,23 @@ internal sealed class ServerCopies(string folder)
 
     /// <summary>
     /// This computer has asked the server to open something (a file, a path link…): a file may come for it, starting
-    /// within <see cref="ExpectFor"/>. A file the server sends unasked is refused.
+    /// within <see cref="ExpectFor"/>. A file the server sends unasked is refused. <paramref name="path"/> is the path the
+    /// request named, as sent to the server: the file that comes for it must have its name (see <see cref="FilePart"/>).
     /// </summary>
-    public void ExpectFile()
+    public void ExpectFile(string? path = null)
     {
         Prune();
-        if (expected.Count < 16) expected.Enqueue(DateTime.UtcNow);
+        if (expected.Count < 16) expected.Add((DateTime.UtcNow, string.IsNullOrWhiteSpace(path) ? null : ServerFiles.SafeName(path)));
     }
 
-    private void Prune()
-    {
-        while (expected.Count > 0 && DateTime.UtcNow - expected.Peek() > ExpectFor) expected.Dequeue();
-    }
+    private void Prune() => expected.RemoveAll(e => DateTime.UtcNow - e.At > ExpectFor);
 
     /// <summary>
     /// A part of a file to open. Returns its path here once the last part has come, else null. A file nobody asked
-    /// for, one past the number on their way at once, one whose parts come out of order, and one that grows too big
-    /// are dropped.
+    /// for, one whose name isn't that of a file asked for, one past the number on their way at once, one whose parts
+    /// come out of order, and one that grows too big are dropped. The name it's kept under is the one asked for (made
+    /// safe), as the file system really made it; and on Windows it's marked as having come from the internet, so
+    /// Windows and the apps that open it treat it as they would a download.
     /// </summary>
     public string? FilePart(string token, string name, string data, int index, bool last)
     {
@@ -76,17 +79,43 @@ internal sealed class ServerCopies(string folder)
         {
             Drop(token);
             Prune();
-            if (expected.Count == 0 || files.Keys.Count(k => !k.Contains('/')) >= MaxOpenTransfers) return null;
-            expected.Dequeue();
+            if (files.Keys.Count(k => !k.Contains('/')) >= MaxOpenTransfers) return null;
+            // The oldest request for a file of this name; else the oldest that named none.
+            var safe = ServerFiles.SafeName(name);
+            var asked = expected.FindIndex(e => e.Name == safe);
+            if (asked < 0) asked = expected.FindIndex(e => e.Name == null);
+            if (asked < 0) return null;
+            safe = expected[asked].Name ?? safe;
+            expected.RemoveAt(asked);
             Tidy();
             var dir = Path.Combine(folder, "opened", token);
             Directory.CreateDirectory(dir);
-            var path = Path.Combine(dir, ServerFiles.SafeName(name));
-            files[token] = new Incoming(new FileStream(path, FileMode.Create, FileAccess.Write), path);
+            var path = Path.Combine(dir, safe);
+            var stream = new FileStream(path, FileMode.Create, FileAccess.Write);
+            // What's opened, and judged by its name, is the file the system made, whatever the name given said.
+            if (OperatingSystem.IsWindows() && Terminal.Native.FinalPathOf(stream.SafeFileHandle) is { } made)
+                path = Path.Combine(dir, Path.GetFileName(made));
+            files[token] = new Incoming(stream, path);
         }
         var done = Append(token, data, index, last, ServerFiles.MaxFile, out _);
-        if (done != null) ReadOnly(done);
+        if (done != null)
+        {
+            MarkFromInternet(done);
+            ReadOnly(done);
+        }
         return done;
+    }
+
+    /// <summary>
+    /// Windows: the file is marked as from the internet (the Mark of the Web, a Zone.Identifier stream with ZoneId 3), as
+    /// a browser marks a download: SmartScreen checks it before it runs, and Office and others open it protected. A
+    /// file system without such streams (FAT, some network drives) can't be marked: the copy is kept all the same.
+    /// </summary>
+    internal static void MarkFromInternet(string path)
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        try { File.WriteAllText(path + ":Zone.Identifier", "[ZoneTransfer]\r\nZoneId=3\r\n"); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException) { }
     }
 
     /// <summary>A plugin's copy starts afresh (its folder here is emptied). Past <see cref="MaxPlugins"/>, refused.</summary>

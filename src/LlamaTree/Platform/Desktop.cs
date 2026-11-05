@@ -34,47 +34,129 @@ internal static partial class Desktop
     /// Opens a changed file the way the file manager would, except that anything the desktop would run (scripts,
     /// executables) is opened for editing instead: "Open" must never execute a file Claude just wrote.
     /// </summary>
-    public static void OpenFileForViewing(string path)
+    /// <param name="fromServer">
+    /// The file is a copy of a server's (see ServerCopies), and the server chose what's in it: only types known to be
+    /// shown, not run or acted on (<see cref="IsViewable"/>), go to their app; anything else that's text opens in a text
+    /// editor, and the rest is shown in its folder.
+    /// </param>
+    public static void OpenFileForViewing(string path, bool fromServer = false)
     {
+        // Judged by what the path really is: a link named notes.txt can point at anything, and Windows drops dots and
+        // spaces from the end of a name, so "run.cmd ." is the file run.cmd.
+        var real = PathText.FinalPath(path) is { } f ? PathText.Plain(f) : path;
         if (OperatingSystem.IsMacOS())
         {
             // So many Mac types do something when opened (.terminal, .webloc, .command, .prefPane, .mobileconfig...) that
             // only types known to be shown, not run, go to their app; everything else opens in the default text
-            // editor. Judged by what the path really is: a link named notes.txt can point at anything.
-            var real = PathText.FinalPath(path) ?? path;
-            if (!IsRunnable(real) && MacViewable.Contains(Path.GetExtension(real))) Run("/usr/bin/open", real);
+            // editor.
+            if (!IsRunnable(real) && (fromServer ? IsViewable(real) : MacViewable.Contains(Path.GetExtension(real)))) Run("/usr/bin/open", real);
             else Run("/usr/bin/open", "-t", real);
+            return;
+        }
+        if (fromServer)
+        {
+            switch (ServerFileOpening(real))
+            {
+                case ServerOpen.App:
+                    OpenExternal(real);
+                    break;
+                case ServerOpen.TextEditor when OperatingSystem.IsWindows():
+                    Run(Path.Combine(Environment.SystemDirectory, "notepad.exe"), real);
+                    break;
+                case ServerOpen.TextEditor:
+                    OpenInTextEditor(real);
+                    break;
+                default:
+                    ShowInFolder(real);
+                    break;
+            }
+            return;
+        }
+        if (!IsRunnable(real))
+        {
+            OpenExternal(real);
             return;
         }
         if (!OperatingSystem.IsWindows())
         {
-            var real = PathText.FinalPath(path) ?? path;
-            if (!IsRunnable(real))
-            {
-                OpenExternal(real);
-                return;
-            }
-            // The desktop's text editor for plain text; failing that, the folder it's in rather than the file itself.
-            if (Capture("xdg-mime", ["query", "default", "text/plain"])?.Trim() is { Length: > 0 } desktopFile &&
-                desktopFile.EndsWith(".desktop", StringComparison.Ordinal) && Run("gtk-launch", desktopFile[..^8], path))
-                return;
-            OpenExternal(Path.GetDirectoryName(path) ?? path);
-            return;
-        }
-        if (!IsRunnable(path))
-        {
-            OpenExternal(path);
+            OpenInTextEditor(real);
             return;
         }
         try
         {
-            Process.Start(new ProcessStartInfo(path) { UseShellExecute = true, Verb = "edit" });
+            Process.Start(new ProcessStartInfo(real) { UseShellExecute = true, Verb = "edit" });
         }
         catch (System.ComponentModel.Win32Exception)
         {
             // No "edit" verb for this type (e.g. .exe, .py).
-            Process.Start(new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "notepad.exe")) { ArgumentList = { path } });
+            Run(Path.Combine(Environment.SystemDirectory, "notepad.exe"), real);
         }
+    }
+
+    /// <summary>How a server's copy is opened (Windows and Linux, see <see cref="OpenFileForViewing"/>).</summary>
+    internal enum ServerOpen { App, TextEditor, Folder }
+
+    /// <summary>
+    /// A server's copy goes to its app only when it's a type known to be shown, not run; else text goes to a text
+    /// editor (Notepad on Windows, never the type's own "edit" verb), and anything else is shown in its folder.
+    /// </summary>
+    internal static ServerOpen ServerFileOpening(string real) =>
+        IsViewable(real) && !IsRunnable(real) ? ServerOpen.App
+        : LooksLikeText(real) ? ServerOpen.TextEditor
+        : ServerOpen.Folder;
+
+    /// <summary>Linux: the desktop's text editor for plain text; failing that, the folder it's in rather than the file itself.</summary>
+    private static void OpenInTextEditor(string path)
+    {
+        if (Capture("xdg-mime", ["query", "default", "text/plain"])?.Trim() is { Length: > 0 } desktopFile &&
+            desktopFile.EndsWith(".desktop", StringComparison.Ordinal) && Run("gtk-launch", desktopFile[..^8], path))
+            return;
+        OpenExternal(Path.GetDirectoryName(path) ?? path);
+    }
+
+    /// <summary>
+    /// Whether the start of the file reads as text (no NUL bytes): a file that isn't is no use in a text editor, so it's
+    /// shown in its folder instead. A file that can't be read isn't text.
+    /// </summary>
+    internal static bool LooksLikeText(string path)
+    {
+        try
+        {
+            using var f = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            var buffer = new byte[8192];
+            var n = f.ReadAtLeast(buffer, buffer.Length, throwOnEndOfStream: false);
+            return Array.IndexOf(buffer, (byte)0, 0, n) < 0;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Types that every desktop's usual app shows without running anything or acting on what's in them: pictures, PDFs,
+    /// and plain text. What a server sends is opened in its app only when it's one of these (see
+    /// <see cref="OpenFileForViewing"/>). Left out on purpose: web pages and anything a browser renders (.html, .htm,
+    /// .mht, .svg, .xml with a stylesheet), which run script; Office files, which can carry macros or links; .csv, which
+    /// Excel reads formulas from; and source in languages the desktop may run (.js, .py, .ps1...).
+    /// </summary>
+    private static readonly HashSet<string> ViewableExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".ico", ".heic",
+        ".pdf",
+        ".txt", ".text", ".md", ".markdown", ".log", ".json", ".yaml", ".yml", ".toml", ".diff", ".patch",
+        ".c", ".h", ".cc", ".cpp", ".hpp", ".cs", ".java", ".kt", ".go", ".rs", ".swift", ".css", ".scss", ".less", ".sql",
+    };
+
+    /// <summary>
+    /// Whether a file of this name is a type known to be shown, not run (<see cref="ViewableExtensions"/>). A name ending
+    /// in a dot or space never is: Windows makes such a file under another name, with another extension.
+    /// </summary>
+    internal static bool IsViewable(string path)
+    {
+        var name = Path.GetFileName(path);
+        if (name.Length == 0 || name[^1] == '.' || char.IsWhiteSpace(name[^1])) return false;
+        return ViewableExtensions.Contains(Path.GetExtension(name));
     }
 
     /// <summary>Opens the folder a file or folder is in, with it selected (Explorer, Finder, or the Linux file manager).</summary>
@@ -101,11 +183,19 @@ internal static partial class Desktop
         OpenExternal(Path.GetDirectoryName(PathText.TrimEnd(path)) ?? path);
     }
 
-    // Script and interpreter types that Windows' own unsafe-type list (AssocIsDangerous) may not cover.
+    // Script and interpreter types that Windows' own unsafe-type list (AssocIsDangerous) may not cover, and types that
+    // act when opened: search and library descriptions that reach out to a share, Office add-ins and macro-enabled
+    // documents, troubleshooting packs, remote-desktop and Java Web Start files, installers and HTML applications. Web
+    // pages (.html, .svg, .mht...) aren't here: a page Claude made opens in the browser, which sandboxes its script. A
+    // server's copy of one is never handed to the browser anyway (see IsViewable).
     private static readonly HashSet<string> ScriptExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".ps1", ".psm1", ".py", ".pyw", ".pyz", ".sh", ".bash", ".rb", ".pl", ".jar",
-        ".appinstaller", ".appx", ".appxbundle", ".msix", ".msixbundle", ".application", ".appref-ms",
+        ".ps1", ".psm1", ".psd1", ".py", ".pyw", ".pyz", ".sh", ".bash", ".rb", ".pl", ".jar",
+        ".appinstaller", ".ms-appinstaller", ".appx", ".appxbundle", ".msix", ".msixbundle", ".application", ".appref-ms", ".vsto",
+        ".msi", ".msp", ".mst", ".lnk", ".url", ".website", ".scf", ".pif", ".cpl", ".inf", ".reg", ".chm", ".gadget", ".wsc", ".sct",
+        ".search-ms", ".searchconnector-ms", ".library-ms", ".settingcontent-ms", ".diagcab", ".rdp", ".jnlp", ".iqy", ".slk",
+        ".xll", ".xla", ".xlam", ".ppa", ".ppam", ".docm", ".dotm", ".xlsm", ".xltm", ".xlsb", ".pptm", ".potm", ".ppsm", ".sldm",
+        ".hta",
     };
 
     // macOS: types its own apps (Preview, TextEdit, QuickTime, Pages...) or an editor show without running anything.
@@ -153,6 +243,8 @@ internal static partial class Desktop
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return true; }   // can't tell: don't run it
             return ext.Length > 1 && UnixRunnableExtensions.Contains(ext);
         }
+        // Windows drops dots and spaces from the end of a name, so "run.cmd ." and "run.exe  ." are run.cmd and run.exe.
+        ext = Path.GetExtension(Path.GetFileName(path).TrimEnd('.', ' '));
         if (ext.Length <= 1) return false;
         var pathExt = Environment.GetEnvironmentVariable("PATHEXT") ?? ".COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC";
         return ScriptExtensions.Contains(ext)

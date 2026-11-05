@@ -243,7 +243,7 @@ internal sealed class HostLink
                     closeAcknowledged = true;   // the page is asking you (see AskToClose)
                     break;
                 default:
-                    if (Remote != null && ServerConnection.OpensFile(type)) Copies.ExpectFile();   // a file may come for it
+                    if (Remote != null && ServerConnection.OpensFile(type)) Copies.ExpectFile(Str(msg, "path"));   // a file of that name may come for it
                     return false;
             }
         }
@@ -346,7 +346,7 @@ internal sealed class HostLink
                 case "file" when Remote != null:
                     if (Copies.FilePart(Str(op, "token"), Str(op, "name"), Str(op, "data"), Int(op, "index"), Bool(op, "last")) is { } opened)
                     {
-                        _ = Task.Run(() => Desktop.OpenFileForViewing(opened));
+                        _ = Task.Run(() => Desktop.OpenFileForViewing(opened, fromServer: true));
                         window.PostJson(JsonSerializer.Serialize(new { type = "files.opened", name = Path.GetFileName(opened), server = hostMachine is { Length: > 0 } m ? m : Remote }, JsonOptions));
                     }
                     break;
