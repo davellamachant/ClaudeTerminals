@@ -22,6 +22,7 @@ internal sealed partial class ClaudeAgent : AgentProfile
 
     /// <summary>Haiku with no tools or MCP servers, not saved (so it doesn't appear among the conversations to resume).</summary>
     public override string HeadlessCommand => "claude -p --model haiku --tools \"\" --strict-mcp-config --no-session-persistence --output-format text";
+    public override bool HeadlessHasNoTools => true;
 
     /// <summary>
     /// Claude asks by putting a menu where its prompt box was: a permission prompt, a question (AskUserQuestion), a plan

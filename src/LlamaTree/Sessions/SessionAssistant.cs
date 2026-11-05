@@ -13,9 +13,9 @@ internal sealed record AssistantAnswer(string Answer, string Writer, IReadOnlyLi
 
 /// <summary>
 /// Answers a question about your sessions ("what is Checkout waiting on?", "which session touched the import?") from their
-/// conversations: the prompts you sent, what each agent answered and the tools it used. The answer is written by Claude
-/// run headless with your own sign-in and no tools (see <see cref="HeadlessAgent"/>), whichever agent the sessions run.
-/// It only reads what it's given: nothing here types into a session, reads a file or changes one.
+/// conversations: the prompts you sent, what each agent answered and the tools it used. The answer is written by an agent
+/// run headless with your own sign-in (see <see cref="HeadlessAgent"/>): Claude with no tools, or Codex read-only when
+/// Claude isn't installed (<see cref="WriterFor"/>). Nothing here types into a session or changes a file.
 /// </summary>
 internal static class SessionAssistant
 {
@@ -32,7 +32,7 @@ internal static class SessionAssistant
     {
         if (string.IsNullOrWhiteSpace(question)) throw new InvalidOperationException("There is no question.");
         if (sessions.Count == 0) throw new InvalidOperationException("There are no sessions to ask about.");
-        var writer = WriterFor(sessions);
+        var writer = WriterFor(HeadlessAgent.IsInstalled);
         var prompt = BuildPrompt(question, history, sessions, now);
         var dir = sessions.Select(s => s.Directory).FirstOrDefault(Directory.Exists) ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         var answer = Clean(await HeadlessAgent.RunAsync(writer, dir, prompt, "answer", ct));
@@ -41,12 +41,21 @@ internal static class SessionAssistant
     }
 
     /// <summary>
-    /// Always Claude, even for Codex sessions: a plugin names the sessions, so it would be choosing the agent too. claude -p
-    /// runs with no tools and no MCP servers (<see cref="ClaudeAgent.HeadlessCommand"/>); codex exec has no switch that
-    /// takes all its tools away, and its read-only sandbox still lets it read any file (~/.ssh, the panel tokens), so it
-    /// never answers here. Without Claude installed the question fails rather than falling back to Codex.
+    /// The agents that may answer, best first: those whose headless command has no tools (<see cref="AgentProfile.HeadlessHasNoTools"/>:
+    /// Claude), then the rest (Codex), each group in <see cref="Agents.All"/> order. Not the sessions' own agent: a plugin
+    /// names the sessions, so it would be choosing the agent too.
     /// </summary>
-    internal static AgentProfile WriterFor(IReadOnlyList<SessionBrief> sessions) => Agents.Claude;
+    internal static IReadOnlyList<AgentProfile> Writers { get; } =
+        Agents.All.Where(a => a.HeadlessCommand != null).OrderByDescending(a => a.HeadlessHasNoTools).ToList();
+
+    /// <summary>
+    /// The first of <see cref="Writers"/> that's installed, whichever agent the sessions run. One with tools (Codex) answers
+    /// only when no tool-less one is installed: codex exec has no switch that takes all its tools away, and its read-only
+    /// sandbox still reads any file (~/.ssh, the panel tokens). The grant dialog says so.
+    /// </summary>
+    internal static AgentProfile WriterFor(Func<AgentProfile, bool> installed) =>
+        Writers.FirstOrDefault(installed) ?? throw new InvalidOperationException(
+            $"No agent that can answer was found on PATH ({string.Join(", ", Writers.Select(a => $"{a.Name}: {a.Programs[0]}"))}).");
 
     /// <summary>The request for the agent: the rules, the sessions and their conversations, earlier questions, then the question.</summary>
     internal static string BuildPrompt(string question, IReadOnlyList<AssistantExchange> history, IReadOnlyList<SessionBrief> sessions, DateTime now)

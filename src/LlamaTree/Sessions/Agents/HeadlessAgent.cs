@@ -8,7 +8,7 @@ namespace LlamaTree.Sessions;
 /// Runs an agent once, headless, with a prompt on its standard input and its answer on standard output
 /// (<see cref="AgentProfile.HeadlessCommand"/>: claude -p with no tools, or codex exec read-only). It runs with the
 /// user's own sign-in, in the same clean environment sessions get, and saves no conversation. The commit message
-/// suggester and the plugins' ask request use it (ask only ever with Claude, see <see cref="SessionAssistant.WriterFor"/>).
+/// suggester and the plugins' ask request use it (ask with a tool-less agent when one is installed, see <see cref="SessionAssistant.WriterFor"/>).
 /// </summary>
 internal static class HeadlessAgent
 {
@@ -16,6 +16,21 @@ internal static class HeadlessAgent
 
     /// <summary>The agent that answers for a session: its own, or Claude for one with no headless command (or no agent).</summary>
     public static AgentProfile Writer(AgentProfile? agent) => agent?.HeadlessCommand != null ? agent : Agents.Claude;
+
+    /// <summary>Whether the agent's headless command can be run: its program is on the PATH sessions get.</summary>
+    public static bool IsInstalled(AgentProfile agent)
+    {
+        if (agent.HeadlessCommand is not { } command) return false;
+        var env = SessionEnvironment.Build();
+        try
+        {
+            if (OperatingSystem.IsWindows()) CommandLineResolver.Resolve(command, env);
+            else CommandLineResolver.ResolveArgv(command, env);
+            return true;
+        }
+        catch (FileNotFoundException) { return false; }
+        catch (InvalidOperationException) { return true; }   // found, but can't be run safely: RunAsync says why
+    }
 
     /// <param name="dir">The folder to run in: one the user already trusts, such as a session's.</param>
     /// <param name="task">What the agent was asked to do, for the error when it can't: "suggest a message", "answer".</param>

@@ -83,19 +83,34 @@ public sealed class SessionAssistantTests
         Assert.DoesNotContain("question 2", prompt);
     }
 
-    [Theory]
-    [InlineData("codex", "codex")]      // both Codex: still Claude, as codex exec can read files even read-only
-    [InlineData("claude", "codex")]
-    [InlineData("pwsh", "pwsh")]        // no agent
-    [InlineData("claude", "pwsh")]
-    [InlineData("claude", "claude")]
-    public void Claude_answers_whichever_agent_the_sessions_run(string a, string b) =>
-        Assert.Same(Agents.Claude, SessionAssistant.WriterFor([Brief("A", null, agent: Agents.For(a)), Brief("B", null, agent: Agents.For(b))]));
+    [Fact]
+    public void Claude_answers_when_installed_even_with_Codex_installed() =>
+        Assert.Same(Agents.Claude, SessionAssistant.WriterFor(_ => true));
 
     [Fact]
-    public void The_agent_that_answers_for_Codex_sessions_has_no_tools()
+    public void Codex_answers_only_when_Claude_is_not_installed() =>
+        Assert.Same(Agents.Codex, SessionAssistant.WriterFor(a => a != Agents.Claude));
+
+    [Fact]
+    public void With_no_agent_installed_asking_fails()
     {
-        var writer = SessionAssistant.WriterFor([Brief("Cx", null, agent: Agents.Codex)]);
+        var error = Assert.Throws<InvalidOperationException>(() => SessionAssistant.WriterFor(_ => false));
+        Assert.Contains("claude", error.Message);
+        Assert.Contains("codex", error.Message);
+    }
+
+    [Fact]
+    public void Tool_less_agents_come_first()
+    {
+        Assert.Equal([Agents.Claude, Agents.Codex], SessionAssistant.Writers);
+        Assert.True(Agents.Claude.HeadlessHasNoTools);
+        Assert.False(Agents.Codex.HeadlessHasNoTools);   // codex exec -s read-only still reads files
+    }
+
+    [Fact]
+    public void The_agent_that_answers_first_has_no_tools()
+    {
+        var writer = SessionAssistant.WriterFor(_ => true);
         var command = writer.HeadlessCommand!;
         Assert.StartsWith("claude -p ", command);
         Assert.Contains("--tools \"\"", command);            // no built-in tools: no Read, Bash, …
