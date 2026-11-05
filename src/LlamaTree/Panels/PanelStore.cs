@@ -223,6 +223,7 @@ internal sealed class PanelStore
             if (File.Exists(path))
                 return (JsonSerializer.Deserialize<List<Panel>>(File.ReadAllText(path), Options) ?? [])
                     .Where(p => !string.IsNullOrEmpty(p.Owner) && !string.IsNullOrEmpty(p.Id) && (p.Markdown != null || p.Items != null || p.Groups != null))
+                    .Select(PanelSpec.Loaded)
                     .ToList();
         }
         catch (Exception)

@@ -329,7 +329,7 @@ internal sealed class PanelMcp(PanelStore store, Relay.RelayHub? relay = null, R
                 "properties": {
                   "label": { "type": "string", "description": "A few words, e.g. 'Start session', 'Ask here', 'Copy branch'." },
                   "target": { "type": "string", "enum": ["here", "new", "copy"], "default": "here" },
-                  "prompt": { "type": "string", "description": "For 'here' and 'new': the full prompt, written so it makes sense on its own in a new conversation." },
+                  "prompt": { "type": "string", "description": "For 'here' and 'new': the full prompt, written so it makes sense on its own in a new conversation. Plain text (new lines allowed, no tabs or other control characters), not starting with !." },
                   "text": { "type": "string", "description": "For 'copy': the text to copy." },
                   "name": { "type": "string", "description": "For 'new': the new session's name." }
                 },
@@ -398,7 +398,7 @@ internal sealed class PanelMcp(PanelStore store, Relay.RelayHub? relay = null, R
                 "items": { "type": "array", "maxItems": 200, "description": "A list of items. Give one of markdown, items or groups.", "items": {{ItemSchema}} },
                 "groups": { "type": "array", "description": "Items in collapsible groups, e.g. by status or by service; groups can hold groups, up to 3 levels (60 groups and 200 items at most in all). Give one of markdown, items or groups.", "items": {{GroupSchema}} },
                 "scope": { "type": "string", "enum": ["session", "project", "everywhere"], "default": "session", "description": "Where it shows: with this session only, with every session of its project, or with every session. Used when the panel is first shown; the person can change it." },
-                "refresh": { "type": "string", "description": "One line that rebuilds this panel, such as the slash command that made it. The panel's Refresh button sends it to this session." }
+                "refresh": { "type": "string", "description": "The slash command that rebuilds this panel, with any arguments, e.g. '/my-tasks'. Only a slash command on one line is accepted. The panel's Refresh button sends it to this session." }
               },
               "required": ["id", "title"]
             }
@@ -418,7 +418,7 @@ internal sealed class PanelMcp(PanelStore store, Relay.RelayHub? relay = null, R
                 "items": { "type": "array", "maxItems": 200, "items": {{ItemSchema}} },
                 "groups": { "type": "array", "items": {{GroupSchema}} },
                 "checks": { "type": "object", "additionalProperties": { "type": "boolean" }, "description": "Ticks or unticks items yourself: { \"<key, or title for items without one>\": true }." },
-                "refresh": { "type": "string" }
+                "refresh": { "type": "string", "description": "A slash command, as for show_panel." }
               },
               "required": ["id"]
             }
