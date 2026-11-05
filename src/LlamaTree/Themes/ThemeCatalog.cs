@@ -22,10 +22,14 @@ namespace LlamaTree.Themes;
 /// <param name="Terminal">The terminals' colours, by xterm.js's names (see <see cref="ThemeCatalog.TerminalNames"/>).</param>
 /// <param name="Diff">The diff editor's colours (see <see cref="ThemeCatalog.DiffNames"/>).</param>
 /// <param name="BuiltIn">Shipped with the app, rather than added to the themes folder.</param>
+/// <param name="TerminalBackground">
+/// How solid the terminals start over the window's floor, 0 to 100 (Matrix's 42 lets its rain show through), and that you
+/// may change it with the slider in a terminal's corner; null keeps the terminals solid, with no slider.
+/// </param>
 internal sealed record ThemeInfo(string Id, string Name, string Base, string? Font, bool Glow, bool Grid, bool Rain, bool Monochrome, string? Cursor, ThemeAccent? Accent,
     IReadOnlyList<ThemeAccentChoice> Accents,
     IReadOnlyDictionary<string, string> Colors, IReadOnlyDictionary<string, string> Terminal, IReadOnlyDictionary<string, string> Diff,
-    bool BuiltIn);
+    bool BuiltIn, int? TerminalBackground = null);
 
 /// <param name="Line">Lines, ticks and highlights: readable on the theme's background.</param>
 /// <param name="Strong">Fills that carry white text: active tabs, buttons, menus.</param>
@@ -201,6 +205,13 @@ internal static partial class ThemeCatalog
             else problems.Add($"{fileName}: cursor is \"light-cycle\" or left out.");
         }
 
+        int? terminalBackground = null;
+        if (e.TryGetProperty("terminalBackground", out var tb))
+        {
+            if (tb.ValueKind == JsonValueKind.Number && tb.TryGetInt32(out var amount) && amount is >= 0 and <= 100) terminalBackground = amount;
+            else problems.Add($"{fileName}: terminalBackground is a whole number from 0 (see-through) to 100 (solid), or left out.");
+        }
+
         ThemeAccent? accent = null;
         if (e.TryGetProperty("accent", out var a) && a.ValueKind == JsonValueKind.Object)
         {
@@ -213,7 +224,7 @@ internal static partial class ThemeCatalog
             Colors(e, "colors", ColorNames, CssColor(), fileName, problems),
             Colors(e, "terminal", TerminalNames, CssColor(), fileName, problems),
             Colors(e, "diff", DiffNames, HexColor(), fileName, problems),
-            builtIn);
+            builtIn, terminalBackground);
     }
 
     /// <summary>

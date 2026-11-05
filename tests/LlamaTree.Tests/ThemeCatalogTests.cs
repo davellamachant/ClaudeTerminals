@@ -85,6 +85,8 @@ public sealed class ThemeCatalogTests : IDisposable
         var matrix = Assert.Single(themes, t => t.Id == "matrix");
         Assert.Equal(("Matrix", "dark", "Cascadia Mono", true, false, true, null, true), (matrix.Name, matrix.Base, matrix.Font, matrix.Glow, matrix.Grid, matrix.Rain, matrix.Cursor, matrix.BuiltIn));
         Assert.Equal(("#39ff6a", "#0b6b26"), (matrix.Accent!.Line, matrix.Accent.Strong));
+        // Matrix lets its rain show through the terminals, and Tron its Grid (starting solid); Nerds keeps them solid, with no slider.
+        Assert.Equal((42, 100, (int?)null), (matrix.TerminalBackground, tron.TerminalBackground, nerds.TerminalBackground));
         Assert.DoesNotContain(themes, t => t.Id == "tron-ares");   // Tron in red is Tron with a red accent now
         // Matrix is written out in full: every colour the page, the terminals and the diff editor can take, so nothing of Dark shows through.
         Assert.Equal(ThemeCatalog.ColorNames.OrderBy(n => n), matrix.Colors.Keys.OrderBy(n => n));
@@ -194,5 +196,23 @@ public sealed class ThemeCatalogTests : IDisposable
         var (themes, problems) = ThemeCatalog.Load(builtIn, user);
         Assert.Empty(themes);
         Assert.Contains("base", Assert.Single(problems));
+    }
+
+    [Theory]
+    [InlineData("0", 0)]
+    [InlineData("65", 65)]
+    [InlineData("100", 100)]
+    [InlineData("101", null)]
+    [InlineData("-1", null)]
+    [InlineData("42.5", null)]
+    [InlineData("\"42%\"", null)]
+    [InlineData("true", null)]
+    public void A_themes_terminal_background_is_a_whole_number_from_0_to_100(string json, int? expected)
+    {
+        File.WriteAllText(Path.Combine(user, "veiled.json"), $$"""{ "name": "Veiled", "terminalBackground": {{json}} }""");
+        var (themes, problems) = ThemeCatalog.Load(builtIn, user);
+        Assert.Equal(expected, Assert.Single(themes).TerminalBackground);   // the theme still loads, keeping the terminals solid
+        if (expected is null) Assert.Contains("terminalBackground", Assert.Single(problems));
+        else Assert.Empty(problems);
     }
 }

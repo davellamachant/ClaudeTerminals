@@ -163,7 +163,6 @@
 #rain { position: fixed; inset: 0; z-index: -1; pointer-events: none; }   /* behind the page's content, over its background */
 :root[data-rain] { background: var(--chrome); }
 :root[data-rain] body { background: transparent; }   /* the body's own background would paint over the canvas; the root's paints under it */
-:root[data-rain] { --terminal-veil: 42%; }   /* the rain's own amount: the tile dims it with the terminal's background at under half strength */
 /* The terminal itself: its canvas is see-through under a Grid theme (dressCursor in app.js), and the tile paints the same
    lines over the terminal's own background, fixed to the window so they run on from the floor around it. */
 :root[data-grid] .tile {
@@ -475,8 +474,8 @@ body.side-empty #splitter, body.side-empty #gitPanel { display: none; }   /* sid
 
 /* ---------------------------------------------------------------- tiles */
 /* The terminal veil: the tile paints the terminal's background at --terminal-veil over whatever is behind it (the
-   window's floor under a Grid or rain theme), 100% unless the theme sets its own amount above or you've set one in
-   Terminal background under the palette button (markVeil in app.js puts yours on the root element). */
+   window's floor under a Grid or rain theme): 100% unless the theme lets you see through ("terminalBackground"), when
+   markVeil in app.js puts its amount, or yours from the slider, on the root element. */
 .tile {
   position: absolute; display: flex; flex-direction: column; background: color-mix(in srgb, var(--terminal-bg) var(--terminal-veil, 100%), transparent);
   border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
@@ -997,20 +996,16 @@ body.no-nav-branches #navList .tab-branch { display: none; }   /* Layout ▸ Sho
 .swatch-row .proj-tag { margin-left: 8px; }
 .swatch-auto { display: inline-flex; align-items: center; gap: 6px; }
 .swatch-auto:disabled { opacity: .5; cursor: default; }
-/* Terminal background: the slider from see-through to solid, with its ends named and the amount beside it. */
-.veil-row { display: flex; align-items: center; gap: 10px; }
-.veil-row input[type=range] { flex: 1; min-width: 0; margin: 0; accent-color: var(--accent-strong); cursor: pointer; }
-.veil-end { color: var(--text-faint); font-size: 12px; flex: none; }
-.veil-value { min-width: 4ch; text-align: right; font-variant-numeric: tabular-nums; flex: none; }
-/* The same slider, small, in a tile's bottom-right corner (veilSlider in app.js): always on the open terminal, on the
-   others while the pointer is over them; faint until the pointer is on it. It sits clear of the conversation rail, and
-   above the "Starts when you open it" badge when that's showing. */
+/* How solid the terminals are: a small slider in a tile's bottom-right corner (veilSlider in app.js), only under a theme
+   that lets you see through (data-veil-slider): always on the open terminal, on the others while the pointer is over
+   them; faint until the pointer is on it. It sits clear of the conversation rail, and above the "Starts when you open
+   it" badge when that's showing. */
 .tile-veil {
   position: absolute; right: 24px; bottom: 8px; z-index: 3; display: none; align-items: center; gap: 6px; padding: 3px 8px;
   border-radius: 10px; background: color-mix(in srgb, var(--panel) 85%, transparent); border: 1px solid var(--border-soft);
   color: var(--text-dim); font-size: 11px; opacity: .5; transition: opacity .15s;
 }
-.tile:hover .tile-veil, .tile.expanded .tile-veil { display: inline-flex; }
+:root[data-veil-slider] :is(.tile:hover, .tile.expanded) .tile-veil { display: inline-flex; }
 .tile-veil:hover, .tile-veil:focus-within { opacity: 1; }
 .tile-veil input[type=range] { width: 84px; height: 12px; margin: 0; accent-color: var(--accent-strong); cursor: pointer; }
 .tile-veil span { min-width: 3.5ch; text-align: right; font-variant-numeric: tabular-nums; }
