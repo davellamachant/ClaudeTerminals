@@ -205,7 +205,7 @@ internal sealed class PanelStore
     {
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            Platform.PrivateFiles.CreateDirectory(Path.GetDirectoryName(path)!);
             var temp = path + ".tmp";
             File.WriteAllText(temp, JsonSerializer.Serialize(panels, Options));
             File.Move(temp, path, true);

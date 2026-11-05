@@ -89,7 +89,7 @@ internal static class ProjectStore
 
     internal static void Save(string path, IEnumerable<ProjectInfo> projects)
     {
-        System.IO.Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        Platform.PrivateFiles.CreateDirectory(Path.GetDirectoryName(path)!);
         var temp = path + ".tmp";
         File.WriteAllText(temp, JsonSerializer.Serialize(projects, Options));
         File.Move(temp, path, true);
@@ -124,7 +124,7 @@ internal static class SessionStore
 
     public static void Save(IEnumerable<SessionInfo> sessions)
     {
-        System.IO.Directory.CreateDirectory(AppDataFolder);
+        Platform.PrivateFiles.CreateDirectory(AppDataFolder);
         var temp = FilePath + ".tmp";
         File.WriteAllText(temp, JsonSerializer.Serialize(sessions, Options));
         File.Move(temp, FilePath, true);

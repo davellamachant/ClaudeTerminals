@@ -540,6 +540,9 @@ internal sealed partial class AppHost
             await Task.Delay(1500);
             Post(new { type = "typePrompt", id, text = prompt });
         });
+        // A session's token is in its --mcp-config file: only this user may read it (folders from before were 0755).
+        PrivateFiles.Tighten(SessionStore.AppDataFolder);
+        PrivateFiles.Tighten(PanelConfigFolder, "mcp-*.json");
         try { panelServer = PanelServer.TryStart(mcp); }
         catch (Exception) { /* sessions start without panels */ }
         // Shown among another computer's sessions: its window answers the sessions' tool calls while it's attached.
@@ -565,9 +568,9 @@ internal sealed partial class AppHost
         if (s.Agent?.PanelsFromFile != true) return link;   // configured on its command line, if at all
         try
         {
-            Directory.CreateDirectory(PanelConfigFolder);
+            PrivateFiles.CreateDirectory(PanelConfigFolder);
             var path = Path.Combine(PanelConfigFolder, $"mcp-{s.Id}.json");
-            File.WriteAllText(path, panelServer.ConfigJson(s.Id));
+            PrivateFiles.WriteAllText(path, panelServer.ConfigJson(s.Id));   // 0600: it holds the session's token
             return link with { ConfigFile = path };
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
