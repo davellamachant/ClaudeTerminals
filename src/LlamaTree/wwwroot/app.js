@@ -1086,6 +1086,9 @@ function createSession(info) {
       return;
     }
     s.act.lastIn = performance.now();
+    // Enter gives it something to do. Not just any input: xterm answers the terminal's own queries (which Claude sends
+    // as it starts) through here too.
+    if (data.includes('\r')) s.act.starting = false;
     post({ type: 'input', id: s.id, data });
   });
   term.onResize(({ cols, rows }) => { if (s.running) post({ type: 'resize', id: s.id, cols, rows }); });
@@ -1156,8 +1159,9 @@ function startSession(s) {
   s.startsOnOpen = false;
   fitTerm(s);
   s.startedTheme = themeName();
+  s.act.starting = true;
   request('start', { id: s.id, cols: s.term.cols, rows: s.term.rows, theme: s.startedTheme })
-    .then(() => { s.running = true; s.exitCode = null; renderTileHeader(s); renderSessionTabs(); })
+    .then((r) => { if (r?.prompted) s.act.starting = false; s.running = true; s.exitCode = null; renderTileHeader(s); renderSessionTabs(); })
     .catch((err) => {
       s.running = false;
       s.term.writeln(`\x1b[31mFailed to start "${s.command}" in ${s.directory}\x1b[0m`);
@@ -1175,8 +1179,9 @@ function restartSession(s, { resume = false } = {}) {
   s.term.reset();
   setAsking(s, false);   // the question went with the old screen (and a failed restart writes no output to clear it)
   s.startedTheme = themeName();
+  s.act.starting = true;
   request('restart', { id: s.id, cols: s.term.cols, rows: s.term.rows, theme: s.startedTheme, resume })
-    .then(() => { s.running = true; s.exitCode = null; renderTileHeader(s); renderSessionTabs(); })
+    .then((r) => { if (r?.prompted) s.act.starting = false; s.running = true; s.exitCode = null; renderTileHeader(s); renderSessionTabs(); })
     .catch((err) => { s.term.writeln(`\x1b[31m${err.message}\x1b[0m`); });
 }
 
@@ -1243,7 +1248,11 @@ setInterval(() => {
     const a = s.act;
     if (a.state === 'working' && now - a.lastOut > 2500) {
       a.state = 'idle';
-      if (now - a.workingSince > 4000 && state.expandedId !== s.id) setAttention(s, true);
+      // The output a program writes as it starts (Claude's start-up, a dev server's build) isn't a turn finished: it's
+      // ready, not waiting for you. Once it's been given something to do (see term.onData), quiet means your turn.
+      const startUp = a.starting;
+      a.starting = false;
+      if (!startUp && now - a.workingSince > 4000 && state.expandedId !== s.id) setAttention(s, true);
       else renderTileState(s);
     }
     // Once the screen has settled after new output has been drawn (mid-redraw it can be half drawn), see whether the
@@ -1255,6 +1264,12 @@ setInterval(() => {
     }
   }
 }, 500);
+
+/** Presses Enter in the session for LlamaTree (sending a prompt or a notice typed into it): it now has something to do. */
+function pressEnter(s) {
+  s.act.starting = false;
+  post({ type: 'input', id: s.id, data: '\r' });
+}
 
 function setAttention(s, on) {
   if (s.attention === on) return;
@@ -4302,7 +4317,7 @@ function refreshPanel(p) {
   if (owner?.startsOnOpen) { startSession(owner); toast(`Starting "${owner.name}". Refresh again once Claude is up.`); return; }
   if (!owner?.running) { toast(`"${owner?.name ?? 'Its session'}" isn't running, so it can't refresh this panel.`, true); return; }
   post({ type: 'input', id: owner.id, data: p.refresh });
-  setTimeout(() => post({ type: 'input', id: owner.id, data: '\r' }), 150);
+  setTimeout(() => pressEnter(owner), 150);
   toast(`Asked ${owner.name} to refresh "${p.title}".`);
 }
 
@@ -7643,7 +7658,7 @@ function relayNotify(s) {
   const names = [...(relay.from[s.id] ?? [])].map((id) => `"${relayName(id)}"`);
   const text = `[LlamaTree] ${n === 1 ? 'A message has' : `${n} messages have`} come from ${names.length ? names.join(' and ') : 'another session'}. Read ${n === 1 ? 'it' : 'them'} with the read_messages tool, and answer with send_message: the sender doesn't see what you write here.`;
   s.term.paste(text);
-  setTimeout(() => post({ type: 'input', id: s.id, data: '\r' }), 150);
+  setTimeout(() => pressEnter(s), 150);
   setTimeout(() => resendNotice(s, 3), 1500);
 }
 
@@ -7653,7 +7668,7 @@ function relayNotify(s) {
  */
 function resendNotice(s, tries) {
   if (!s.running || performance.now() - s.act.lastIn < 1500 || !noticeInPrompt(s)) return;
-  post({ type: 'input', id: s.id, data: '\r' });
+  pressEnter(s);
   if (tries > 1) setTimeout(() => resendNotice(s, tries - 1), 1500);
 }
 
@@ -7780,7 +7795,7 @@ function controlPrompt(id, text, tries = 0) {
   // The host refuses control characters already; this keeps a paste from ever carrying keys of its own.
   text = text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '');
   s.term.paste(text);
-  setTimeout(() => post({ type: 'input', id, data: '\r' }), 150);
+  setTimeout(() => pressEnter(s), 150);
 }
 
 /** The tile's mark for a session another started: who, opening the starter. */
