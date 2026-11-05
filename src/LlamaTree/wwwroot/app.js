@@ -187,7 +187,7 @@ const post = (msg) => host.postMessage(msg);
 function request(type, payload = {}) {
   const reqId = ++reqSeq;
   return new Promise((resolve, reject) => {
-    pending.set(reqId, { resolve, reject });
+    pending.set(reqId, { resolve, reject, session: payload.id });
     post({ type, reqId, ...payload });
   });
 }
@@ -211,7 +211,10 @@ host.addEventListener('message', (e) => {
       const p = pending.get(m.reqId);
       if (!p) return;
       pending.delete(m.reqId);
-      m.ok ? p.resolve(m.result) : p.reject(new Error(m.error));
+      if (m.ok) { p.resolve(m.result); break; }
+      // Refused until the person trusts the repository's own settings: the question shows again above Git Changes.
+      if (m.code === 'needsTrust') askRepoTrust(state.byId.get(p.session));
+      p.reject(Object.assign(new Error(m.error), { code: m.code }));
       break;
     }
     case 'sessions': state.agents = m.agents || state.agents; setServers(m.servers); syncSessions(m.sessions, m.projects || []); break;
@@ -3534,7 +3537,52 @@ function gitMoreMenu(s, x, y) {
     info && !info.pr && { label: 'New Pull Request', action: () => request('openUrl', { uri: info.newUrl }) },
     '-',
     { label: 'Refresh', action: () => { request('git.refresh', { id: s.id }).catch((e) => toast(e.message, true)); ensurePullRequest(s, true); } },
+    s.git.trust && '-',
+    // The repository's own settings that can run programs (see trustBanner): trusted here, and trust taken back here.
+    s.git.trust?.trusted && { label: 'Stop Trusting This Repository’s Settings', action: () => setRepoTrust(s, false) },
+    s.git.trust && !s.git.trust.trusted && { label: 'Trust This Repository’s Settings…', action: () => askRepoTrust(s) },
   ]);
+}
+
+/** Repositories whose question was put off with Not now, this run, by repository and settings: their settings stay off. */
+const trustPutOff = new Set();
+
+const trustKeyName = (k) => (k.where === 'hook' ? `hook ${k.key}` : k.key);
+
+/**
+ * The question above Git Changes for a repository whose own settings (its .git/config, a file it includes, its hooks)
+ * can run programs, until it's trusted. Until then the app turns its filters off for its own git calls and won't fetch,
+ * pull, push, commit, stage, undo or switch branches there; asking for one of those shows the question again.
+ */
+function trustBanner(s) {
+  const t = s.git?.trust;
+  if (!t || t.trusted || (trustPutOff.has(`${t.repo}|${t.hash}`) && !s.trustAsked)) return null;
+  const names = [...new Set(t.keys.map(trustKeyName))];
+  const short = names.length <= 4 ? names.join(', ') : `${names.slice(0, 4).join(', ')} and ${names.length - 4} more`;
+  const detail = t.keys.map((k) => (k.where === 'hook' ? `hook ${k.key}` : `${k.key} = ${k.value ?? ''}`) + `  (${k.where})`).join('\n');
+  return h('div', { class: 'infobar trust-bar', title: `${detail}\n\nUntil you trust it, LlamaTree turns its filters off and won't run commands that would use the rest.` },
+    h('span', { class: 'msg' }, `This repository's own settings can run programs: ${short}. Trust it?`),
+    h('button', { class: 'btn primary', onclick: () => setRepoTrust(s, true) }, 'Trust'),
+    h('button', { class: 'btn', onclick: () => { trustPutOff.add(`${t.repo}|${t.hash}`); s.trustAsked = false; renderGit(); } }, 'Not now'));
+}
+
+/** Shows the question again (a command was refused for it, or the person asked from the menu). */
+function askRepoTrust(s) {
+  if (!s) return;
+  s.trustAsked = true;
+  if (currentSession() === s) renderGit();
+}
+
+async function setRepoTrust(s, trusted) {
+  try {
+    await request('git.trust', { id: s.id, trusted, hash: s.git?.trust?.hash });
+    s.trustAsked = false;
+    s.info = { text: trusted ? 'Trusted. This repository’s own settings apply again; try the command again if one was refused.'
+      : 'No longer trusted. This repository’s filters are off again, and commands that would use its other settings ask first.' };
+  } catch (e) {
+    s.info = { text: e.message, error: true };
+  }
+  renderGit();
 }
 
 /** Runs fetch, pull or push for a session, one at a time; the result goes to the info bar. */
@@ -3763,6 +3811,7 @@ function renderChanges(s, body) {
 
   const before = branchLine(s);
   const after = [
+    trustBanner(s),
     s.info && h('div', { class: 'infobar' + (s.info.error ? ' error' : '') }, h('span', { class: 'msg' }, s.info.text),
       h('button', { class: 'icon-btn small', title: 'Dismiss', onclick: () => { s.info = null; renderGit(); } }, iconEl('close'))),
     scroll,
