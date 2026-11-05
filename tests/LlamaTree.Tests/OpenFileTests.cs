@@ -79,12 +79,47 @@ public sealed class OpenFileTests
     [InlineData("x.vsto")]
     [InlineData("x.jnlp")]
     [InlineData("x.ms-appinstaller")]
-    [InlineData("x.html")]
-    [InlineData("x.mht")]
+    [InlineData("x.hta")]
     [InlineData("x.lnk")]
     [InlineData("x.url")]
     public void Types_that_act_when_opened_count_as_runnable(string file) =>
         Assert.True(LlamaTree.Platform.Desktop.IsRunnable(file));
+
+    // A web page of your own (a report Claude made) still opens in the browser.
+    [Theory]
+    [InlineData("report.html")]
+    [InlineData("report.htm")]
+    [InlineData("page.xhtml")]
+    [InlineData("chart.svg")]
+    [InlineData("saved.mht")]
+    [InlineData("saved.mhtml")]
+    public void A_local_web_page_is_not_runnable(string file) =>
+        Assert.False(LlamaTree.Platform.Desktop.IsRunnable(file));
+
+    [Fact]
+    public void A_servers_web_page_goes_to_a_text_editor_and_only_pictures_documents_and_text_to_their_app()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "lt-open-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(dir);
+        try
+        {
+            string Make(string name, byte[] bytes)
+            {
+                var p = Path.Combine(dir, name);
+                File.WriteAllBytes(p, bytes);
+                return p;
+            }
+            var text = System.Text.Encoding.UTF8.GetBytes("<script>alert(1)</script>");
+            Assert.Equal(LlamaTree.Platform.Desktop.ServerOpen.TextEditor, LlamaTree.Platform.Desktop.ServerFileOpening(Make("page.html", text)));
+            Assert.Equal(LlamaTree.Platform.Desktop.ServerOpen.TextEditor, LlamaTree.Platform.Desktop.ServerFileOpening(Make("run.cmd", text)));
+            Assert.Equal(LlamaTree.Platform.Desktop.ServerOpen.Folder, LlamaTree.Platform.Desktop.ServerFileOpening(Make("doc.docm", [0x50, 0x4B, 0x03, 0x04, 0x00])));
+            Assert.Equal(LlamaTree.Platform.Desktop.ServerOpen.App, LlamaTree.Platform.Desktop.ServerFileOpening(Make("notes.md", text)));
+        }
+        finally
+        {
+            Directory.Delete(dir, true);
+        }
+    }
 
     // What a server sends goes to its app only when it's a type that's shown, not run (on every system).
     [Theory]

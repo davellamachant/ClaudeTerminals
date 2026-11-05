@@ -55,10 +55,21 @@ internal static class Desktop
         }
         if (fromServer)
         {
-            if (IsViewable(real) && !IsRunnable(real)) OpenExternal(real);
-            else if (!LooksLikeText(real)) ShowInFolder(real);
-            else if (OperatingSystem.IsWindows()) Run(Path.Combine(Environment.SystemDirectory, "notepad.exe"), real);
-            else OpenInTextEditor(real);
+            switch (ServerFileOpening(real))
+            {
+                case ServerOpen.App:
+                    OpenExternal(real);
+                    break;
+                case ServerOpen.TextEditor when OperatingSystem.IsWindows():
+                    Run(Path.Combine(Environment.SystemDirectory, "notepad.exe"), real);
+                    break;
+                case ServerOpen.TextEditor:
+                    OpenInTextEditor(real);
+                    break;
+                default:
+                    ShowInFolder(real);
+                    break;
+            }
             return;
         }
         if (!IsRunnable(real))
@@ -81,6 +92,18 @@ internal static class Desktop
             Run(Path.Combine(Environment.SystemDirectory, "notepad.exe"), real);
         }
     }
+
+    /// <summary>How a server's copy is opened (Windows and Linux, see <see cref="OpenFileForViewing"/>).</summary>
+    internal enum ServerOpen { App, TextEditor, Folder }
+
+    /// <summary>
+    /// A server's copy goes to its app only when it's a type known to be shown, not run; else text goes to a text
+    /// editor (Notepad on Windows, never the type's own "edit" verb), and anything else is shown in its folder.
+    /// </summary>
+    internal static ServerOpen ServerFileOpening(string real) =>
+        IsViewable(real) && !IsRunnable(real) ? ServerOpen.App
+        : LooksLikeText(real) ? ServerOpen.TextEditor
+        : ServerOpen.Folder;
 
     /// <summary>Linux: the desktop's text editor for plain text; failing that, the folder it's in rather than the file itself.</summary>
     private static void OpenInTextEditor(string path)
@@ -162,8 +185,9 @@ internal static class Desktop
 
     // Script and interpreter types that Windows' own unsafe-type list (AssocIsDangerous) may not cover, and types that
     // act when opened: search and library descriptions that reach out to a share, Office add-ins and macro-enabled
-    // documents, troubleshooting packs, remote-desktop and Java Web Start files, installers, and web pages and archives
-    // (which run script in whatever renders them).
+    // documents, troubleshooting packs, remote-desktop and Java Web Start files, installers and HTML applications. Web
+    // pages (.html, .svg, .mht...) aren't here: a page Claude made opens in the browser, which sandboxes its script. A
+    // server's copy of one is never handed to the browser anyway (see IsViewable).
     private static readonly HashSet<string> ScriptExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".ps1", ".psm1", ".psd1", ".py", ".pyw", ".pyz", ".sh", ".bash", ".rb", ".pl", ".jar",
@@ -171,7 +195,7 @@ internal static class Desktop
         ".msi", ".msp", ".mst", ".lnk", ".url", ".website", ".scf", ".pif", ".cpl", ".inf", ".reg", ".chm", ".gadget", ".wsc", ".sct",
         ".search-ms", ".searchconnector-ms", ".library-ms", ".settingcontent-ms", ".diagcab", ".rdp", ".jnlp", ".iqy", ".slk",
         ".xll", ".xla", ".xlam", ".ppa", ".ppam", ".docm", ".dotm", ".xlsm", ".xltm", ".xlsb", ".pptm", ".potm", ".ppsm", ".sldm",
-        ".html", ".htm", ".xhtml", ".mht", ".mhtml", ".svg", ".hta",
+        ".hta",
     };
 
     // macOS: types its own apps (Preview, TextEdit, QuickTime, Pages...) or an editor show without running anything.
