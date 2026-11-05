@@ -5,30 +5,22 @@
   </picture>
 </h1>
 
-*Formerly Claude Terminals.*
+**[llamatree.dev](https://llamatree.dev)** · *Formerly Claude Terminals.*
 
-One window for many local Claude Code and Codex sessions, with a Visual Studio–style Git Changes / Git Repository view and diff viewer for each session's worktree.
+One window for many Claude Code and Codex sessions, on this computer and on your servers, with a Visual Studio–style Git Changes / Git Repository view and diff viewer for each session's worktree.
+
+**[Read the guide on llamatree.dev](https://llamatree.dev/docs/)** · [Install](#install) · [Guide in this repository](docs/README.md)
 
 ![Sessions grouped by project, with Git Changes for the selected worktree](docs/images/overview.png)
 
-<sub>Tick projects on and off in the Projects row; each session tab group and tile is tagged with its project.</sub>
-
 <table>
   <tr>
-    <td width="50%"><a href="docs/images/session.png"><img src="docs/images/session.png" alt="An expanded session with its Git Changes"></a><br><sub>Click a tile to work in that session full-size; <code>Shift+Esc</code> goes back. Fetch, pull and push from the Git toolbar.</sub></td>
+    <td width="50%"><a href="docs/images/session.png"><img src="docs/images/session.png" alt="An expanded session with its Git Changes"></a><br><sub>Click a tile to work in that session full-size; <code>Shift+Esc</code> goes back.</sub></td>
     <td width="50%"><a href="docs/images/diff.png"><img src="docs/images/diff.png" alt="Side-by-side diff in a document tab"></a><br><sub>VS-style side-by-side diffs open in tabs next to the terminal.</sub></td>
   </tr>
   <tr>
-    <td width="50%"><a href="docs/images/history.png"><img src="docs/images/history.png" alt="Git Repository history with outgoing commits"></a><br><sub>Outgoing commits, history and each commit's changes.</sub></td>
-    <td width="50%"><a href="docs/images/resume.png"><img src="docs/images/resume.png" alt="Resuming a saved Claude Code conversation"></a><br><sub>Start fresh or resume any saved Claude Code conversation.</sub></td>
-  </tr>
-  <tr>
     <td width="50%"><a href="docs/images/rail.png"><img src="docs/images/rail.png" alt="The conversation rail beside a session, with a prompt's preview"></a><br><sub>The ticks beside the terminal are your prompts: hover for a preview, click to read that part of the conversation.</sub></td>
-    <td width="50%"><a href="docs/images/conversation.png"><img src="docs/images/conversation.png" alt="The Conversation tab in the light theme"></a><br><sub>The whole conversation as text, here in the light theme (System, Light or Dark from the palette button).</sub></td>
-  </tr>
-  <tr>
-    <td width="50%"><a href="docs/images/panels.png"><img src="docs/images/panels.png" alt="A My tasks panel shown by Claude beside the terminal"></a><br><sub>Panels Claude shows beside the terminal: your tasks grouped by status, with ticks, badges and buttons that fill in a prompt for you.</sub></td>
-    <td width="50%"><a href="docs/images/docking.png"><img src="docs/images/docking.png" alt="Git Changes docked above an errors panel"></a><br><sub>Dock tabs where you want them: here Git Changes on top and an errors panel below, with stats, a trend and details.</sub></td>
+    <td width="50%"><a href="docs/images/panels.png"><img src="docs/images/panels.png" alt="A My tasks panel shown by Claude beside the terminal"></a><br><sub>Panels Claude shows beside the terminal, with ticks, badges and buttons that fill in a prompt for you.</sub></td>
   </tr>
 </table>
 
@@ -36,443 +28,47 @@ One window for many local Claude Code and Codex sessions, with a Visual Studio�
 
 ## What it does
 
-- **All your sessions in one window.** Every Claude Code or Codex session runs in its own real terminal, shown side by side as live tiles. Click one to work in it full-size; status dots show which are working, which are waiting for you and which need an answer before Claude can carry on.
-- **Projects.** Group sessions (for example one product's worktrees) and show or hide each group; hidden sessions keep running and still tell you when they need you.
-- **Git, Visual Studio style.** Each session's worktree gets Git Changes (stage, commit, Undo Changes, fetch, pull, push) and Git Repository (history, outgoing commits), with side-by-side diffs that update as Claude edits. **Suggest** writes the commit message for you, and a chip links the branch's pull request on GitHub or Azure DevOps.
-- **Look back through a conversation.** A rail of ticks beside the terminal, one per prompt; hover for a preview, click to read the whole conversation in its own tab. Works even in Claude's full-screen mode.
-- **Panels from Claude.** Claude can show your task list, an error summary or notes as a tab beside the Git panel, through a small MCP server built into the app; buttons on them only ever fill in a prompt for you. A ready-made example skill gets you started.
-- **Arrange the side panel.** Drag tabs into groups stacked one above the other (Git Changes on top, your panels below, say), resize them, and fold any group down to its tabs.
-- **Claude Code and Codex, side by side.** Run either in any session, or both in the same project: each gets its own conversation, the conversation rail, panels, the *needs your answer* dot and **Suggest**. See [Claude Code and Codex](#claude-code-and-codex) for what each supports.
-- **Picks up where you left off.** Each session has a conversation of its own and reopens it when the app restarts, following you through `/clear` (or Codex's `/new`); you can also resume any saved conversation.
-- **Light or dark, in your colours.** Follows Windows' light/dark mode and accent colour, or choose your own; Claude itself is started in matching colours.
+- **All your sessions in one window.** Every Claude Code or Codex session runs in its own real terminal, shown side by side as live tiles. Status dots show which are working, which are waiting for you and which need an answer. Group them into [projects](docs/sessions.md), and keep them running when the window closes.
+- **Sessions on your servers, among your own.** Run a session on a Linux server over SSH and work with it beside your local ones: typing, Git, files and panels all work as they do locally, and it keeps running there when the connection drops. [Sessions on a server](docs/servers.md)
+- **Git, Visual Studio style.** Each session's worktree gets Git Changes (stage, commit, Undo Changes, fetch, pull, push), Git Repository (history, outgoing commits), a branch picker and side-by-side diffs that update as the agent edits. **Suggest** writes the commit message. [Git](docs/git.md)
+- **Agents that work together.** Sessions can message each other, and an agent can start sessions of its own, drive them and close them, with you deciding what each may do. [Panels and messages](docs/panels.md) · [Helper sessions](docs/helpers.md)
+- **Panels from Claude.** Claude can show your task list, an error summary or notes as a tab beside the Git panel, through an MCP server built into the app. [Panels](docs/panels.md)
+- **Claude Code and Codex, side by side.** Each session keeps a conversation of its own and picks it up again when the app restarts. [Claude Code and Codex](docs/claude-and-codex.md)
+- **Your colours, your plugins.** Light or dark in your accent colour, and plugins that add tabs of their own. [Customize](docs/customize.md)
 - **Keeps itself up to date.** Tells you when a new version is out and installs it in a click; your sessions carry on afterwards.
 
 ## Install
 
-Download `LlamaTree-Setup-<version>.exe` from the [latest release](https://github.com/LlamachantTechnology/LlamaTree/releases/latest) and run it. It installs for your account only (no admin), and later versions install themselves from inside the app.
+**Windows** (PowerShell):
 
-Releases are signed by **Llamachant Technology Ltd**. If SmartScreen still warns about a new release ("Windows protected your PC"), check that the publisher says Llamachant Technology Ltd, then choose *More info › Run anyway*.
-
-### Requirements
-
-- Windows 10 1809+ or Windows 11 (x64)
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and/or [Codex CLI](https://github.com/openai/codex) on `PATH`, plus Git
-- WebView2 Runtime (built into Windows 11; setup offers the download if it's missing)
-- To build it yourself: .NET 10 SDK and Node.js (for the bundled xterm.js / Monaco packages)
-
-## Using it
-
-| Action | How |
-|---|---|
-| Expand a session | Click its tile, its tab in the title bar, or press `Ctrl+1`…`Ctrl+9` |
-| Back to all sessions | Click the open session's tab again, `Shift+Esc`, the collapse button in the tile header, or the mouse Back button |
-| Next / previous session | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
-| Toggle Git panel | `Ctrl+Shift+G` |
-| New session | `Ctrl+Shift+N`: start a new conversation (optionally one session per worktree) or **resume an existing conversation** |
-| Another session in a project | The **+** at the end of the project's group on the session tab row (at the end of the row when there are no projects). It works from that project's current session (or its first): *In the same folder* adds a session there in one click, with a conversation of its own; *In a new worktree…* (only in a Git repository) creates a worktree of it on a new branch (next to the repository by default) and opens a session there, unless you untick *Start a session in it*; *A different folder…* opens New session with the project chosen |
-| Switch a session to another conversation | Session menu (⋯) › *Resume a different conversation…* |
-| Close a session | The × on its tab in the title bar, or middle-click the tab. After you confirm, the session is removed and its process stopped; the folder isn't touched |
-| See a project's worktrees side by side | Click the project's name at the start of its group in the session tab row (again to go back), or Session menu (⋯, or right-click a session tab) › *Project view*, or right-click the project in the Projects row: one row per worktree with its session, what it's on, its changes, how far its branch is from `main`, and its pull request. Click a row for the detail and the actions |
-| Show one project | Ctrl+click its name in the Projects row, or right-click it › *Show only this project* |
-| Show several projects | Click a project's name or checkbox to show or hide it; **All** shows every project, **None** hides them all |
-| Put a session in a project | Pick the project when adding the session, drag its tab into the project's group, or right-click its tab › *Move to project…* |
-| Reorder tabs | Drag session, project or diff tabs (or right-click › *Move left/right*). Unknown stays last and the Terminal tab first |
-| Rename, recolour, reorder or delete a project | Right-click the project. *Edit project* sets its name and colour (a swatch, a custom colour or Automatic). Deleting it keeps its sessions; they just have no project |
-| Look back through the conversation | Hover the ticks at the right edge of the open terminal; click one (or right-click › *Show conversation*) to open the **Conversation** tab at that prompt |
-| Write a commit message | **Suggest**, next to Commit in the Git panel |
-| Arrange the side panel | Drag a tab (Git Changes, Git Repository or a panel) onto another group's tab row to move it there, or onto the top or bottom half of a group to split it into a new group above or below. Drag the dividers to resize. The chevron at the left of a tab row (or double-clicking the row) folds a group down to its tabs. Right-click a tab for the same moves, *Reset layout* and *Reopen a closed panel*. The layout is remembered |
-| Light, dark or follow Windows; accent colour | The palette button at the top right |
-| Check for updates | Click the version chip (**v1.x.y ▾**) at the top right |
-| Be counted as a user, or not | Answer the question under the title bar the first time, or the version chip's menu › *Count me among the users* |
-| Terminal font size | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
-| Newline in Claude prompt | `Shift+Enter` |
-| Copy / paste | `Ctrl+C` with a selection / `Ctrl+V` (or right-click when expanded). With an image on the clipboard, such as a screenshot, `Ctrl+V` pastes the path of a PNG saved from it, which Claude Code and Codex attach; files copied in Explorer paste as their paths |
-| Diff tabs | Click a file for a preview tab (italic, reused); double-click to keep it open. Tabs belong to their session's project: switching to a session in another project shows that project's tabs, and yours come back when you return |
-| Terminal ↔ diffs | Click the Terminal tab, `Shift+Esc` from a diff, or `Ctrl+PgUp` / `Ctrl+PgDn` |
-| A tab beside the terminal | Drag a diff, Conversation or plugin tab down into the area, near the edge you want it on (left, right, top or bottom), or right-click it and pick a side; the middle shows it on its own again. Drag the Terminal tab the same way to put the terminal on that side of the tab. While split, the tab you pick goes beside the terminal, `Shift+Esc` goes back to the terminal and leaves it there, and `Ctrl+W` closes the tab only while you're in it. Drag the divider to resize (double-click to even up); the side and size are remembered |
-| Close diff tab | `Ctrl+W` or `Ctrl+F4`, middle-click, or the tab's ×; `Alt+↑/↓` jumps between changes. (In the terminal `Ctrl+W` stays Claude's delete-word) |
-
-Plain `Esc` always goes to the terminal, because Claude Code uses it to interrupt.
-
-### Sessions
-
-**Status dots:** each state has its own colour, and its own shape and motion.
-- **Working** (blue): the session's name on its tab shimmers too.
-- **Needs your answer** (pink): Claude is asking you something (a permission, a question, a plan to approve, whether to trust the folder) and can't carry on until you answer; it goes back to normal once you have.
-- **Waiting for you** (orange): the session finished working while you weren't watching (or rang the bell).
-- **Idle:** a green dot with a slowly breathing glow. When a session finishes working while you watch it, the dot pops in with one ring.
-- **Not running:** a hollow grey ring that stays still.
-
-How working, waiting and asking move is up to you: the palette button › **Status dots** shows four styles side by side, each moving, and previews the one you click on the whole app.
-
-| Style | Working | Waiting for you | Needs your answer |
-|---|---|---|---|
-| **Glow** (default) | three dots bounce in turn | the dot beats and glows | the dot hops, landing with a small ring, and glows as it leaps |
-| **Classic** | a comet spins round a breathing core | a dot in a ring, sending out a ping | the dot hops, and the session's tab lights up with a pink outline |
-| **Calm** | a ring with a gap turns slowly | a dot in a ring, fading gently | a pink diamond that slowly swells |
-| **Signal** | a ring fills round a small core | a square light blinking | a dot in a ring that shakes |
-
-With Windows' animation effects turned off the dots stay still, and in every style their shapes still tell the states apart.
-
-**Each session has its own conversation:** a new session's command is just `claude` (plus any options you add), and the app gives it a conversation id of its own.
-- **Starting:** it starts Claude with `--session-id <id>` until there's something saved, then with `--resume <id>`. Restarting the app or the session always reopens that conversation, even with several sessions in the same folder.
-- **Following Claude:** when you `/clear` or `/resume` inside Claude, the app follows it to the new conversation once Claude has saved it.
-- **Where to see it:** hover the session's tab or the name on its tile for the conversation's title, when it started and when it was last used (or that it's a new one, with nothing in it yet). Edit session shows the id.
-- **Existing sessions:** a session made with `claude --continue` (the previous default) starts on the folder's latest conversation once, then keeps that one. A plain `claude` session saved before 1.1.0 never told the app which conversation it was in, so it gets a new one of its own, and the app says once which sessions those are; *Resume a different conversation…* takes one back to an earlier conversation.
-- **Commands that choose for themselves:** commands with their own `--resume`, `--session-id` or `--fork-session` are left alone.
-
-**Resuming:** the picker reads Claude Code's saved conversations from `~/.claude/projects`. Picking one (in New session, or *Resume a different conversation…*) makes it the session's conversation; *New conversation* gives the session a fresh one. Close the conversation in any other terminal first. Conversations updated in the last few minutes are tagged *active now* as a reminder.
-
-**Codex sessions** work the same way, with a few differences: see [Claude Code and Codex](#claude-code-and-codex).
-
-**Closing the app** stops the sessions but loses nothing: Claude keeps every conversation, and the sessions come back with the app. The closing prompt says which pick up where they left off (those that continue or resume) and which start a new conversation.
-
-**Starting when opened:** when the app starts, a Claude session it brings back waits until you first open it (its tile says *Starts when you open it*; pressing Enter in it works too). Claude's start-up context, such as hooks, the date and Git status, is then fresh when you use the session, and one you don't open runs nothing. New sessions, and sessions running any other command (a dev server, say), start straight away.
-
-Sessions are saved in `%APPDATA%\LlamaTree\sessions.json`. Set `LLAMATREE_DATA` to use a different folder (separate profiles, testing). Until 1.2 the app was called Claude Terminals: the first time 1.2 runs it moves `%APPDATA%ClaudeTerminals` and `%LOCALAPPDATA%ClaudeTerminals` to their new names, and the old `CLAUDE_TERMINALS_DATA` still works. Only one copy runs per profile; launching again brings the existing window forward.
-
-### Claude Code and Codex
-
-A session's command decides what it runs: `claude` for [Claude Code](https://docs.anthropic.com/en/docs/claude-code), `codex` for OpenAI's [Codex CLI](https://github.com/openai/codex) (each with any options you add), or anything else, such as a shell or a dev server. Claude Code and Codex sessions can sit side by side, in the same project or even the same folder.
-
-| | Claude Code | Codex | Any other command |
-|---|---|---|---|
-| **Sessions and window** | | | |
-| Terminal tiles, tabs, projects, shortcuts | ✓ | ✓ | ✓ |
-| Status: working, waiting for you, idle, not running | ✓ | ✓ | ✓ |
-| Status: *needs your answer* | ✓ Permissions, questions, plans, the folder trust check | ✓ Approvals and questions (Codex reports them), the folder trust check | — |
-| Starts when you first open it, after the app restarts | ✓ | ✓ | — starts straight away |
-| **Conversations** | | | |
-| A conversation of its own, even several in one folder | ✓ the app picks its id | ✓ learned once Codex saves it | — |
-| Reopens it when the app or the session restarts | ✓ `--resume <id>` | ✓ `codex resume <id>` | — |
-| Follows you to another conversation | ✓ `/clear`, `/resume` | ✓ `/new`; `/resume` once you send a prompt in it | — |
-| Resume picker | ✓ | ✓ tagged *Codex* | — |
-| Conversation title on hover, and in the closing prompt | ✓ | ✓ | — |
-| **Conversation rail and tab** | | | |
-| Rail of prompts and the Conversation tab | ✓ | ✓ | — |
-| Works in full-screen mode | ✓ | ✓ | — |
-| Project view: latest prompt and answer | ✓ | ✓ | status only |
-| **Panels** | | | |
-| Panels beside the terminal, and their buttons | ✓ | ✓ | — |
-| **Theme** | | | |
-| App, terminal and diff colours, accent, themes | ✓ | ✓ | ✓ |
-| The agent itself started in matching light or dark colours | ✓ | not yet | — |
-| **Git** | | | |
-| Git Changes, Git Repository, diffs, fetch/pull/push, pull requests, Project view | ✓ | ✓ | ✓ |
-| **Suggest** writes the commit message | ✓ Claude Code | ✓ Codex | ✓ Claude Code, if installed |
-| **App** | | | |
-| Plugins | ✓ | ✓ | ✓ |
-| Updates: sessions carry on in their conversations | ✓ | ✓ | restarted |
-
-How Codex sessions do it:
-
-- **Its own conversation.** Codex can't be told which conversation id to use, so a new session learns its conversation once Codex has saved it: the latest one started in its folder since the session started, not counting `codex exec` runs. From then on it's reopened with `codex resume <id>`. A Guardian review thread Codex starts under a conversation opens that conversation.
-- **Following you.** After `/new` the session moves to the new conversation once Codex has saved it. After `/resume` it moves to the conversation you picked once you send a prompt in it, read from Codex's prompt history (`~/.codex/history.jsonl`); with `history.persistence = "none"` in Codex's config, `/resume` isn't followed.
-- **Saved conversations** are read from `~/.codex/sessions`, or `CODEX_HOME` when it's set.
-- **Panels:** the app adds its MCP server to Codex's command line (`-c mcp_servers.llamatree.…`), passing the session's token in an environment variable rather than on the command line. A command that sets that server itself is left alone.
-- **Needs your answer:** Codex reports in the terminal when it's waiting on you (an `OSC 7501` sequence with `state=blocked`), so the dot doesn't depend on reading its screen. Any program that reports its state that way gets the dot too.
-- **Suggest** runs `codex exec --ephemeral -s read-only` with low reasoning: read-only and not saved as a conversation, using a little of your Codex plan.
-- **Commands that choose for themselves:** `codex resume …` and `codex fork …` keep their own choice of conversation, and Codex's other subcommands (`codex exec`, say) run as they are.
-
-### Projects
-
-Projects group sessions, for example everything for one product across its worktrees. Only the ticked projects' sessions are shown. Sessions with no project are grouped under **Unknown**, which you tick and untick like a project. Each session's tab and tile carry a tag in its project's colour, so two sessions with the same name in different projects can be told apart. Hidden sessions keep running, and each project tab counts its sessions waiting for you, so a hidden project still gets noticed.
-
-### Project view
-
-*Project view* (click a project's name at the start of its group in the session tab row, or find it on a session's ⋯ menu, a session tab's right-click menu, or a project's right-click menu in the Projects row) switches to it the way clicking a session's tab switches to that session: no session is open, and the third row holds just its Project tab. Click the project's name again, or a session's tab, to leave it. It shows every worktree of the project in a table (with no projects, of every session): one row per worktree of each repository the project's sessions are in, taken from git's own worktree list, so worktrees made outside the app, or whose session was closed, show too. Each row has:
-
-- its branch and folder, and the session in it (or *no session*), with the session's status dot;
-- what the session is on: its status and latest prompt, or its conversation's title while it isn't running;
-- how many files are changed in it, with a ⚠ when a file is also changed in another worktree of the same repository (a line under the table names the file and both worktrees, and lights their rows when hovered);
-- how far its branch is ahead of (↑) and behind (↓) the base branch (what `origin/HEAD` points at, else a local `main` or `master`);
-- its open pull request, as the Git panel's chip finds it.
-
-The summary line counts the worktrees, how many need you, how many are behind the base branch and how many can be removed. Click a row for the detail: the latest prompt and the start of Claude's answer, the changed files, what's worth knowing (behind the base branch, merged, not in a pull request yet), and the actions:
-
-- **Open session** (or **Conversation**), and **Start a session here** for a worktree that has none, with the options of the project's other sessions;
-- **View PR** or **New pull request** in the browser;
-- **Remove worktree…** for a worktree other than the main one: its sessions are removed first, then git removes the folder, never forced, so one with uncommitted changes is refused and left as it is. The branch stays.
-
-**New worktree…** on the view's toolbar adds a worktree of the project's repository on a new branch, started from its base branch (`origin/main`, say), with a session in it unless you untick *Start a session in it*; a project with sessions in several repositories asks which. Its row then shows with the others, and *Start a session here* adds a session to it later. The new branch has no upstream until its first Push, which publishes it under its own name.
-
-The view follows the sessions as they work and re-reads the repositories every half minute (or on Refresh).
-
-### Git
-
-**Git panel:** shows the selected session's repository. *Git Changes* has staged/unstaged trees, stage/unstage, commit, and VS-style **Undo Changes** (right-click a file or folder, or the ↶ on a section header; new files go to the Recycle Bin; it refuses rather than guesses if the files changed after you confirmed, or if restoring would overwrite a file that now exists at a deleted or renamed file's old name). Right-click a folder for **Open in File Explorer**. *Git Repository* has outgoing commits and history, plus each commit's files. Click any file to open a diff. Open diffs refresh as the session edits the file.
-
-**Suggest** writes a commit message for what Commit would take (the staged changes, or all of them), in the style of the repository's recent commits; Ctrl+Z brings back what was in the box. The ▾ beside it sets how much it writes, remembered for next time: *Short* (one line), *Standard* (a line, plus a few brief points when a change covers several things) or *Detailed* (a line and a paragraph on what changed and why). It runs the session's own agent headless with your own sign-in, sending it the diff, so it uses a little of that agent's plan: Claude Code as `claude -p` (Haiku, no tools, not saved as a conversation), Codex as `codex exec` (read-only, low reasoning, not saved). A session running anything else uses Claude Code.
-
-**Fetch, Pull and Push** sit on the Git panel's toolbar, next to the branch and its outgoing/incoming counts. Pull only fast-forwards: it never creates a merge commit or leaves conflicts in a worktree a session may be editing, and stops with git's explanation if the branch has diverged. Push never forces; a branch with no upstream is published to `origin` and tracked. Each runs for up to 5 minutes, long enough to sign in through Git Credential Manager.
-
-**Pull request chip:** when the branch has an open pull request on GitHub or Azure DevOps, a **PR 958 ▾** chip appears next to it, with *Open in Browser*, *Refresh*, *View Pull Requests* and *New Pull Request*. To find it the app calls that service's API with the credential Git Credential Manager already holds for the remote: it is only sent to that service over HTTPS, the lookup never opens a sign-in window (without a stored credential there's simply no chip), and results are cached for 3 minutes.
-
-### Conversation rail and tab
-
-The ticks down the right edge of the open terminal are the prompts you've sent in that session, newest at the bottom. Hovering one shows the prompt and the start of Claude's reply; clicking opens the session's **Conversation** tab next to the diff tabs, scrolled to that prompt. It shows the whole conversation as text: your prompts, Claude's answers with their formatting, and its tool calls (long runs folded). It follows along while Claude works, and its own rail jumps between prompts. Both come from Claude Code's saved transcript (the session's Claude process names it in `~/.claude/sessions`), so they work in Claude's full-screen mode, which keeps no terminal scrollback. Nothing is sent anywhere.
-
-### Panels
-
-Claude can put things beside the terminal for you to keep in view: your task list, an error summary, a checklist. Each panel is a tab next to Git Changes and Git Repository, holding Markdown or a list of items (a key, title, badges, a link and buttons), optionally in groups up to three levels deep. Groups and Markdown headings fold with a click, and the app remembers what you folded in each panel. When there are more tabs than fit, ◀ ▶ arrows scroll them, as in the other tab rows. LlamaTree has no code for any tracker or service. Claude fills panels with whatever it can reach through your own MCP servers and skills, so a team can share a `/my-tasks` skill that reads their tracker and shows the result in a panel.
-
-- **How Claude reaches the app:** each Claude session is started with `--mcp-config` pointing at a small MCP server inside the app, on `127.0.0.1` at a port picked when the app starts. Its tools (`show_panel`, `update_panel`, `close_panel`, `list_panels`) are allowed without asking. Every session has its own token, which ties each panel to the session that made it and keeps other programs out. Your own MCP servers still load as usual; a command that passes its own `--mcp-config` is left alone.
-- **Where a panel shows:** with the session that made it, by default. Its ⋯ menu shows it with every session of that project, or with every session, instead. The tabs follow the selected session.
-- **Buttons never run anything.** *Here* buttons type their prompt into the session you're looking at, for you to send. *New* buttons open **New session** with the folder, project and first prompt filled in; that session starts a new conversation with the prompt you leave there. **Refresh** sends the panel's refresh prompt (for example `/my-tasks`) to the session that made it.
-- **What a panel can hold:**
-  - a count on its tab;
-  - figure tiles at the top, with trend arrows and small trend lines;
-  - items with times that stay current ("4 min ago"), progress bars and trend lines;
-  - **Details** that open under an item, in Markdown, with code coloured by language;
-  - tick boxes. Your ticks are saved, Claude can read them (`get_panel`), and they survive a refresh.
-  
-  Long lists get a filter box. Buttons can also copy a text (a branch name, a command) to the clipboard. All of it is drawn by the app from plain data; Claude never supplies HTML, SVG or scripts.
-- **Working with a panel:**
-  - **Updated dot:** a tab Claude has updated since you last looked at it gets a dot.
-  - **Ask about ticked (n):** types the ticked items into the session you're looking at, so you can say what to do with them.
-  - **Sorting:** the ⋯ menu sorts list items by time, key or title, remembered per panel.
-- **Panels stay** until you close them (middle-click the tab, or ⋯ › *Close panel*; both ask first) or remove their session, including across restarts. A panel closed by mistake can be brought back while the app runs: right-click any tab › *Reopen a closed panel*. Panels are kept in `panels.json` next to `sessions.json`. *Copy as Markdown* copies a panel's content.
-- **Getting started:** right-click any tab › *Example panel skill…* shows a ready-made `/my-tasks` skill (groups by status, ticks, Start session / Ask here / Copy branch buttons, Refresh) to save as `.claude/skills/my-tasks/SKILL.md` and point at your tracker's MCP tools.
-
-### Messages between sessions
-
-Claude and Codex sessions can message each other, through the same `llamatree` MCP server that shows panels, so neither needs a connection of its own. Its tools are **`list_sessions`** (the other sessions this one may message), **`send_message`** (`to`: a session's name or id, `text`, and `reply_to` when it answers a message), **`wait_for_reply`** (waits for the answer to a message it sent, up to 110 seconds, 50 by default since Codex cuts a tool call off at 60) and **`read_messages`** (this session's unread messages, each read once). Ask an agent to "ask the api session what it changed in the parser", and it sends the question and waits for the answer.
-
-- **You decide who may message whom.** The first time a session messages one it has no rule for, the app asks you. Your answer can be for **this time only** (delivered or dropped, and you're asked again next time), or a rule: for that session, for any session in its project, or for any session, or for every session (the **All sessions** rules). Closing the dialog leaves the message waiting. Rules go one way, and a session can always reply to a message it was sent, for an hour.
-- **The sender is the session that called the tool**, known from its own token, never a name it gives. A message reaches the other agent through `read_messages` or `wait_for_reply`, marked as from another agent rather than from you, so it's weighed as a colleague's request, not your prompt.
-- **Telling a session it has messages:** once it's idle (not working or asking you something) and you haven't typed into it for a few seconds, the app types and sends one line saying who it has messages from and to read them with `read_messages`. A stopped session is told when it next runs.
-- **Exchanges end:** a message and the replies to it can run to 12 messages, so two agents allowed to answer each other can't go on for ever. Past that a reply is refused, and the agent is told to tell you where things stand and start afresh only if you ask.
-- **Limits:** up to 8,000 characters a message, 20 messages a minute from a session, 20 waiting for your answer per pair, and 100 unread per session. The rules are kept in `relay.json` next to `sessions.json`, and unread and waiting messages and the log in `relay-messages.json`, so they outlast a restart.
-- **Seeing and changing it:** Permissions › **By session** (below) shows each session's rules, with **Pause messages** to stop all of it at once. A session with unread messages shows an envelope and their count on its tile (click to see them), and one that may message others by rules of its own a link; its **⋯** menu has **Permissions…**, and once anything is allowed the title bar has a Permissions button, counting the messages waiting for your answer. Permissions › **Messages** lists the latest 500 messages, newest first, from every session or one: who sent what to whom, when, and whether it's unread, read, waiting for your answer (click to answer), refused or dropped. Open one to read all of it; **Clear** forgets those done with.
-
-### Plugins
-
-A plugin is a web page of your own, shown in a document tab (like a diff or the Project view) or in the side panel (beside Git Changes). The palette button lists your plugins under **Plugins**, each with the menu items it adds there; pick one to open it. Plugins can add items to a project's or a session's menu too, and a button to the title bar. **Open the plugins folder** opens the folder they live in: `plugins` in the app's data folder (`%APPDATA%\LlamaTree\plugins`). The folder is read each time the menu opens, so a plugin you add shows without restarting.
-
-Each plugin is a folder holding a `plugin.json` and its page:
-
-```
-plugins\
-  counter\
-    plugin.json
-    index.html
+```powershell
+powershell -c "irm https://github.com/LlamachantTechnology/LlamaTree/releases/latest/download/install.ps1 | iex"
 ```
 
-```json
-{
-  "title": "Counter",
-  "description": "Shown when you hover its tab",
-  "entry": "index.html",
-  "placement": "panel",
-  "menu": [
-    { "label": "Start again", "command": "reset" },
-    { "label": "Count this session", "command": "count", "where": ["session", "sessionTab"] }
-  ],
-  "toolbar": { "icon": "counter.svg", "tooltip": "open the counter", "command": "open" }
-}
+**Linux:**
+
+```sh
+curl -fsSL https://github.com/LlamachantTechnology/LlamaTree/releases/latest/download/install.sh | sh
 ```
 
-- **The folder's name** is the plugin's id and its address: `https://counter.plugin.local/index.html`. Use letters, digits and hyphens.
-- **`title`** is its name on the menu and its tab (the folder's name if left out). **`icon`** is shown beside its name there and in Permissions: an image file in its folder (SVG, PNG, ICO, GIF, JPEG or WebP, up to 64 KB); without one it has its title bar button's icon, if it has a button, or the app's plugin icon. **`entry`** is its page, a file inside the folder (`index.html` if left out). Its scripts, styles and images load from the same folder with relative paths.
-- **`placement`:** `"tab"` (the default) opens it as a document tab; `"panel"` gives it a tab in the side panel, which is there as soon as the app has read the plugin, without opening it first, and which you can drag to another group like the others. Close it with a middle-click or its right-click menu; it then stays out of the panel until you open it again from the palette, a menu or its button.
-- **`menu`:** up to 8 items. Picking one opens the plugin and sends it the item's `command`, with what was clicked. **`where`** names the menus it's on, one or a list (the palette menu if left out):
-  - `"palette"`: under the plugin's name in the palette menu;
-  - `"project"`: a project's right-click menu in the Projects row;
-  - `"session"`: a session's ⋯ menu on its tile (or a right-click on the tile's header);
-  - `"sessionTab"`: a session tab's right-click menu.
+Each downloads the latest release, checks it against the SHA-256 GitHub publishes for it, and installs it. Both scripts are in [tools/install](tools/install) if you'd like to read them first. You can also download the Windows setup, or the `.deb`, `.rpm` or `.tar.gz`, from the [latest release](https://github.com/LlamachantTechnology/LlamaTree/releases/latest).
 
-  In the project and session menus, plugins' items are under a **Plugins** heading at the end, each with its plugin's name beside it.
-- **`access`:** what it asks for beyond its own page, one or a list: `"sessions"` (see **Seeing your sessions** below), `"message"` (see **Messaging your sessions**), and `"ask"` (to put questions about them to Claude). Leave it out and it gets nothing. No access lets a plugin type into a session as you: what it has to say reaches an agent as a message from it.
-- **`inbox`:** `true` lets sessions message it first, not only answer what it sends them (it needs `"message"` access too).
-- **`toolbar`:** a button in the title bar, after New Session and Git Changes, set apart from them. **`icon`** is an image file in the plugin's folder (SVG, PNG, ICO, GIF, JPEG or WebP, up to 64 KB); the button shows only the icon, never text, so it can't pass for one of the app's own buttons. Its tooltip is the plugin's name, then **`tooltip`** if given. Clicking it opens the plugin and sends **`command`**, if given, with the open session as context. The plugin's badge shows on its button too. Right-click the button › **Hide this button** to hide it; the plugin's **Show its title bar button** in the palette menu brings it back.
+You need [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and/or the [Codex CLI](https://github.com/openai/codex), plus Git. LlamaTree runs on Windows 10 1809+ and Windows 11 (x64) and on 64-bit Linux; on macOS it runs built from source for now. See [Getting started](docs/getting-started.md) for the details.
 
-**Talking to the app.** A plugin and the app exchange a few messages, each `{ type: 'llamatree:<name>', … }`. Listen with `addEventListener('message', …)`; send with `parent.postMessage(…, '*')`. Plugins written before 1.2 use `'claude-terminals:<name>'`, which still works: the app answers them under that name too.
+## Documentation
 
-| Message | Direction | What it does |
-|---|---|---|
-| `theme` `{ theme: 'light' \| 'dark', id, name, colors, font, glow }` | To the plugin | Sent when its page loads and whenever the theme changes. `id` and `name` are the theme file on (`nerds`, one of yours), or null for System, Light and Dark. `colors` are the app's own colours by the names in the themes section (`chrome`, `panel`, `text`, `accent`, `accent-strong`, `ok`, `working`, `asking`, …), `font` the theme's font family or null, `glow` whether its text glows, so a plugin can paint itself to match whatever theme is on. The page is also opened with `?theme=light` or `?theme=dark`, and `?look=<id>` when a theme file is on. |
-| `command` `{ command, context }` | To the plugin | One of its menu items, or its title bar button, was picked; sent once its page has loaded. `context` says what was clicked (below). |
-| `open` `{ placement, state }` | From the plugin | Moves the plugin to the other placement for now: `tab` (a document tab, wide) or `panel` (the side panel). Its page starts again there, so it sends along whatever `state` it wants back (JSON, up to 1 MB), and gets it in a `state` message once it has loaded. It returns to its `plugin.json` placement when that tab closes. The page is opened with `?placement=tab` or `?placement=panel`, so it knows where it is. |
-| `state` `{ placement, state }` | To the plugin | After an `open`: where the page is now, and the state it sent along. |
-| `badge` `{ count }` or `{ dot: true }` | From the plugin | Puts a count (99+ above 99) or a dot on its own tab; `{ count: 0 }` clears it. |
-| `title` `{ title }` | From the plugin | Changes its own tab's caption (up to 60 characters); `{ title: null }` puts its name back. |
-| `request` `{ requestId, name, … }` | From the plugin | Asks for something its `access` lets it see (below). |
-| `response` `{ requestId, result }` or `{ requestId, error }` | To the plugin | The answer to a request. |
-| `message` `{ unread, from, fromName }` | To the plugin | A message came for it (with `"message"` access); read it with `readMessages` (below). |
-
-The badge and caption last until its tab is closed. A plugin can only change its own tab; anything else it sends is ignored.
-
-**What a command's `context` holds**, by the menu it came from:
-
-| Menu | `context` |
-|---|---|
-| `palette` | `{ menu: 'palette' }` |
-| `toolbar` (its title bar button) | `{ menu: 'toolbar' }`, plus the session fields below for the session that's open, if one is |
-| `project` | `{ menu: 'project', project }`: the project's name (`null` for the sessions with no project) |
-| `session`, `sessionTab` | `{ menu, sessionId, session, directory, project }`: the session's id and name, its working folder, and its project's name (`null` if none) |
-
-A plugin's items are only on the sessions and projects it may see: it needs `access` (below) that you haven't refused, and a session in its projects that you haven't hidden from it. Until you've answered, its items are there, but say only `{ menu }`; choosing one is how it gets to ask. Its title bar button is always there, with the session fields only for a session it may see.
-
-Without `access`, that's all a plugin learns. The session id tells clicks on different sessions apart and stays the same while the session exists; it isn't a way into the session. The folder is the one the session runs in; the plugin still can't read it.
-
-**Seeing your sessions.** A plugin whose `plugin.json` has `"access": ["sessions"]` can ask about your sessions. The first time it asks, the app asks you whether to let it, saying what it would see, and keeps your answer either way. You also choose which sessions: **Only sessions in these projects** (the open session's project is ticked to start with), or **All sessions, including projects you add later**. A session in a project you ticked is seen as it comes and goes; a new project isn't until you add it, and a session moved out of one stops being seen (the plugin's page reloads, so it no longer holds what it was shown). A plugin allowed before this keeps seeing every project. It's read only: nothing here types into a session or changes a file.
-
-**Permissions.** The palette menu's **Permissions** opens a tab showing what every plugin and session may do. **By plugin** lists each plugin with the access its `plugin.json` asks for, each set to **Allowed**, **Ask first** (you're asked the next time it needs it) or **Not allowed**; change any of them there at any time. Taking access away reloads the plugin's page, so it no longer holds what it was shown. A plugin allowed to see your sessions sees those in the projects you chose (**Change projects** changes them) except any you've hidden from it, which are listed under its access with **Show all**. Answers about a plugin you've since removed are listed too, with **Forget**. **By session** starts with **All sessions**: the global rules for every Claude and Codex session messaging a session in the same project, and any other session (**Allowed**, **Ask first** or **Not allowed**). Then each session, with the plugins that ask to see sessions, each marked whether it sees this one (click one to hide the session from it, or show it again; a plugin can't tell a hidden session from one that doesn't exist, and hiding one reloads its page) and, for Claude and Codex sessions, **Messages it may send**: its own rules for any other session, for sessions in its project, and for each other session. Each of a session's own is **Default** unless you set it, leaving it to the next rule, and says what that comes to. The most specific rule decides: one for that very session, then the session's rule for its project, then for anyone, then the global rule for the same project, then for anyone; with none, you're asked. Messages waiting for your answer are marked there, and clicking the mark asks you again. **Pause messages** on the toolbar stops every session messaging another until you resume.
-
-| Request | Answer |
-|---|---|
-| `sessions` | Every session: `{ id, name, project, directory, worktree, status, open }`. `worktree` is the top of its Git working tree (`null` outside Git). `status` is its status dot: `working`, `running` (idle), `asking` (needs your answer), `attention` (finished, waiting for you) or `exited`. `open` is true for the session that's open. |
-| `activity` `{ ids, have }` | What Claude did in each session, read from its conversation: `[{ id, found, conversation, version, from, events }]`. Each event is `{ t, k, file, text, ok, q }`: its time; its kind (`prompt`, `read`, `search`, `edit`, `run`, `build`, `test`, `ask`, `say`, `agent`, `compact` or `other`); the file read or edited; the prompt, question, command or first sentence of an answer; whether a test, build or edit succeeded, once known; and whether an answer ends in a question. The first event of each reply also carries its cost, `ctx` (the tokens the agent was sent, cached or not) and `out` (the tokens it wrote). `have` maps a session id to the `{ conversation, version }` you already have, so only newer events come back, from index `from`. |
-| `folders` `{ sessionId }` | The top-level folders of the session's repository with how many tracked files each holds, and the folders directly in each with theirs (the biggest forty): `{ root, folders: [{ name, files, folders: [{ name, files }] }] }`, `root` being the repository's main worktree. `null` outside Git. |
-| `showSession` `{ sessionId }` | Opens the session, as clicking its tab would. |
-| `showPrompt` `{ sessionId, at, index, text }` | Opens the session's Conversation tab scrolled to the prompt sent at `at` (an ISO time from `activity`), or failing that the `index`th prompt; answers `{ index }`. Claude's full-screen mode keeps no terminal scrollback, so the Conversation tab is where a prompt can be jumped to. |
-
-**Messaging your sessions.** A plugin with `"access": ["message"]` can message Claude and Codex sessions through the same relay sessions use (see **Messages between sessions**). You're asked first, and choose the projects whose sessions it may message, as for seeing them; the two share the same projects and the sessions you hid. Its messages reach an agent as from the plugin ("Messenger (plugin)"), never from you, and the agent is told it has one as for any message. With `"inbox": true` sessions may message it first too; otherwise they can only answer it. Plugins never message each other, and every message is in Permissions › **Messages**.
-
-| Request | Answer |
-|---|---|
-| `messageTargets` | The sessions it may message now: `[{ id, name, project, agent, running }]`. |
-| `sendMessage` `{ to, text, replyTo }` | Sends `text` to the session `to` (an id from `messageTargets`), as a reply to `replyTo` if given: `{ outcome, id }`, `outcome` being `delivered` or `denied`, and `id` the message's, which an answer names as its `replyTo`. |
-| `readMessages` | The messages sent to it since it last read them, each read once: `[{ id, from, fromName, text, sent, replyTo, turn }]`. |
-
-When a message comes for it, the app sends `message` `{ unread, from, fromName }` to its page (once it has loaded, if it isn't open yet); read them with `readMessages`. [`samples/plugins/messenger`](samples/plugins/messenger) is a plugin that uses them: pick a session, send it a message, and see its answer. To try it, copy the folder into your plugins folder.
-
-**Asking Claude about your sessions.** A plugin with `"access": ["sessions", "ask"]` can also put a question about your sessions to an agent. You're asked separately before it may, because each question runs Claude once, headless, with your own sign-in, the way *Suggest a commit message* does, and counts against your usage. The agent is the sessions' own when they all share one that can answer this way (Codex, say), otherwise Claude; it runs with no tools and saves no conversation, so it can't change anything. The question goes with the conversations of the sessions named: your prompts, what the agent answered and the tools it used, each session's newest turns first within a fixed budget, so an old or long conversation is cut short at the top. The plugin sees the answers. **Stop it asking Claude about your sessions** in the palette menu takes it away again.
-
-| Request | Answer |
-|---|---|
-| `ask` `{ question, ids, history }` | `{ answer, writer, sessions }`: the agent's answer (light Markdown), the name of the agent that wrote it, and the ids of the sessions it was about. `ids` names the sessions to ask about (stopped ones too: their saved conversations are read); `history` is earlier `[{ question, answer }]` of the same chat, the last eight, so a follow-up makes sense. |
-
-**Reset.** A plugin's card in Permissions › By plugin has **Reset** once you've answered anything about it: it forgets what it may do, its projects and the sessions hidden from it, so it asks again. A session's card in By session has **Reset** once it has rules of its own: they're cleared, and All sessions' rules decide.
-
-**Where your answers are kept.** Your answers about plugins (what each may do, its projects, the sessions you hid) are kept in `plugin-grants.json` next to `sessions.json`, where both the page and the message relay read them. Each answer that allows something remembers the plugin's `plugin.json`: if that file changes, what you allowed is asked again, and Permissions marks the plugin **Changed since you allowed it**.
-
-**What a plugin can't do.** A plugin is only a page. It's given no terminals, files or Git, no sessions unless you allowed it to see them, and it can't reach the app:
-- it runs in a sandboxed frame with an origin of its own, so it can't read or change the app's page, or another plugin's;
-- the app listens to it only for the messages above, never through the bridge the app's own page uses, and answers a request only with what that plugin was allowed to see;
-- it can't navigate the app, open windows, or use storage, the clipboard, the camera or notifications;
-- other origins can't read a plugin's files, and its frame can't leave its own plugin's address.
-
-It can still run scripts, show forms and dialogs, load files from its own folder, and reach websites as any page can, so a plugin you let see your sessions could send what it sees elsewhere. Its page reloads when its tab is closed, or dragged to another group. Install only plugins you trust, as you would any page you open.
-
-### Theme and colours
-
-**Theme:** *System*, *Light*, *Dark*, or one of the themes below, from the palette button at the top right. *System* (the default) follows Windows' app mode (Settings › Personalisation › Colours), and changes with it. The terminals go light too, and each Claude is started in its matching theme (`--settings` with `{"theme":"light"}` or `"dark"`): Claude can't detect the terminal's colours itself, because the Windows console layer doesn't pass the question through. Sessions whose command passes its own `--settings` are left alone. Claude reads its theme when it starts, so after switching, the app offers to restart running Claude sessions; each carries on in its conversation.
-
-**Accent colour:** by default the app uses your Windows accent colour for tabs, buttons and highlights, and follows it when you change it. To pick another, use *Accent colour › Change…* under the palette button: Windows accent, the original purple, eight swatches or any custom colour, previewed as you click (Cancel or Esc puts back what you had). Shades are chosen so white text and the background stay readable in both themes, so a very light or dark colour is toned where needed.
-
-**Themes:** a theme is a JSON file of colours. The app comes with three. *Nerds*: everything in shades of your accent colour on near-black, like an old monochrome screen, in a monospaced face with a faint glow. Pick green under *Accent colour* for a phosphor terminal, amber for an old amber one; the whole app recolours as you click. Status, Git's changes and the terminal's colours differ by how light or strong their shade is rather than by hue, and the status dots still differ in shape. *Tron*: the Grid, near-black ruled with light-lines in your accent colour (cyan for the original, red for Ares), with amber for what needs you, mint for what went well and red for what went wrong, in Bahnschrift with a glow; the terminals and diffs dress to match. Like Nerds it's built from the accent colour, but keeps those signal colours, Git's change colours and the terminal's own sixteen. *Matrix*: green phosphor on black in a monospaced face, with glyphs raining down the window's floor and, dimmed, behind the terminals' text; red for a question.
-
-To add your own, the quickest start is *Save as a new theme…* under the palette button: it writes the theme you're looking at (Light, Dark, Nerds in your accent, or one of yours) to your themes folder as a file with every colour written out, for you to change. Or choose *Open the themes folder* and put a `<name>.json` there (letters, digits and hyphens; not `light`, `dark` or `system`). The folder is read each time the menu opens, so a theme shows without restarting. For example:
-
-```json
-{
-  "name": "Forest",
-  "base": "dark",
-  "font": "Cascadia Mono",
-  "glow": true,
-  "accent": { "line": "#39ff6a", "strong": "#0b6b26" },
-  "colors": { "chrome": "#050a06", "text": "#8cf0a6", "working": "#3fe0d0" },
-  "terminal": { "background": "#020703", "foreground": "#5cf08a", "red": "#e0524a" },
-  "diff": { "insertedLine": "#1a5a2a55", "removedLine": "#5a1d1d55", "keyword": "#c8ffd8" }
-}
-```
-
-- **`monochrome`:** `true` builds every colour from the accent colour, as [Nerds](src/LlamaTree/wwwroot/themes/nerds.json) does; colours the theme sets itself still win.
-- **`base`** (`dark` or `light`) fills in every colour the theme leaves out, so a theme can set three colours or all of them. It's also what Claude and plugins are told, so Claude runs in its dark or light colours.
-- **`colors`:** the app's own: `chrome`, `chrome-2`, `chrome-3` (backgrounds, darkest last), `panel`, `panel-2`, `hover`, `hover-strong`, `border`, `border-soft`, `border-strong`, `text`, `text-dim`, `text-faint`, `text-strong`, `focus`, `select`, `select-inactive`, `terminal-bg`, `editor-bg`, the status colours `ok`, `working`, `attention`, `asking`, `danger`, `danger-fill`, Git's `st-m`, `st-a`, `st-d`, `st-r`, `st-u` (modified, added, deleted, renamed, untracked), `graph`, `ref-bg`, `ref-fg`, `ref-head-bg`, `ref-head-fg`, `ref-tag-bg`, `ref-tag-fg`, and `info-bg`, `info-border`, `error-bg`, `error-border`, `pv-warn-bg`, `pv-warn-border`, `ico-folder`, `ico-file`, `scroll-thumb`, `scroll-thumb-hover`, `tab-border-shown`, `tab-border-hover`, `tick`, `tick-active`, `tick-hot`, `card-bg`, `card-border`, `bubble`, `code-fg`, `code-bg`, `well`, `table-head`, `link`, `update-fg`. Colours are `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgb()` or `rgba()`.
-- **`terminal`:** xterm.js's names: `background`, `foreground`, `cursor`, `cursorAccent`, `selectionBackground`, `selectionForeground`, `selectionInactiveBackground`, the sixteen `black` … `white` and `brightBlack` … `brightWhite`, and `overviewRulerBorder`, `scrollbarSliderBackground`, `scrollbarSliderHoverBackground`, `scrollbarSliderActiveBackground`.
-- **`diff`:** `background`, `foreground`, `lineNumber`, `lineNumberActive`, `selection`, `cursor`, `lineHighlightBorder`, `insertedLine`, `insertedText`, `removedLine`, `removedText`, `insertedGutter`, `removedGutter`, `insertedOverview`, `removedOverview`, `diagonalFill`, `scrollbar`, and the syntax colours `comment`, `keyword`, `string`, `number`, `type`; `#rrggbb` or `#rrggbbaa` only.
-- **`accents`** suggests accent colours, offered first in the *Accent colour* dialog while the theme is on: up to eight `{ "name": "Ares", "color": "#ff3b3b" }`, each a short name and a `#rrggbb`. Tron suggests its own cyan and Ares' red; Nerds green phosphor, amber and paper white. They're only suggestions: any accent still works.
-- **`accent`** replaces the accent colour while the theme is on: `line` for lines and highlights, `strong` for fills with white text. Leave it out to keep the one picked in *Accent colour*.
-- **`font`** is a font family for the app's own text (not the terminals'); **`glow`** makes text glow faintly in the accent colour.
-- **`grid`:** `true` rules the window's floor in faint lines of the accent colour, with a glow at the horizon, behind the title bar, tabs and panels and under the terminals' text, as the Tron themes do; editors, menus and cards keep their own backgrounds.
-- **`rain`:** `true` has glyphs rain down the window's floor in the accent colour, as Matrix does, behind the title bar, tabs and panels and, dimmed, under the terminals' text; editors, menus and cards keep their own backgrounds. With Windows' reduce-motion setting on, the rain stands still.
-- **`cursor`:** `"light-cycle"` makes the terminals' cursor a light cycle, as in the Tron themes: it glows in the terminal's cursor colour and leaves a ribbon of light fading behind it as it moves, turning at right angles when it changes line. Leave it out for the plain cursor. With Windows' reduce-motion setting on, the glow stays and the ribbon doesn't.
-
-A theme is only data: the app takes the names above and checks each value, so it can't restyle anything else or load anything. A file it can't use, or a value it leaves out, is listed under *Why?* in the palette menu.
-
-### Updates
-
-A few seconds after starting, and every 15 minutes, the app checks this repository's latest GitHub release (an anonymous request; nothing about you or your sessions is sent). When there's a newer version, an **Update to x.y.z** button appears in the title bar, showing what's new. *Update and restart* downloads the installer, checks it against the SHA-256 GitHub publishes for it (it won't run a file that doesn't match), closes the app, installs silently and reopens it. Running sessions carry on in the conversations they were in. The version is shown at the top right and in the window title; clicking it offers *Check for updates* and turns the automatic check off.
-
-### Counting users
-
-We'd like to know how many people use LlamaTree, on which versions and systems, and how much. So the first time it runs, a line under the title bar asks whether it may count you; nothing is sent until you say yes, and *No thanks* is remembered as firmly as yes. The switch is in the version menu, *Count me among the users*, with *What the count sends…* beside it.
-
-Everything it sends is anonymous: nothing in it says who you are, and nothing can be traced back to you. When it's on, once an hour while the app is open it makes one request to `https://count.llamachant.com/ping` (always that address) that says six things: a random id made when you said yes, so a copy counts once however often it asks; the app's version; the operating system's name (`windows`) and version; and how many projects and sessions are open. **Only the numbers**: never the names of projects or sessions, their folders, branches, prompts, conversations, code or anything else in them, and nothing about you; nothing is read back. The count service ([`server/`](server)) keeps only those six things, by the hour, for 400 days, and not the address the request came from, the user agent or anything else about the request. Turning it off throws the id away, so saying yes again later starts over as a new user. The answer and the id are kept in `telemetry.json` beside `sessions.json`.
-
-### Tips and offers
-
-Now and then a line under the title bar suggests something: a **Tip** about the app, an **Offer** (something from someone else, such as a free subscription), or **News**. They come from `https://downloads.llamachant.com/downloads/TerminalsData/notices.json` (always that address), read a few seconds after starting and every 30 minutes (an anonymous request, like the update check). One shows at a time; its × closes it for good. *Show tips and offers*, in the version number's menu or the line's right-click menu, turns tips and offers off; news still shows. *Tips and offers…*, in the same menus, lists every notice that's current, in full and with its link, and shows one you closed again.
-
-Each notice in the file:
-
-```json
-{
-  "id": "llamalogger-free-year",
-  "kind": "offer",
-  "color": "green",
-  "text": "If you want to start tracking exceptions in one place, check out LlamaLogger. Through LlamaTree, you can get a 1 year standard subscription for free.",
-  "link": { "label": "Get your free year", "url": "https://example.com" },
-  "from": "2026-11-01",
-  "until": "2027-01-31",
-  "minVersion": "1.1.5"
-}
-```
-
-- **id**: lowercase letters, digits, `.`, `_` and `-`; closing a notice remembers its id, so a changed notice needs a new one.
-- **text**: up to 400 characters. It wraps to fit the window; `\n` starts a new line (up to 4 lines). A link in the text is written as in Markdown, `[www.llamalogger.com](https://www.llamalogger.com)`, and must be `https`; only what it shows counts towards the 400.
-- **kind**: `tip` (the default), `offer` or `news`.
-- **color**: `accent` (the default), `blue`, `green`, `amber`, `orange`, `red`, `purple`, `pink`, `grey`, or a `#rrggbb` of its own. It tints the line and colours the label and link; the text keeps the theme's colour.
-- **link** (optional): an `https` address; the label defaults to *Learn more*.
-- **from**, **until**, **minVersion**, **maxVersion** (optional): the first and last day (UTC) and the versions it shows for.
-
-A notice that doesn't follow these is left out.
-
-**Only signed notices show.** Next to the file, the app fetches `notices.json.p7s`, a signature by our code signing certificate (the one the installer is signed with), and shows nothing unless it's valid for exactly that file: the certificate must be for code signing, issued to the organisation *Llamachant Technology Ltd* and chain to a root Windows trusts. So whoever can change the files in storage, or sits between storage and the app, still can't put words in the banner. To publish:
-
-1. Change [`notices.json`](notices.json) in this repository and merge it to `main` (the tests check that every notice in it is well formed).
-2. Run the **notices** pipeline ([`azure-pipelines-notices.yml`](azure-pipelines-notices.yml)) on `main`. On the agent with the certificate's token, it runs [`tools/sign-notices.cs`](tools/sign-notices.cs), then uploads both files to `downloads/TerminalsData/` (untick *Upload* to only sign; the files stay on the run either way, under *Artifacts › notices*). Within 30 minutes they show.
-
-Notices are judged as of when they were signed, so they keep showing after the certificate expires; changing them after that needs the renewed certificate, which the signing picks up by itself.
+The guide is on **[llamatree.dev/docs](https://llamatree.dev/docs/)**, and the same pages are in [docs/](docs/README.md) here. Changes to LlamaTree update them in the same pull request.
 
 ## Building
 
 ```powershell
-cd web; npm ci; cd ..               # once: xterm.js + Monaco
-dotnet run --project src\LlamaTree
-dotnet test                         # tests
+cd web; npm ci; cd ..                                   # once: xterm.js + Monaco
+dotnet run --project src\LlamaTree -f net10.0-windows   # the Windows app
+dotnet test                                             # tests
 ```
 
-- **Host:** .NET 10 WinForms + WebView2 (`src/LlamaTree`)
-- **Terminals:** real Windows pseudo consoles (ConPTY) rendered with xterm.js; child processes live in a kill-on-close job object
-- **Diffs:** Monaco diff editor, with dark and light themes after Visual Studio's
-
-### Installer
-
-```powershell
-winget install JRSoftware.InnoSetup   # once
-.\publish.ps1                         # -> artifacts\LlamaTree-Setup-<version>.exe
-.\publish.ps1 -SkipInstaller          # -> artifacts\publish\ (portable folder only)
-```
-
-- Self-contained x64 build (no .NET install needed). The version comes from `<Version>` in `LlamaTree.csproj`; bump it for each release.
-- Installs per-user to `%LOCALAPPDATA%\Programs\LlamaTree` (no admin), with a Start Menu shortcut, an optional desktop shortcut and an uninstaller. Admins can choose an all-users install.
-- Upgrading: run the newer setup. It asks to close a running copy first. Saved sessions are kept; uninstalling also keeps them in `%APPDATA%\LlamaTree`.
-- Setup warns and links to the download if the WebView2 Runtime is missing (it's built into Windows 11).
-- Local builds aren't code-signed, so on other PCs SmartScreen shows "unknown publisher" (More info › Run anyway).
-- The icon is generated by `tools\make-icon.ps1`.
-
-### Releasing
-
-Signed releases are built by `azure-pipelines.yml` on the Azure DevOps agent with the company's code signing token:
-
-1. Bump `<Version>` in `LlamaTree.csproj` and merge to `main`.
-2. In Azure DevOps, run the pipeline on `main` (or on a tag `v<version>`) with *Create the GitHub release* ticked. Untick it for a trial run that only builds and signs, keeping the installer on the run's Artifacts.
-3. The pipeline runs `publish.ps1 -Sign`, which signs `LlamaTree.exe`/`.dll`, setup and its uninstaller as *Llamachant Technology Ltd* (picked from the certificate store by subject, as the NuGet signing does), timestamps them with Sectigo's server, and fails unless each carries a valid, timestamped signature from that publisher. It then creates a **draft** GitHub release with the installer.
-4. Write the release notes on the draft and publish it: that's what makes the in-app updater offer the new version. The updater shows everything above the notes' *Install* heading, and needs the installer named `LlamaTree-Setup-<version>.exe` on a `v<version>` tag.
+See [Building LlamaTree](docs/building.md) for macOS and Linux, how it's put together, the installer and releasing.
 
 ## License
 
-MIT, see [LICENSE](LICENSE). Bundles [xterm.js](https://github.com/xtermjs/xterm.js) and [Monaco Editor](https://github.com/microsoft/monaco-editor) (both MIT).
+Apache License 2.0, see [LICENSE](LICENSE) and [NOTICE](NOTICE). Copyright 2026 Llamachant Technology Ltd. Versions up to 1.2.0 were released under the MIT License, which still applies to them. The license doesn't grant use of the LlamaTree or Llamachant names or logos (section 6). Bundles [xterm.js](https://github.com/xtermjs/xterm.js) and [Monaco Editor](https://github.com/microsoft/monaco-editor) (both MIT).

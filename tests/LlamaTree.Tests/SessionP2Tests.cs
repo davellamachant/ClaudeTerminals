@@ -101,7 +101,8 @@ public sealed class SessionP2Tests : IDisposable
     {
         for (var round = 0; round < 10; round++)
         {
-            using var s = Session("cmd /c \"echo FINAL-OUT& echo FINAL-ERR 1>&2& <nul set /p =NO-NEWLINE-END& exit 7\"");
+            using var s = Session(Platforms.Command("cmd /c \"echo FINAL-OUT& echo FINAL-ERR 1>&2& <nul set /p =NO-NEWLINE-END& exit 7\"",
+                "echo FINAL-OUT; echo FINAL-ERR 1>&2; printf NO-NEWLINE-END; exit 7"));
             var (output, code) = await RunToExit(s);
             Assert.Equal(7, code);
             Assert.Contains("FINAL-OUT", output);
@@ -113,7 +114,8 @@ public sealed class SessionP2Tests : IDisposable
     [Fact]
     public async Task A_large_final_burst_arrives_before_the_exit()
     {
-        using var s = Session("cmd /c \"for /l %i in (1,1,3000) do @echo burst-line-%i\"");
+        using var s = Session(Platforms.Command("cmd /c \"for /l %i in (1,1,3000) do @echo burst-line-%i\"",
+            "i=1; while [ $i -le 3000 ]; do echo burst-line-$i; i=$((i+1)); done"));
         var (output, code) = await RunToExit(s);
         Assert.Equal(0, code);
         Assert.Contains("burst-line-3000", output);

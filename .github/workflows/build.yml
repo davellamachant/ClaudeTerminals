@@ -1,0 +1,60 @@
+# Builds and tests LlamaTree on Windows, Linux and macOS, and keeps a self-contained build of each as the run's
+# artifacts. Releases (the signed Windows installer) are made by azure-pipelines.yml, not here.
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            framework: net10.0-windows
+            rid: win-x64
+          - os: ubuntu-latest
+            framework: net10.0
+            rid: linux-x64
+          - os: macos-latest      # Apple silicon
+            framework: net10.0
+            rid: osx-arm64
+          - os: macos-15-intel    # Intel
+            framework: net10.0
+            rid: osx-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Front-end libraries
+        run: npm ci
+        working-directory: web
+
+      - name: Test
+        run: dotnet test tests/LlamaTree.Tests --logger "console;verbosity=normal"
+
+      - name: Publish
+        run: dotnet publish src/LlamaTree/LlamaTree.csproj -f ${{ matrix.framework }} -c Release -r ${{ matrix.rid }} --self-contained true -p:DebugType=None -o artifacts/LlamaTree-${{ matrix.rid }}
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: LlamaTree-${{ matrix.rid }}
+          path: artifacts/LlamaTree-${{ matrix.rid }}
+          retention-days: 14

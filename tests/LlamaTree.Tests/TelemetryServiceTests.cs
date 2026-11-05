@@ -73,7 +73,7 @@ public sealed class TelemetryServiceTests : IDisposable
     public void The_request_says_the_id_the_versions_the_system_and_the_counts_and_nothing_else()
     {
         var uri = TelemetryService.PingUri(TelemetryService.PingUrl, "0123456789abcdef0123456789abcdef", new Version(1, 2, 3), "windows", new Version(10, 0, 26200, 1), Usage);
-        Assert.Equal("https://count.llamachant.com/ping?id=0123456789abcdef0123456789abcdef&v=1.2.3&os=windows&osv=10.0.26200&projects=3&sessions=7", uri.ToString());
+        Assert.Equal("https://api.llamatree.dev/count/ping?id=0123456789abcdef0123456789abcdef&v=1.2.3&os=windows&osv=10.0.26200&projects=3&sessions=7", uri.ToString());
     }
 
     [Fact]
@@ -81,8 +81,8 @@ public sealed class TelemetryServiceTests : IDisposable
         Assert.Equal(OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsMacOS() ? "macos" : "linux", TelemetryService.OsName());
 
     [Theory]
-    [InlineData("https://count.llamachant.com/ping", true)]
-    [InlineData("http://count.llamachant.com/ping", false)]   // not over https
+    [InlineData("https://api.llamatree.dev/count/ping", true)]
+    [InlineData("http://api.llamatree.dev/count/ping", false)]   // not over https
     [InlineData("https://downloads.llamachant.com/ping", false)]   // ours, but not the count's
     [InlineData("https://example.com/ping", false)]   // not our site
     [InlineData("http://127.0.0.1:5/ping", false)]   // this machine, but only while testing (LLAMATREE_TELEMETRY_URL)

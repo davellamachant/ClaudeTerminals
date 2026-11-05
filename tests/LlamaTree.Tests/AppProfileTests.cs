@@ -37,7 +37,7 @@ public sealed class AppProfileTests : IDisposable
     public void With_neither_folder_the_new_name_is_used() =>
         Assert.Equal(Path.Combine(root, "LlamaTree"), AppProfile.Resolve(root));
 
-    [Fact]
+    [WindowsFact]
     public void An_old_folder_that_cant_be_moved_is_used_where_it_is()
     {
         var old = Path.Combine(root, "ClaudeTerminals");

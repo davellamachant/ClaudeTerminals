@@ -25,7 +25,7 @@ parameters:
     default: true
 
 variables:
-  githubConnection: 'davellamachant'         # the GitHub service connection (Project settings › Service connections)
+  githubConnection: 'github.com_LlamachantTechnology'         # the GitHub service connection (Project settings › Service connections)
   repository: 'LlamachantTechnology/LlamaTree'
 
 pool:
@@ -50,10 +50,10 @@ steps:
         Write-Host "Building LlamaTree $version"
 
   # Tools the build needs, set up on the agent if they're missing (signtool comes with the Windows SDK, already there).
-  - task: NodeTool@0
+  - task: UseNode@1
     displayName: 'Node.js (front-end libraries)'
     inputs:
-      versionSpec: '22.x'
+      version: '22.x'
 
   - task: UseDotNet@2
     displayName: '.NET 10 SDK'
@@ -107,7 +107,15 @@ steps:
       targetPath: 'artifacts/LlamaTree-Setup-$(AppVersion).exe'
       artifact: 'installer'
 
+  - task: PublishPipelineArtifact@1
+    displayName: 'Keep the Linux packages on the run'
+    inputs:
+      targetPath: 'artifacts/linux'
+      artifact: 'linux'
+
   # Left out of a trial run entirely, so trying the signing doesn't need the GitHub connection.
+  # The install scripts (tools/install) go on every release, so the README's one-line installs, which fetch
+  # .../releases/latest/download/install.ps1 and install.sh, always get the newest: keep those names.
   - ${{ if parameters.createRelease }}:
     - task: GitHubRelease@1
       displayName: 'Create draft GitHub release'
@@ -124,5 +132,10 @@ steps:
         assets: |
           artifacts/LlamaTree-Setup-$(AppVersion).exe
           artifacts/ClaudeTerminals-Setup-$(AppVersion).exe
+          artifacts/linux/llamatree_$(AppVersion)_amd64.deb
+          artifacts/linux/llamatree-$(AppVersion)-1.x86_64.rpm
+          artifacts/linux/LlamaTree-$(AppVersion)-linux-x64.tar.gz
+          tools/install/install.ps1
+          tools/install/install.sh
         isDraft: true
         addChangeLog: false

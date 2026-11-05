@@ -18,6 +18,8 @@ AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
 AppPublisher={#AppPublisher}
+AppPublisherURL=https://llamatree.dev
+AppSupportURL=https://llamatree.dev
 VersionInfoVersion={#AppVersion}
 VersionInfoProductName={#AppName}
 
@@ -33,7 +35,7 @@ MinVersion=10.0.17763
 
 ; Setup asks to close a running copy (Program.cs owns this mutex) before replacing files; the second is a copy
 ; from before the rename.
-AppMutex=LlamaTree.SingleInstance,ClaudeTerminals.SingleInstance
+AppMutex=LlamaTree.SingleInstance,LlamaTree.Host,ClaudeTerminals.SingleInstance
 CloseApplications=yes
 RestartApplications=no
 

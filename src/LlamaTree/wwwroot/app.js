@@ -39,6 +39,7 @@ const PATHS = {
   plug: 'M6 1.5v3M10 1.5v3M4 4.5h8v2.5a4 4 0 0 1-8 0zM8 11v3.5',   // a plugin's tab   // the Project view: a list of the project's worktrees
   shield: 'M8 1.5l5.5 2v4.2c0 3.2-2.3 5.6-5.5 6.8-3.2-1.2-5.5-3.6-5.5-6.8V3.5z',   // the Permissions view
   link: 'M6.8 9.2l2.4-2.4M7.3 4.7l1-1a2.6 2.6 0 0 1 3.7 3.7l-1 1M8.7 11.3l-1 1a2.6 2.6 0 0 1-3.7-3.7l1-1',   // a session that may message others
+  server: 'M2.5 2.5h11v4.5h-11zM2.5 9h11v4.5h-11zM5 4.75h.01M5 11.25h.01',   // a server: a session that runs on one
   mail: 'M2 4h12v8.5H2zM2 4.5l6 4.5 6-4.5',   // unread messages
   save: 'M2.5 2.5h9l2 2v9h-11zM5 2.5v3.5h5v-3.5M5 13.5v-4h6v4',   // Save as a new theme
   warn: 'M8 2l6.5 11.5h-13zM8 6.5v3.5M8 12h.01',   // something couldn't be loaded
@@ -47,14 +48,20 @@ const PATHS = {
   markDeny: 'M8 2a6 6 0 1 0 0 12A6 6 0 1 0 8 2M3.8 3.8l8.4 8.4',         // Permissions: not allowed
   git: 'M5 3v10M5 11a2 2 0 1 0 0 .01M5 3a1.6 1.6 0 1 0 0 .01M11 3a1.6 1.6 0 1 0 0 .01M11 4.6C11 8 5 7 5 10',
   branch: 'M5 2.5v8M5 12a1.5 1.5 0 1 0 0 .01M11 4a1.5 1.5 0 1 0 0 .01M11 5.5c0 3-6 2.5-6 5',
+  branchTracked: 'M4 2.5v8M4 12a1.5 1.5 0 1 0 0 .01M10 4a1.5 1.5 0 1 0 0 .01M10 5.5c0 3-6 2.5-6 5M12.5 14V9.5M10.5 11.5l2-2 2 2',   // a branch with an upstream
+  newBranch:'M4 2.5v8M4 12a1.5 1.5 0 1 0 0 .01M10 4a1.5 1.5 0 1 0 0 .01M10 5.5c0 3-6 2.5-6 5M12.5 9.5v4M10.5 11.5h4',   // branch with a +
+  agent: 'M4 5.5h8v7H4zM8 5.5V3M8 2.5h.01M6.5 8.5h.01M9.5 8.5h.01M6.5 10.5h3M2.5 8v2M13.5 8v2',   // a robot head: a session an agent started
   chevR: 'M6 4l4 4-4 4',
   chevL: 'M10 4l-4 4 4 4',
   chevD: 'M4 6l4 4 4-4',
+  chevU: 'M4 10l4-4 4 4',
+  edit: 'M10.5 2.5l3 3-8 8h-3v-3zM9 4l3 3',   // a pencil: changed files, as on Visual Studio's status bar
   up: 'M8 13V3M4 7l4-4 4 4',
   down: 'M8 3v10M4 9l4 4 4-4',
   more: 'M3.5 8h.01M8 8h.01M12.5 8h.01',
   collapse: 'M6 2v4H2M10 2v4h4M6 14v-4H2M10 14v-4h4',
   sideBySide: 'M2 3h12v10H2zM8 3v10',
+  panel: 'M2 3h12v10H2zM10 3v10',   // the side panel, with the Git tabs off
   inline: 'M2 3h12v10H2zM2 8h12',
   whitespace: 'M3 12h10M3 9v3M13 9v3M6 4h4M8 4v5',
   openFile: 'M9 2H4v12h8V5zM9 2v3h3',
@@ -73,6 +80,10 @@ const PATHS = {
   bulb: 'M6 12.5h4M6.5 14.5h3M8 1.5a4.5 4.5 0 0 0-2.6 8.2c.4.3.6.7.6 1.2v.6h4v-.6c0-.5.2-.9.6-1.2A4.5 4.5 0 0 0 8 1.5z',
   gift: 'M2.5 6h11v2.5h-11zM3.5 8.5h9v6h-9zM8 6v8.5M8 6C6.5 3 4 3.5 4.5 5c.3.8 2 1 3.5 1zM8 6c1.5-3 4-2.5 3.5-1-.3.8-2 1-3.5 1z',
   info: 'M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 1 0 0-13M8 7v4.5M8 4.8h.01',
+  // Which agent a session runs and where (sessionMarks): Claude, Codex or anything else; this computer (a server is `server`).
+  computer: 'M2 2.5h12v8.5H2zM5.5 14h5M8 11v3',
+  agentClaude: 'M8 2v12M2 8h12M3.8 3.8l8.4 8.4M12.2 3.8l-8.4 8.4',
+  agentCodex: 'M5.5 4.5L2 8l3.5 3.5M10.5 4.5L14 8l-3.5 3.5M9.2 3l-2.4 10',
   sparkle: 'M7 2l1.2 3.3L11.5 6.5 8.2 7.7 7 11 5.8 7.7 2.5 6.5l3.3-1.2zM12 9.5l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z',
 };
 
@@ -114,7 +125,60 @@ function toast(message, isError = false) {
 
 // ------------------------------------------------------------------ host bridge
 
-const host = window.chrome.webview;
+// Windows: WebView2's bridge. macOS and Linux: Photino's (window.external), which every frame can reach, so the host only
+// trusts messages that carry the token it wrote into this page as it served it (taken out of the page straight away).
+const PHOTINO = typeof window.external?.sendMessage === 'function';
+const host = PHOTINO ? photinoBridge() : window.chrome.webview;
+
+function photinoBridge() {
+  const listeners = [];
+  const meta = document.querySelector('meta[name="llamatree-bridge"]');
+  const token = meta?.content ?? '';
+  meta?.remove();
+  window.external.receiveMessage((text) => {
+    const data = JSON.parse(text);
+    for (const fn of listeners) fn({ data });
+  });
+  // A file dropped on the window would otherwise replace the page; the page's own drop targets still get theirs.
+  for (const type of ['dragover', 'drop']) window.addEventListener(type, (e) => e.preventDefault());
+  return {
+    postMessage: (m) => window.external.sendMessage(JSON.stringify({ ...m, bridgeToken: token })),
+    addEventListener: (type, fn) => { if (type === 'message') listeners.push(fn); },
+  };
+}
+
+/** macOS: ⌘ does what Ctrl does elsewhere (app shortcuts, copy and paste); Ctrl still goes to the terminal as itself. */
+const IS_MAC = /Mac/i.test(navigator.platform || navigator.userAgent);
+const IS_LINUX = !IS_MAC && /Linux/i.test(navigator.platform || navigator.userAgent);
+const FILE_MANAGER = IS_MAC ? 'Finder' : IS_LINUX ? 'Files' : 'File Explorer';
+
+// A Mac app gets ⌘C, ⌘V, ⌘X, ⌘A and ⌘Z in text fields from its Edit menu, which a Photino window may not have, so
+// the page does them itself (the terminal has its own, see terminalKey).
+if (IS_MAC && PHOTINO) {
+  document.addEventListener('keydown', (e) => {
+    const field = e.target;
+    if (!e.metaKey || e.ctrlKey || e.altKey || !(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement)) return;
+    if (field.closest('.xterm, .monaco-editor')) return;   // they handle their own
+    const key = e.key.toLowerCase();
+    if (key === 'v') {
+      e.preventDefault();
+      readClipboardText().then((text) => {
+        if (!text) return;
+        field.setRangeText(text, field.selectionStart ?? field.value.length, field.selectionEnd ?? field.value.length, 'end');
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+      }, () => {});
+    } else if (key === 'c' || key === 'x') {
+      e.preventDefault();
+      document.execCommand(key === 'c' ? 'copy' : 'cut');
+    } else if (key === 'a') {
+      e.preventDefault();
+      field.select();
+    } else if (key === 'z') {
+      e.preventDefault();
+      document.execCommand(e.shiftKey ? 'redo' : 'undo');
+    }
+  }, true);
+}
 let reqSeq = 0;
 const pending = new Map();
 const post = (msg) => host.postMessage(msg);
@@ -125,6 +189,11 @@ function request(type, payload = {}) {
     pending.set(reqId, { resolve, reject });
     post({ type, reqId, ...payload });
   });
+}
+
+/** The clipboard's text. On macOS and Linux the app reads it: WebKit asks first (macOS) or refuses (Linux) when a page does. */
+function readClipboardText() {
+  return PHOTINO ? request('clipboard.text').then((text) => text ?? '') : navigator.clipboard.readText();
 }
 
 host.addEventListener('message', (e) => {
@@ -144,8 +213,16 @@ host.addEventListener('message', (e) => {
       m.ok ? p.resolve(m.result) : p.reject(new Error(m.error));
       break;
     }
-    case 'sessions': state.agents = m.agents || state.agents; syncSessions(m.sessions, m.projects || []); break;
+    case 'sessions': state.agents = m.agents || state.agents; setServers(m.servers); syncSessions(m.sessions, m.projects || []); break;
+    case 'servers': setServers(m.servers); break;
     case 'output': onOutput(m.id, m.data); break;
+    case 'replay': onReplay(m.id, m.data); break;
+    case 'closeRequested': onCloseRequested(); break;
+    case 'host.failed': onHostFailed(m); break;
+    case 'host.reconnecting': onReconnecting(m); break;
+    case 'machine': onMachine(m); break;
+    case 'files.opened': toast(`Opened a read-only copy of ${m.name} from ${m.server}. Changes to it aren’t saved on the server: edit the file there, through the session.`); break;
+    case 'files.browse': browseServerFolder(m.path, m.select, m.server); break;
     case 'exited': onExited(m.id, m.code); break;
     case 'git.status': onGitStatus(m); break;
     case 'panels': onPanels(m); break;
@@ -154,7 +231,14 @@ host.addEventListener('message', (e) => {
     case 'relay': relayChanged(m.state); break;
     case 'relay.ask': askRelay(m.from, m.to); break;
     case 'relay.message': onRelayMessage(m); break;
+    case 'control': controlChanged(m.state); break;
+    case 'control.ask': askSpawn(m.request); break;
+    case 'control.settled': spawnSettled(m.id); break;
+    case 'agent.ready': { const s = state.byId.get(m.id); if (s) s.readyAt = performance.now(); break; }
+    case 'control.start': { const s = state.byId.get(m.id); if (s && !s.started) startSession(s); break; }
+    case 'control.prompt': controlPrompt(m.id, m.text); break;
     case 'plugins.grants': applyGrants(m.grants); break;
+    case 'plugins.changed': loadPlugins().then(() => renderGit()); break;   // a server's plugins arrived or changed
   }
 });
 
@@ -167,6 +251,13 @@ host.addEventListener('message', (e) => {
  */
 const relay = { paused: false, rules: [], waiting: [], unread: {}, logVersion: 0, told: {}, from: {}, asks: [], asking: null };
 
+/**
+ * Sessions starting and driving others (SessionControl on the host): the rules ({ ability: 'spawn' | 'answer', scope:
+ * a session id, 'project:<id>' or '*', decision }), the requests to start a session waiting for your answer, and the
+ * state of each session last told to the host.
+ */
+const control = { rules: [], pending: [], logVersion: 0, asking: null, told: {} };
+
 const state = {
   sessions: [],              // ordered session objects
   agents: [],                // the coding agents the host knows (AgentProfile.Describe): id, name, programs, choosesId, follows, …
@@ -175,6 +266,7 @@ const state = {
   projectViewOf: null,       // the project whose Project view is showing: a place of its own, with no session open
   currentId: store.get('currentId', null),   // session shown in the Git panel
   gitVisible: store.get('gitVisible', true),
+  hiddenGitTabs: new Set(store.get('hiddenGitTabs', [])),   // 'changes' and/or 'repo', turned off in the side panel's ▾
   gitWidth: store.get('gitWidth', 400),
   panels: [],                // shown by Claude through the app's MCP server (their tabs live in the dock)
   panelsLoaded: false,       // until the host sends them, saved panel tabs keep their place
@@ -182,6 +274,10 @@ const state = {
   surface: { w: 0, h: 0 },
   projects: [],                                        // [{ id, name }] in display order
   hiddenProjects: new Set(store.get('hiddenProjects', [])),   // hidden rather than shown, so new projects start visible
+  // Where projects and sessions go (see NAV_LAYOUTS): 'top', 'hybrid' (projects on the left) or 'left' (both, as a tree).
+  navLayout: ['hybrid', 'left'].includes(store.get('navLayout')) ? store.get('navLayout') : 'top',
+  navWidth: store.get('navWidth', 230),
+  navBranches: store.get('navBranches', true),   // each session's branch beneath its name, down the left
 };
 
 // ------------------------------------------------------------------ projects: which sessions are visible
@@ -253,7 +349,7 @@ function applyProjectFilter(instant = false) {
   $('#empty').hidden = shown.length > 0;
   $('#empty .empty-title').textContent = anySessions ? 'No sessions in the selected projects' : 'No sessions yet';
   $('#empty .empty-sub').textContent = anySessions
-    ? 'Tick a project above (Unknown holds sessions with no project), or choose All.'
+    ? `Tick a project ${state.navLayout === 'top' ? 'above' : 'on the left'} (Unknown holds sessions with no project), or choose All.`
     : 'Add a session for each worktree you want Claude to work in.';
   layout(instant);
   for (const s of state.sessions) renderTileHeader(s);
@@ -296,46 +392,95 @@ function hideAllProjects() {
  */
 function renderProjectBar() {
   const bar = $('#projectTabs');   // the grid button sits before it in the same row and is left alone
-  // With no projects there is nothing to toggle, so Unknown only appears once a project exists.
-  const groups = state.projects.length
-    ? [...state.projects, { id: UNKNOWN, name: UNKNOWN_NAME, unknown: true }]
-    : [];
-  const tabs = groups.map((p) => {
-    const members = state.sessions.filter((s) => groupOf(s) === p.id);
-    const waiting = members.filter(waitingForYou).length;
-    const shown = !state.hiddenProjects.has(p.id);
-    const what = p.unknown ? 'sessions with no project' : p.name;
-    return h('div', {
-      class: 'project-tab' + (shown ? ' shown' : '') + (p.unknown ? ' unknown' : ''),
-      style: p.unknown ? null : `--proj:${projectColor(p)}`,
-      'data-id': p.id,
-      oncontextmenu: (e) => { e.preventDefault(); projectMenu(p, e.clientX, e.clientY); },
-    },
-    h('button', {
-      class: 'project-check', role: 'checkbox', 'aria-checked': String(shown),
-      title: `${shown ? 'Hide' : 'Show'} ${what}, keeping the others as they are`,
-      onclick: () => toggleProject(p.id),
-    }, iconEl(shown ? 'checkOn' : 'checkOff')),
-    // The name toggles like the checkbox; Ctrl+click (or the right-click menu) shows only this project.
-    h('button', {
-      class: 'project-name',
-      title: `${shown ? 'Hide' : 'Show'} ${what} · Ctrl+click to show only this\n${members.length} session${members.length === 1 ? '' : 's'} · right-click for options`,
-      onclick: (e) => (e.ctrlKey ? showOnlyProject(p.id) : toggleProject(p.id)),
-    }, p.name,
-    projectDot(members),
-    waiting ? h('span', { class: 'badge', title: `${waiting} session${waiting === 1 ? '' : 's'} waiting for you` }, String(waiting)) : null));
-  });
-  const allShown = groups.length > 0 && groups.every((g) => !state.hiddenProjects.has(g.id));
-  const noneShown = groups.length > 0 && groups.every((g) => state.hiddenProjects.has(g.id));
+  if (state.navLayout !== 'top') { bar.replaceChildren(); renderNav(); return; }   // the projects are on the left
+  const groups = projectGroups();
   fill(bar,
     h('span', { class: 'project-bar-label' }, 'Projects'),
-    ...tabs,
-    groups.length ? h('button', { class: 'project-all' + (allShown ? ' active' : ''), title: 'Show every project, Unknown included', onclick: showAllProjects }, 'All') : null,
-    groups.length ? h('button', { class: 'project-all' + (noneShown ? ' active' : ''), title: 'Hide every project, Unknown included', onclick: hideAllProjects }, 'None') : null,
-    h('button', { class: 'tb-btn text project-add', title: 'New project', onclick: showNewProjectDialog }, iconEl('plus'),
-      state.projects.length ? 'Project' : 'New project (group sessions)'),
+    groups.map((p) => projectTab(p)),
+    projectAllButtons(groups),
+    projectAddButton(),
   );
   syncStatus(bar);
+}
+
+/** The groups the projects bar lists: the projects, then Unknown. With no projects there is nothing to toggle, so none. */
+const projectGroups = () => (state.projects.length ? [...state.projects, { id: UNKNOWN, name: UNKNOWN_NAME, unknown: true }] : []);
+
+/** A project's tab in the projects bar (or row down the left): its checkbox and its name, with `extra` at the end. */
+function projectTab(p, extra = null) {
+  const members = state.sessions.filter((s) => groupOf(s) === p.id);
+  const waiting = members.filter(waitingForYou).length;
+  const shown = !state.hiddenProjects.has(p.id);
+  const what = p.unknown ? 'sessions with no project' : p.name;
+  return h('div', {
+    class: 'project-tab' + (shown ? ' shown' : '') + (p.unknown ? ' unknown' : ''),
+    style: p.unknown ? null : `--proj:${projectColor(p)}`,
+    'data-id': p.id,
+    oncontextmenu: (e) => { e.preventDefault(); projectMenu(p, e.clientX, e.clientY); },
+  },
+  h('button', {
+    class: 'project-check', role: 'checkbox', 'aria-checked': String(shown),
+    title: `${shown ? 'Hide' : 'Show'} ${what}, keeping the others as they are`,
+    onclick: () => toggleProject(p.id),
+  }, iconEl(shown ? 'checkOn' : 'checkOff')),
+  // The name toggles like the checkbox; Ctrl+click (or the right-click menu) shows only this project.
+  h('button', {
+    class: 'project-name',
+    title: `${shown ? 'Hide' : 'Show'} ${what} · Ctrl+click to show only this\n${members.length} session${members.length === 1 ? '' : 's'} · right-click for options`,
+    onclick: (e) => (e.ctrlKey ? showOnlyProject(p.id) : toggleProject(p.id)),
+  }, h('span', { class: 'project-label' }, p.name),
+  projectDot(members),
+  waiting ? h('span', { class: 'badge', title: `${waiting} session${waiting === 1 ? '' : 's'} waiting for you` }, String(waiting)) : null),
+  extra);
+}
+
+/** All and None: show or hide every project at once. */
+function projectAllButtons(groups) {
+  if (!groups.length) return [];
+  const allShown = groups.every((g) => !state.hiddenProjects.has(g.id));
+  const noneShown = groups.every((g) => state.hiddenProjects.has(g.id));
+  return [
+    h('button', { class: 'project-all' + (allShown ? ' active' : ''), title: 'Show every project, Unknown included', onclick: showAllProjects }, 'All'),
+    h('button', { class: 'project-all' + (noneShown ? ' active' : ''), title: 'Hide every project, Unknown included', onclick: hideAllProjects }, 'None'),
+  ];
+}
+
+const projectAddButton = () => h('button', { class: 'tb-btn text project-add', title: 'New project', onclick: showNewProjectDialog }, iconEl('plus'),
+  state.projects.length ? 'Project' : 'New project (group sessions)');
+
+/**
+ * The bar down the left in the Hybrid and Left layouts: a row per project, as its tab in the Top layout's projects bar,
+ * with a button for its Project view; in Left, also its visible sessions beneath it, as a tree, in place of the session
+ * tab row. Rows carry the tabs' own classes (project-tab, session-tab), so what updates a tab in place finds them.
+ */
+function renderNav() {
+  if (state.navLayout === 'top') return;
+  const tree = state.navLayout === 'left';
+  const groups = projectGroups();
+  const shown = tree ? visibleSessions() : [];
+  const tabOf = (s) => sessionTab(s, shown.indexOf(s), true);   // the index gives its Ctrl+1…9, as in the tab row
+  const rows = groups.map((p) => {
+    const members = shown.filter((s) => groupOf(s) === p.id);
+    return h('div', { class: 'nav-group' + (p.unknown ? ' unknown' : ''), style: p.unknown ? null : `--proj:${projectColor(p)}` },
+      projectTab(p, h('button', {
+        class: 'icon-btn small nav-view' + (projectViewShowing(p.id) ? ' active' : ''), 'data-project': p.id,
+        title: 'Project view: its worktrees side by side (again to go back)',
+        onclick: () => toggleProjectView(p.id),
+      }, iconEl('list'))),
+      members.length > 0 && h('div', { class: 'nav-sessions' }, members.map(tabOf), sessionPlus(members, p.unknown ? 'with no project' : `in ${p.name}`)));
+  });
+  // No projects: in Left the sessions are still listed, as one group with no name; otherwise just what projects are for.
+  if (!groups.length) {
+    rows.push(tree && shown.length
+      ? h('div', { class: 'nav-sessions unnamed' }, shown.map(tabOf), sessionPlus(shown, 'like these'))
+      : h('div', { class: 'nav-hint' }, 'Projects group your sessions, so you can show and hide them together.'));
+  }
+  // In Left there's no title bar (see applyNavLayout): All sessions heads the bar, and New Session joins + Project.
+  fill($('#navHead'), tree && $('#btnGrid'), h('span', { class: 'project-bar-label' }, 'Projects'), h('span', { class: 'spacer' }), projectAllButtons(groups));
+  fill($('#navList'), rows);
+  fill($('#navFoot'), tree && $('#btnAdd'), projectAddButton());
+  syncStatus($('#navList'));
+  if (tree) revealActive($('#navList'), '.session-tab.active');
 }
 
 function projectMenu(p, x, y) {
@@ -350,6 +495,7 @@ function projectMenu(p, x, y) {
     return;
   }
   const i = state.projects.indexOf(p);
+  const across = state.navLayout === 'top';   // a row of tabs; down the left, a list
   showMenu(x, y, [
     { label: 'Project view: its worktrees side by side', action: () => openProjectView(p.id) },
     '-',
@@ -357,8 +503,8 @@ function projectMenu(p, x, y) {
     { label: state.hiddenProjects.has(p.id) ? 'Show alongside the others' : 'Hide', action: () => toggleProject(p.id) },
     '-',
     { label: 'Edit project (name, colour)…', action: () => showEditProjectDialog(p) },
-    i > 0 && { label: 'Move left', action: () => moveProject(p, -1) },
-    i < state.projects.length - 1 && { label: 'Move right', action: () => moveProject(p, 1) },
+    i > 0 && { label: across ? 'Move left' : 'Move up', action: () => moveProject(p, -1) },
+    i < state.projects.length - 1 && { label: across ? 'Move right' : 'Move down', action: () => moveProject(p, 1) },
     '-',
     { label: 'Delete project…', danger: true, action: () => confirmDeleteProject(p) },
     ...pluginMenuItems('project', { project: p.name }, p.id),
@@ -473,7 +619,7 @@ function themeLook() {
   if (!themes.list.includes(t)) return t;   // the kept look
   const made = t.monochrome ? monochromeLook(accentColour(), t.base === 'light') : {};
   return {
-    id: t.id, name: t.name, base: t.base, font: t.font, glow: t.glow, grid: !!t.grid, rain: !!t.rain, monochrome: t.monochrome, cursor: t.cursor ?? null,
+    id: t.id, name: t.name, base: t.base, font: t.font, glow: t.glow, grid: !!t.grid, rain: !!t.rain, monochrome: t.monochrome, cursor: t.cursor ?? null, terminalBackground: t.terminalBackground ?? null,
     colors: { ...made.colors, ...t.colors }, terminal: { ...made.terminal, ...t.terminal }, diff: { ...made.diff, ...t.diff },
     accent: t.accent ?? made.accent ?? null,
   };
@@ -531,7 +677,7 @@ function rainFrame() {
   if (!ctx) return;
   const w = canvas.clientWidth, hgt = canvas.clientHeight;
   ctx.fillStyle = rain.floor; ctx.globalAlpha = 0.16; ctx.fillRect(0, 0, w, hgt); ctx.globalAlpha = 1;   // the tails fade
-  ctx.font = `${RAIN_CELL - 2}px "MS Gothic", "Cascadia Mono", Consolas, monospace`;
+  ctx.font = `${RAIN_CELL - 2}px "MS Gothic", "Cascadia Mono", Consolas, Menlo, "DejaVu Sans Mono", monospace`;
   ctx.textBaseline = 'top';
   for (let i = 0; i < rain.cols.length; i++) {
     const c = rain.cols[i];
@@ -550,6 +696,81 @@ function rainFrame() {
 }
 addEventListener('resize', () => rainSize());
 
+// ---- Terminal background --------------------------------------------------------------------------------------------
+// How solid the terminals are over the window's floor: the tile paints the terminal's background at --terminal-veil (see
+// .tile in app.css). A theme that lets you see through says how solid they start ("terminalBackground": Matrix's 42 shows
+// its rain, Tron's 100 starts solid), and only then is there a slider in each terminal's corner to change it. Yours is kept
+// per theme, so Matrix can be nearly solid for you while Tron stays as it is. Without it the terminals are solid.
+const veil = { byTheme: store.get('terminalVeil', {}) };
+const veilKey = () => theme.pref;
+/** The theme's own amount, 0–100, or null when it keeps the terminals solid (and has no slider). */
+const veilOwn = (look = themeLook()) => (typeof look?.terminalBackground === 'number' ? look.terminalBackground : null);
+/** Your amount for the theme on, 0–100, or null for the theme's own. */
+function veilSetting() {
+  const v = veil.byTheme?.[veilKey()];
+  return typeof v === 'number' && Number.isFinite(v) ? Math.min(100, Math.max(0, Math.round(v))) : null;
+}
+/** The amount on the page now, 0–100. */
+function veilAmount() {
+  const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--terminal-veil'));
+  return Number.isFinite(v) ? Math.min(100, Math.max(0, v)) : 100;
+}
+/** Whether the terminals' own canvas must be see-through: over a floor, or under a veil of less than 100%. */
+const seeThrough = (look = themeLook()) => !!(look?.grid || look?.rain) || veilAmount() < 100;
+/**
+ * Puts the amount on the page (yours, else the theme's own; none when the theme keeps the terminals solid), marks the
+ * page while the terminals are see-through, and while the theme has a slider (data-veil-slider shows it).
+ */
+function markVeil(look = themeLook(), value = veilSetting()) {
+  const root = document.documentElement;
+  const own = veilOwn(look);
+  const amount = own === null ? null : value ?? own;
+  if (amount === null) root.style.removeProperty('--terminal-veil');
+  else root.style.setProperty('--terminal-veil', amount + '%');
+  if (own === null) delete root.dataset.veilSlider;
+  else root.dataset.veilSlider = '';
+  if (seeThrough(look)) root.dataset.veil = '';
+  else delete root.dataset.veil;
+}
+/** The amount on the page, every terminal dressed for it, and every tile's slider at it. */
+function applyVeil(value = veilSetting()) {
+  markVeil(themeLook(), value);
+  for (const s of state.sessions) if (s.term) dressCursor(s);
+  syncVeilSliders();
+}
+/**
+ * The small slider in a tile's corner (see .tile-veil in app.css), shown while the theme has one. Dragging shows at once;
+ * letting go keeps it for the theme on (or forgets yours, back at the theme's own). Its clicks stay its own, so they
+ * don't expand the tile.
+ */
+function veilSlider() {
+  const v = String(Math.round(veilAmount()));
+  const input = h('input', { type: 'range', min: '0', max: '100', step: '1', value: v, 'aria-label': 'How solid the terminal is' });
+  const out = h('span', {}, v + '%');
+  input.addEventListener('input', () => applyVeil(+input.value));
+  input.addEventListener('change', () => { const n = +input.value; setVeil(n === veilOwn() ? null : n); });
+  const el = h('div', { class: 'tile-veil', title: "How solid the terminals are over the theme's floor, for this theme. Drag to change it." }, input, out);
+  for (const type of ['pointerdown', 'mousedown', 'click', 'dblclick', 'contextmenu']) el.addEventListener(type, (e) => e.stopPropagation());
+  return el;
+}
+/** Every tile's slider at the amount on the page. */
+function syncVeilSliders() {
+  const v = String(Math.round(veilAmount()));
+  for (const s of state.sessions) {
+    if (!s.veil) continue;
+    const input = s.veil.querySelector('input');
+    if (input.value !== v) input.value = v;
+    s.veil.querySelector('span').textContent = v + '%';
+  }
+}
+/** Your amount for the theme on (null takes it away), kept and shown. */
+function setVeil(value) {
+  if (value === null) delete veil.byTheme[veilKey()];
+  else veil.byTheme[veilKey()] = value;
+  store.set('terminalVeil', veil.byTheme);
+  applyVeil();
+}
+
 /** Marks the page with the theme: data-theme light or dark for the stylesheet, and a theme's own colours, font and glow. */
 function markTheme(look = themeLook()) {
   const root = document.documentElement;
@@ -564,6 +785,7 @@ function markTheme(look = themeLook()) {
   else delete root.dataset.grid;
   if (look?.rain) root.dataset.rain = '';
   else delete root.dataset.rain;
+  markVeil(look);   // after the floor is marked: whether the terminals are see-through depends on it
   digitalRain(!!look?.rain);
 }
 markTheme(themes.last?.id === theme.pref ? themes.last : null);   // the accent isn't known yet: last time's look
@@ -712,12 +934,14 @@ const TERM_THEME_LIGHT = {
 /** The terminals' colours: a theme's own over its base's. */
 const termTheme = (look = themeLook()) => ({ ...(isLight() ? TERM_THEME_LIGHT : TERM_THEME_DARK), ...look?.terminal });
 
-// The light cycle cursor (a theme's "cursor": "light-cycle"): the cursor is a light cycle, drawn in the terminal's cursor
-// colour over the cell the cursor is in (its rear wheel on the cell, the rest riding out over the next two), leaving a
-// ribbon of light that fades behind it as it moves, turning at right angles when it changes line. It's a layer over the
-// terminal's screen; xterm's own cursor is made invisible (an underline in the background colour) while it's on.
+// The light cycle (a theme's "cursor": "light-cycle"): a light cycle drawn in the terminal's cursor colour, riding a little to
+// the right of the cursor (CYCLE_OFFSET; three cells wide) and leaving a ribbon of light that fades behind it as it moves,
+// turning at right angles when it changes line. It's a layer over the terminal's screen. The cursor itself stays a
+// blinking bar in the cursor colour, so you can see where you're typing and whether the terminal has focus; the cycle
+// dims while it hasn't (see .cycle-head in app.css).
 const TRAIL_MAX = 48;        // pieces of ribbon kept at once
 const CYCLE_CELLS = 3;       // how many cells wide the light cycle is drawn
+const CYCLE_OFFSET = 25;     // how far right of the cursor it rides, in pixels, so it never covers what you're typing
 // Side view, facing right, in a 24 by 16 box: two tall wheels with hubs, the canopy sweeping over them, the rider's
 // back, and the white light stripe along the canopy.
 const CYCLE_SVG = '<svg viewBox="0 0 24 16" preserveAspectRatio="xMinYMid meet" aria-hidden="true">' +
@@ -731,17 +955,17 @@ const BURST_MOVES = 12, BURST_MS = 500;
 const trailsAllowed = () => !matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /**
- * The terminal's colours as the theme wants them on screen: see-through over the Grid floor (the tile under it paints
- * the floor's lines, see .tile in app.css), and xterm's own cursor made invisible while the light cycle stands in for it.
+ * The terminal's colours as the theme wants them on screen: see-through over the Grid floor or the rain (the tile under
+ * it paints the floor's lines, see .tile in app.css) and under a veil of less than 100% (the slider in its corner), and the
+ * cursor a bar, blinking as ever, while the light cycle rides beside it.
  */
 function dressCursor(s) {
   const t = termTheme();
   const theme = { ...t };
   const look = themeLook();
-  if (look?.grid || look?.rain) theme.background = 'rgba(0, 0, 0, 0)';
-  if (s.cycle) { theme.cursor = t.background; theme.cursorAccent = t.background; }
+  if (seeThrough(look)) theme.background = 'rgba(0, 0, 0, 0)';
   s.term.options.theme = theme;
-  s.term.options.cursorStyle = s.cycle ? 'underline' : 'block';
+  s.term.options.cursorStyle = s.cycle ? 'bar' : 'block';   // a bar beside the cycle: the cell stays readable
 }
 
 /** Puts the light cycle on a session's terminal, or takes it off, and sets the terminal's colours either way. */
@@ -770,7 +994,7 @@ function lightCycle(s, on) {
     const cw = screen.clientWidth / term.cols, ch = screen.clientHeight / term.rows;
     const x = b.cursorX, y = b.cursorY;
     head.hidden = false;
-    Object.assign(head.style, { left: `${x * cw}px`, top: `${y * ch}px`, width: `${cw * CYCLE_CELLS}px`, height: `${ch}px` });
+    Object.assign(head.style, { left: `${x * cw + CYCLE_OFFSET}px`, top: `${y * ch}px`, width: `${cw * CYCLE_CELLS}px`, height: `${ch}px` });
     const from = c.last;
     c.last = { x, y };
     if (!from || (from.x === x && from.y === y)) return;
@@ -779,7 +1003,7 @@ function lightCycle(s, on) {
     c.moves.push(now);
     if (c.moves.length > BURST_MOVES || !trailsAllowed()) return;
     // The ribbon, from the rear wheel: down (or up) the old column to the new line, then along it to the new cell.
-    const mid = (v, size) => (v + 0.5) * size;
+    const midX = (col) => (col + 0.5) * cw + CYCLE_OFFSET;   // a column's middle, where the cycle rides
     const wheel = (row) => (row + 0.69) * ch;   // the wheels' height in the cell (11 of 16 in CYCLE_SVG)
     const piece = (left, top, width, height) => {
       const p = h('div', { class: 'cycle-trail', style: `left:${left}px;top:${top}px;width:${width}px;height:${height}px` });
@@ -788,8 +1012,8 @@ function lightCycle(s, on) {
       c.pieces.push(p);
       while (c.pieces.length > TRAIL_MAX) c.pieces.shift().remove();
     };
-    if (from.y !== y) piece(mid(from.x, cw) - 1, Math.min(wheel(from.y), wheel(y)), 2, Math.abs(y - from.y) * ch);
-    if (from.x !== x) piece(Math.min(mid(from.x, cw), mid(x, cw)), wheel(y) - 1, Math.abs(x - from.x) * cw, 2);
+    if (from.y !== y) piece(midX(from.x) - 1, Math.min(wheel(from.y), wheel(y)), 2, Math.abs(y - from.y) * ch);
+    if (from.x !== x) piece(Math.min(midX(from.x), midX(x)), wheel(y) - 1, Math.abs(x - from.x) * cw, 2);
   };
   const queue = () => { if (!c.queued) { c.queued = true; requestAnimationFrame(ride); } };
   c.move = s.term.onCursorMove(queue);
@@ -843,9 +1067,12 @@ function syncSessions(list, projects) {
       s = createSession(info);
       state.byId.set(s.id, s);
     } else {
-      Object.assign(s, { name: info.name, directory: info.directory, command: info.command, conversation: info.conversation });
+      Object.assign(s, { name: info.name, directory: info.directory, command: info.command, conversation: info.conversation, server: info.server ?? null });
     }
     s.project = info.project || null;
+    // Running already: it ran on in the session host while no window was open (its output follows as a replay).
+    if (info.running && !s.running) s.started = true;
+    s.startedBy = info.startedBy || null;   // the session whose agent started this one (start_session)
     s.running = info.running || s.running;
   }
   for (const s of [...state.byId.values()]) {
@@ -901,10 +1128,11 @@ function createSession(info) {
   s.header.addEventListener('mouseenter', () => loadConversationInfo(s));
   s.rail = h('div', { class: 'chat-rail' });
   attachRail(s.rail);
-  s.tile = h('div', { class: 'tile', 'data-id': s.id }, s.header, h('div', { class: 'tile-body' }, s.surface, s.rail, s.cover, s.exitedBadge));
+  s.veil = veilSlider();
+  s.tile = h('div', { class: 'tile', 'data-id': s.id }, s.header, h('div', { class: 'tile-body' }, s.surface, s.rail, s.cover, s.exitedBadge, s.veil));
 
   const term = new Terminal({
-    fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace',
+    fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, Menlo, "DejaVu Sans Mono", "Courier New", monospace',
     fontSize: state.fontSize,
     lineHeight: 1.0,
     cursorBlink: true,
@@ -921,6 +1149,7 @@ function createSession(info) {
   term.loadAddon(new Unicode11Addon.Unicode11Addon());
   term.unicode.activeVersion = '11';
   term.loadAddon(new WebLinksAddon.WebLinksAddon((ev, uri) => request('openUrl', { uri })));
+  term.registerLinkProvider(pathLinkProvider(s));
   term.open(s.surface);
   if (state.byId.size < MAX_WEBGL) {
     try {
@@ -938,15 +1167,17 @@ function createSession(info) {
       return;
     }
     s.act.lastIn = performance.now();
+    // Enter gives it something to do. Not just any input: xterm answers the terminal's own queries (which Claude sends
+    // as it starts) through here too.
+    if (data.includes('\r')) s.act.starting = false;
     post({ type: 'input', id: s.id, data });
   });
   term.onResize(({ cols, rows }) => { if (s.running) post({ type: 'resize', id: s.id, cols, rows }); });
   term.onTitleChange((t) => { s.title = t; renderTileHeader(s); });
-  // Some agents (Codex) report what they're doing in an OSC 7501 sequence, "state=working:app=codex", with state=blocked
-  // while they wait on an answer from you. A session that reports it is taken at its word rather than read off the screen.
+  // Some agents (Codex) report what they're doing in an OSC 7501 sequence, "state=working:app=codex" (see reportState).
   term.parser.registerOscHandler(7501, (data) => {
     const reported = /(?:^|:)state=([a-z]+)/.exec(data)?.[1];
-    if (reported) { s.reportsState = true; setAsking(s, reported === 'blocked'); }
+    if (reported) reportState(s, reported);
     return true;
   });
   term.onBell(() => { if (state.expandedId !== s.id) setAttention(s, true); });
@@ -959,7 +1190,16 @@ function createSession(info) {
   }
   s.surface.addEventListener('contextmenu', (e) => {
     e.preventDefault();
-    if (state.expandedId === s.id) terminalMenu(s, e.clientX, e.clientY);
+    const link = s.hoverPath;   // right-clicked on a path link: its own items first
+    if (link) {
+      const shown = state.expandedId === s.id;
+      showMenu(e.clientX, e.clientY, [
+        { label: link.folder ? 'Open folder' : 'Open', action: () => openTermPath(s, link) },
+        { label: 'Open containing folder', action: () => openTermPath(s, link, true) },
+        { label: 'Copy path', action: () => navigator.clipboard.writeText(link.path) },
+        ...(shown ? ['-', ...terminalMenuItems(s)] : []),
+      ]);
+    } else if (state.expandedId === s.id) terminalMenu(s, e.clientX, e.clientY);
   });
   // Ctrl+V with an image or files on the clipboard and no text: xterm would paste nothing, so paste their paths instead.
   s.surface.addEventListener('paste', (e) => {
@@ -999,8 +1239,9 @@ function startSession(s) {
   s.startsOnOpen = false;
   fitTerm(s);
   s.startedTheme = themeName();
+  s.act.starting = true;
   request('start', { id: s.id, cols: s.term.cols, rows: s.term.rows, theme: s.startedTheme })
-    .then(() => { s.running = true; s.exitCode = null; renderTileHeader(s); renderSessionTabs(); })
+    .then((r) => { if (r?.prompted) s.act.starting = false; s.running = true; s.exitCode = null; renderTileHeader(s); renderSessionTabs(); })
     .catch((err) => {
       s.running = false;
       s.term.writeln(`\x1b[31mFailed to start "${s.command}" in ${s.directory}\x1b[0m`);
@@ -1018,8 +1259,9 @@ function restartSession(s, { resume = false } = {}) {
   s.term.reset();
   setAsking(s, false);   // the question went with the old screen (and a failed restart writes no output to clear it)
   s.startedTheme = themeName();
+  s.act.starting = true;
   request('restart', { id: s.id, cols: s.term.cols, rows: s.term.rows, theme: s.startedTheme, resume })
-    .then(() => { s.running = true; s.exitCode = null; renderTileHeader(s); renderSessionTabs(); })
+    .then((r) => { if (r?.prompted) s.act.starting = false; s.running = true; s.exitCode = null; renderTileHeader(s); renderSessionTabs(); })
     .catch((err) => { s.term.writeln(`\x1b[31m${err.message}\x1b[0m`); });
 }
 
@@ -1029,6 +1271,19 @@ function onOutput(id, data) {
   // xterm draws written output later, in chunks; the screen is only read for "asking" once this output is on it.
   s.term.write(data, () => { s.act.drawnAt = performance.now(); });
   noteActivity(s);
+}
+
+/**
+ * What a session showed while no window was open (the session host kept the end of it). Written without counting as
+ * activity, so a session isn't marked as working or waiting for you just because the window opened; the host then
+ * has the program redraw its screen at this terminal's size.
+ */
+function onReplay(id, data) {
+  const s = state.byId.get(id);
+  if (!s) return;
+  fitTerm(s);   // at its real size first: the output's cursor moves assume the width it was written at
+  s.replaying = true;   // the states it reported back then are taken, but a turn it finished then doesn't flag it now
+  s.term.write(data, () => { s.act.drawnAt = performance.now(); s.replaying = false; });
 }
 
 function onExited(id, code) {
@@ -1045,12 +1300,32 @@ function onExited(id, code) {
   renderSessionTabs();
 }
 
+/**
+ * What an agent that reports its state (OSC 7501: Codex) says it's doing, taken at its word instead of being guessed
+ * from its output: "working" while it works; "done" when it finishes a turn, which is your turn (flagged as waiting for
+ * you unless you're looking at it); "idle" when it's ready without having worked (it has just started); "blocked" while
+ * it waits on your answer to a question or approval.
+ */
+function reportState(s, reported) {
+  s.reportsState = true;
+  const a = s.act, was = a.state;
+  a.starting = false;
+  if (reported === 'working') {
+    if (was !== 'working') { a.state = 'working'; a.workingSince = performance.now(); }
+  } else a.state = 'idle';
+  setAsking(s, reported === 'blocked');
+  if (reported === 'working' && s.attention) setAttention(s, false);
+  else if (reported === 'done' && was === 'working' && !s.replaying && state.expandedId !== s.id) setAttention(s, true);
+  else if (a.state !== was) renderTileState(s);
+}
+
 // Activity: Claude's spinner redraws continuously while it works and goes quiet when it is waiting on
-// you, so a sustained burst of output followed by silence means "your turn" → flag the tile.
+// you, so a sustained burst of output followed by silence means "your turn" → flag the tile. Not for an agent that
+// reports its state (see reportState).
 function noteActivity(s) {
   const now = performance.now();
   const a = s.act;
-  if (now - a.lastIn < 400) { a.lastOut = now; return; }   // echo of our own typing
+  if (now - a.lastIn < 400 || s.reportsState) { a.lastOut = now; return; }   // echo of our own typing
   if (a.state !== 'working') {
     if (now - a.lastOut > 1500) a.burstStart = now;
     if (now - a.burstStart > 1200) {
@@ -1072,9 +1347,13 @@ setInterval(() => {
   const now = performance.now();
   for (const s of state.sessions) {
     const a = s.act;
-    if (a.state === 'working' && now - a.lastOut > 2500) {
+    if (a.state === 'working' && !s.reportsState && now - a.lastOut > 2500) {
       a.state = 'idle';
-      if (now - a.workingSince > 4000 && state.expandedId !== s.id) setAttention(s, true);
+      // The output a program writes as it starts (Claude's start-up, a dev server's build) isn't a turn finished: it's
+      // ready, not waiting for you. Once it's been given something to do (see term.onData), quiet means your turn.
+      const startUp = a.starting;
+      a.starting = false;
+      if (!startUp && now - a.workingSince > 4000 && state.expandedId !== s.id) setAttention(s, true);
       else renderTileState(s);
     }
     // Once the screen has settled after new output has been drawn (mid-redraw it can be half drawn), see whether the
@@ -1087,10 +1366,17 @@ setInterval(() => {
   }
 }, 500);
 
+/** Presses Enter in the session for LlamaTree (sending a prompt or a notice typed into it): it now has something to do. */
+function pressEnter(s) {
+  s.act.starting = false;
+  post({ type: 'input', id: s.id, data: '\r' });
+}
+
 function setAttention(s, on) {
   if (s.attention === on) return;
   s.attention = on;
   renderTileState(s);
+  syncControlStatus(s);
   renderDocTabs();
 }
 
@@ -1098,6 +1384,7 @@ function setAsking(s, on) {
   if (s.asking === on) return;
   s.asking = on;
   renderTileState(s);
+  syncControlStatus(s);
   renderDocTabs();
 }
 
@@ -1229,23 +1516,30 @@ function renderTileHeader(s) {
   fill(s.header,
     h('span', { class: 'dot ' + statusClass(s), title: statusText(s) }),
     h('span', { class: 'tile-name', title: conversationLine(s) }, s.name),
+    serverTag(s),
     projectTag(s),
     relayTileMark(s),
+    startedByMark(s),
     h('span', { class: 'tile-title', title: s.title }, s.title),
-    gs && h('button', {
-      class: 'chip', title: `${gs.count} changed file(s) on ${gs.branch} — show in Git Changes`,
-      onclick: () => showGit(s.id),
+    gs && h(gitTabOn('changes') ? 'button' : 'span', {
+      class: 'chip', title: `${gs.count} changed file(s) on ${gs.branch}${gitTabOn('changes') ? ' — show in Git Changes' : ''}`,
+      onclick: gitTabOn('changes') && (() => showGit(s.id)),
     }, iconEl('branch'), gs.branch, gs.ahead ? ` ↑${gs.ahead}` : '', gs.count ? h('span', { class: 'mod' }, ` ●${gs.count}`) : ''),
     h('button', { class: 'icon-btn', title: 'Session options', onclick: (e) => { const r = e.currentTarget.getBoundingClientRect(); sessionMenu(s, r.left, r.bottom + 2); } }, iconEl('more')),
     expanded && h('button', { class: 'icon-btn', title: 'Back to all sessions (Shift+Esc)', onclick: collapse }, iconEl('collapse')),
   );
-  s.exitedBadge.hidden = s.running || !(s.started || s.startsOnOpen);
-  s.exitedBadge.textContent = s.startsOnOpen ? 'Starts when you open it' : s.exitCode === null ? 'Not running' : `Exited (${s.exitCode})`;
+  s.tile.classList.toggle('on-server', !!s.server);   // its edge says it runs elsewhere
+  s.tile.classList.toggle('server-down', serverDown(s));
+  const away = serverDown(s);   // a session on a server that can't be reached: why, rather than whether it runs
+  s.exitedBadge.hidden = !away && (s.running || !(s.started || s.startsOnOpen));
+  s.exitedBadge.textContent = away ? serverStateText(serverOf(s))
+    : s.startsOnOpen ? 'Starts when you open it' : s.exitCode === null ? 'Not running' : `Exited (${s.exitCode})`;
   renderTileState(s);
+  syncControlStatus(s);
 }
 
 function sessionTabTitle(s) {
-  return [s.directory, statusText(s), conversationLine(s), 'Click again to go back to all sessions · middle-click to close'].filter(Boolean).join('\n');
+  return [s.directory, s.git?.branch && `Branch: ${s.git.branch}`, s.server && serverTitle(serverOf(s)), statusText(s), conversationLine(s), 'Click again to go back to all sessions · middle-click to close'].filter(Boolean).join('\n');
 }
 
 /**
@@ -1275,14 +1569,14 @@ async function loadConversationInfo(s) {
   s.header.querySelector('.tile-name')?.setAttribute('title', conversationLine(s) ?? '');
 }
 
-function renderSessionTabs() {
-  const host = $('#sessionTabs');
-  // The label and the close button are sibling buttons, since one button can't contain another: both stay reachable
-  // with Tab, and Enter or Space on the label switches sessions. A click elsewhere on the tab counts as the label's.
-  // Visible sessions only, grouped by project. Each group is outlined in its project's colour and named once at its
-  // start, so the tabs themselves carry no project tag.
-  const shown = visibleSessions();
-  const tabs = shown.map((s, i) => h('div', {
+/**
+ * A session's tab, `i` its place among the visible sessions (for its Ctrl+1…9). The label and the close button are
+ * sibling buttons, since one button can't contain another: both stay reachable with Tab, and Enter or Space on the label
+ * switches sessions. A click elsewhere on the tab counts as the label's. With `marks` (the list down the left), it also
+ * shows which agent the session runs and where (see sessionMarks).
+ */
+function sessionTab(s, i, marks = false) {
+  return h('div', {
     class: 'session-tab' + (state.expandedId === s.id ? ' active' : '') + (['working', 'asking'].includes(statusClass(s)) ? ' ' + statusClass(s) : ''),
     'data-id': s.id,
     title: sessionTabTitle(s),
@@ -1298,21 +1592,73 @@ function renderSessionTabs() {
     onauxclick: (e) => { if (e.button === 1) confirmRemove(s); },
     oncontextmenu: (e) => { e.preventDefault(); sessionMenu(s, e.clientX, e.clientY, 'sessionTab'); },
   }, h('button', { class: 'tab-label' },
-    statusDot(s), h('span', { class: 'tab-name' }, s.name), i < 9 ? h('span', { class: 'key' }, `Ctrl+${i + 1}`) : null),
+    statusDot(s),
+    // Down the left, its branch beneath the name.
+    marks ? h('span', { class: 'tab-text' }, h('span', { class: 'tab-name' }, s.name), tabBranch(s)) : h('span', { class: 'tab-name' }, s.name),
+    // Down the left, icons for its agent and where it runs; across the top, the server's name for a session on one.
+    marks ? sessionMarks(s) : s.server &&h('span', { class: 'tab-server' + (serverDown(s) ? ' down' : ''), title: serverTitle(serverOf(s)) }, iconEl('server'), h('span', {}, serverName(serverOf(s)))),
+    i < 9 ? h('span', { class: 'key' }, `Ctrl+${i + 1}`) : null),
   // Closing a session tab removes the session, after the same confirmation as "Remove session…".
-  h('button', { class: 'icon-btn small tab-close', title: 'Close session…', onclick: () => confirmRemove(s) }, iconEl('close'))));
-  // A + at the end of each project's group (or of the row without projects): another session like one of that group's.
-  const plus = (sessions, where) => {
-    const like = sessions.find((s) => s.id === state.currentId) || sessions[0];
-    return h('button', {
-      class: 'icon-btn small session-add', 'aria-label': `New session ${where}`,
-      title: `New session ${where}: in the same folder as ${like.name}${like.git?.isRepo ? ", in a new worktree" : ""}, or in a different folder`,
-      onclick: (e) => quickAddMenu(like, e.currentTarget),
-    }, iconEl('plus'));
-  };
-  if (!state.projects.length) {
+  h('button', { class: 'icon-btn small tab-close', title: 'Close session…', onclick: () => confirmRemove(s) }, iconEl('close')));
+}
+
+/** The branch the session's folder is on, for its row down the left; always there (empty until Git has said, or outside a repository) so it updates in place. */
+function tabBranch(s) {
+  const b = s.git?.branch || '';
+  return h('span', { class: 'tab-branch' }, b && iconEl('branch'), b && h('span', {}, b));   // empty (and hidden) without one
+}
+
+/** Puts the session's branch on its tabs after a Git status: beneath the name down the left, and in their tooltips. */
+function updateTabBranch(s) {
+  for (const tab of document.querySelectorAll(`.session-tab[data-id="${s.id}"]`)) {
+    tab.title = sessionTabTitle(s);
+    tab.querySelector('.tab-branch')?.replaceWith(tabBranch(s));
+  }
+}
+
+const AGENT_ICONS = { claude: 'agentClaude', codex: 'agentCodex' };   // by AgentProfile.Id
+
+/**
+ * Two small icons: the agent the session runs (Claude or Codex in its colour, AgentProfile.Color; a terminal for any
+ * other command) and where it runs (this computer, or its server, in red while that can't be reached).
+ */
+function sessionMarks(s) {
+  const a = agentOf(s.command);
+  const glyph = a ? AGENT_ICONS[a.id] ?? 'sparkle' : 'terminal';   // an agent with no icon of its own gets a generic one
+  return h('span', { class: 'session-marks' },
+    h('span', {
+      class: 'session-mark agent' + (a?.color ? ' colored' : ''),
+      style: a?.color && `--agent-dark: ${a.color.dark}; --agent-light: ${a.color.light}`,
+      title: a ? `Runs ${a.name}` : `Runs ${(s.command || '').trim().split(' ')[0] || 'a command'}: not a coding agent`,
+    }, iconEl(glyph)),
+    h('span', {
+      class: 'session-mark where' + (s.server ? ' remote' : '') + (serverDown(s) ? ' down' : ''),
+      title: s.server ? `${serverName(serverOf(s))}: ${serverStateText(serverOf(s))}` : 'Runs on this computer',
+    }, iconEl(s.server ? 'server' : 'computer')));
+}
+
+/** The + at the end of a project's sessions (or of them all, without projects): another session like one of them. */
+function sessionPlus(sessions, where) {
+  const like = sessions.find((s) => s.id === state.currentId) || sessions[0];
+  return h('button', {
+    class: 'icon-btn small session-add', 'aria-label': `New session ${where}`,
+    title: `New session ${where}: in the same folder as ${like.name}${like.git?.isRepo ? ", in a new worktree" : ""}, or in a different folder`,
+    onclick: (e) => quickAddMenu(like, e.currentTarget),
+  }, iconEl('plus'));
+}
+
+function renderSessionTabs() {
+  const host = $('#sessionTabs');
+  // Visible sessions only, grouped by project. Each group is outlined in its project's colour and named once at its
+  // start, so the tabs themselves carry no project tag. In the Left layout they're listed down the left instead.
+  const shown = state.navLayout === 'left' ? [] : visibleSessions();
+  const tabs = shown.map((s, i) => sessionTab(s, i));
+  if (state.navLayout === 'left') {
+    host.replaceChildren();
+    renderNav();
+  } else if (!state.projects.length) {
     // Nothing to group by: the sessions are still outlined as one group, as Unknown's would be, but with no name.
-    host.replaceChildren(...(shown.length ? [h('div', { class: 'session-group unknown unnamed' }, tabs, plus(shown, 'like these'))] : []));
+    host.replaceChildren(...(shown.length ? [h('div', { class: 'session-group unknown unnamed' }, tabs, sessionPlus(shown, 'like these'))] : []));
   } else {
     const groups = [];
     shown.forEach((s, i) => {
@@ -1334,7 +1680,7 @@ function renderSessionTabs() {
       onclick: () => toggleProjectView(g.id),
     }, iconEl('list'), g.name),   // the Project tab's icon, so it's clear the name opens something
     g.tabs,
-    plus(g.sessions, g.color ? `in ${g.name}` : 'with no project'))));
+    sessionPlus(g.sessions, g.color ? `in ${g.name}` : 'with no project'))));
   }
   syncStatus(host);
   $('#btnGrid').classList.toggle('active', !state.expandedId);
@@ -1463,11 +1809,14 @@ function setFontSize(size) {
 
 // ------------------------------------------------------------------ keyboard
 
+/** The app's shortcut modifier: ⌘ on a Mac, Ctrl elsewhere. */
+const mod = (e) => (IS_MAC ? e.metaKey : e.ctrlKey);
+
 /** Returns true for app-level shortcuts that should not reach the terminal. */
 function handleShortcut(e) {
   if (e.type !== 'keydown') return false;
   const k = e.key;
-  if (k === 'Escape' && e.shiftKey && !e.ctrlKey && !e.altKey) {
+  if (k === 'Escape' && e.shiftKey && !mod(e) && !e.altKey) {
     if (!$('#modalHost').hidden) closeModal();
     else if (activeTab()) showTerminalDoc();
     else collapse();
@@ -1475,21 +1824,21 @@ function handleShortcut(e) {
   }
   // The physical key, not the character: with some keyboard layouts Ctrl plus a number key doesn't produce "1"…"9".
   const digit = /^(?:Digit|Numpad)([1-9])$/.exec(e.code)?.[1] ?? (/^[1-9]$/.test(k) ? k : null);
-  if (e.ctrlKey && !e.altKey && !e.shiftKey && digit) {
+  if (mod(e) && !e.altKey && !e.shiftKey && digit) {
     const s = visibleSessions()[+digit - 1];   // matches the Ctrl+N hints on the visible tabs
     if (s) expand(s.id);
     return true;
   }
-  if (e.ctrlKey && !e.shiftKey && (k === 'PageUp' || k === 'PageDown')) { cycleDoc(k === 'PageUp' ? -1 : 1); return true; }
-  if (e.ctrlKey && k === 'F4') { if (activeTab()) closeDoc(docs.active); return true; }
+  if (mod(e) && !e.shiftKey && (k === 'PageUp' || k === 'PageDown')) { cycleDoc(k === 'PageUp' ? -1 : 1); return true; }
+  if (mod(e) && k === 'F4') { if (activeTab()) closeDoc(docs.active); return true; }
   // Ctrl+W closes a diff or Conversation tab. On the terminal it isn't taken: it deletes a word in Claude's prompt.
-  if (e.ctrlKey && !e.shiftKey && !e.altKey && (k === 'w' || k === 'W') && activeTab()) { closeDoc(docs.active); return true; }
+  if (mod(e) && !e.shiftKey && !e.altKey && (k === 'w' || k === 'W') && activeTab()) { closeDoc(docs.active); return true; }
   if (e.ctrlKey && k === 'Tab') { cycle(e.shiftKey ? -1 : 1); return true; }
-  if (e.ctrlKey && e.shiftKey && (k === 'G' || k === 'g')) { toggleGit(); return true; }
-  if (e.ctrlKey && e.shiftKey && (k === 'N' || k === 'n')) { showAddDialog(); return true; }
-  if (e.ctrlKey && !e.shiftKey && (k === '=' || k === '+')) { setFontSize(state.fontSize + 1); return true; }
-  if (e.ctrlKey && !e.shiftKey && k === '-') { setFontSize(state.fontSize - 1); return true; }
-  if (e.ctrlKey && !e.shiftKey && k === '0') { setFontSize(14); return true; }
+  if (mod(e) && e.shiftKey && (k === 'G' || k === 'g')) { toggleGit(); return true; }
+  if (mod(e) && e.shiftKey && (k === 'N' || k === 'n')) { showAddDialog(); return true; }
+  if (mod(e) && !e.shiftKey && (k === '=' || k === '+')) { setFontSize(state.fontSize + 1); return true; }
+  if (mod(e) && !e.shiftKey && k === '-') { setFontSize(state.fontSize - 1); return true; }
+  if (mod(e) && !e.shiftKey && k === '0') { setFontSize(14); return true; }
   return false;
 }
 
@@ -1503,6 +1852,17 @@ function terminalKey(s, e) {
     return false;
   }
   if (e.type !== 'keydown') return true;
+  // On a Mac ⌘C, ⌘V and ⌘A copy, paste and select all, and Ctrl+C and Ctrl+V go to the program as themselves.
+  if (IS_MAC) {
+    if (!e.metaKey || e.ctrlKey || e.altKey) return true;
+    const key = e.key.toLowerCase();
+    if (key === 'c') { if (s.term.hasSelection()) navigator.clipboard.writeText(s.term.getSelection()); }
+    else if (key === 'v') pasteClipboard(s);
+    else if (key === 'a') s.term.selectAll();
+    else return true;
+    e.preventDefault();
+    return false;
+  }
   // Ctrl+V pastes. Left to xterm it becomes ^V and the event is cancelled, so the browser's paste never happens; returning
   // false without cancelling lets the native paste reach xterm's paste handler (bracketed paste included).
   if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && (e.key === 'v' || e.key === 'V')) return false;
@@ -1517,6 +1877,7 @@ function terminalKey(s, e) {
     return false;
   }
   if (e.ctrlKey && e.shiftKey && (e.key === 'V' || e.key === 'v')) {
+    e.preventDefault();   // WebKitGTK pastes on Ctrl+Shift+V by itself too, which would paste twice
     pasteClipboard(s);
     return false;
   }
@@ -1525,7 +1886,7 @@ function terminalKey(s, e) {
 
 /** Pastes the clipboard's text or, without text, the paths of the image or files on it (see pasteClipboardFiles). */
 async function pasteClipboard(s) {
-  const text = await navigator.clipboard.readText().catch(() => '');
+  const text = await readClipboardText().catch(() => '');
   if (text) s.term.paste(text);
   else pasteClipboardFiles(s);
 }
@@ -1536,7 +1897,9 @@ async function pasteClipboard(s) {
  */
 async function pasteClipboardFiles(s) {
   try {
-    const paths = await request('clipboard.files');
+    let paths = await request('clipboard.files');
+    // A session on a server gets copies there: their paths there are pasted.
+    if (paths?.length && s.server) paths = await request('files.upload', { id: s.id, paths });
     if (paths?.length) s.term.paste(paths.map((p) => (/\s/.test(p) ? `"${p}"` : p)).join(' '));
   } catch (err) {
     toast(err.message, true);
@@ -1605,22 +1968,34 @@ function menuKey(e) {
   if (!openMenuEl || e.ctrlKey || e.altKey || e.metaKey) return false;
   const items = [...openMenuEl.querySelectorAll('.menu-item')];
   const at = items.findIndex((i) => i.classList.contains('active'));
-  const move = { ArrowDown: at + 1, ArrowUp: (at < 0 ? items.length : at) - 1, Home: 0, End: items.length - 1 }[e.key];
+  // A menu with a box to type in (the branch picker's filter) keeps Space, Home and End for the box.
+  const typing = e.target instanceof HTMLInputElement && openMenuEl.contains(e.target);
+  const move = { ArrowDown: at + 1, ArrowUp: (at < 0 ? items.length : at) - 1, ...(typing ? {} : { Home: 0, End: items.length - 1 }) }[e.key];
   if (move !== undefined) {
     items[at]?.classList.remove('active');
-    items[(move + items.length) % items.length]?.classList.add('active');
+    const next = items[(move + items.length) % items.length];
+    next?.classList.add('active');
+    next?.scrollIntoView({ block: 'nearest' });
     return true;
   }
-  if ((e.key === 'Enter' || e.key === ' ') && at >= 0) { items[at].click(); return true; }
+  if ((e.key === 'Enter' || (e.key === ' ' && !typing)) && at >= 0) { items[at].click(); return true; }
   if (e.key === 'Escape' && !e.shiftKey) { closeMenu(); return true; }
   return false;
 }
 
 /** from: 'session' (the tile's ⋯ button or header) or 'sessionTab' (the session tab), for plugins' items (see pluginMenuItems). */
 function sessionMenu(s, x, y, from = 'session') {
+  const c = serverOf(s);
   showMenu(x, y, [
+    c && c.state !== 'online' && { header: serverStateText(c) },
+    c?.notInstalled && { label: `Install LlamaTree on ${c.target}…`, action: () => installServer(c.target) },
+    c && ['offline', 'elsewhere'].includes(c.state) && { label: `Reconnect to ${c.target}`, action: () => request('servers.reconnect', { server: c.target }).catch((e) => toast(e.message, true)) },
+    c && c.state !== 'online' && '-',
+    c?.state === 'online' && c.outdated && { header: serverVersionText(c) },
+    c?.state === 'online' && c.outdated && { label: `Update LlamaTree on ${serverName(c)}…`, action: () => updateServer(c) },
+    c?.state === 'online' && c.outdated && '-',
     state.expandedId === s.id ? { label: 'Back to all sessions', kbd: 'Shift+Esc', action: collapse } : { label: 'Expand', action: () => expand(s.id) },
-    { label: 'Show Git changes', action: () => showGit(s.id) },
+    gitTabOn('changes') && { label: 'Show Git changes', action: () => showGit(s.id) },
     { label: 'Show conversation', action: () => openConversation(s) },
     { label: 'Permissions…', action: () => openPermissions('session', s.id) },
     { label: `Project view: ${projectName(groupOf(s))}${projectName(groupOf(s)).endsWith('s') ? '’' : '’s'} worktrees side by side`, action: () => openProjectView(groupOf(s)) },
@@ -1630,7 +2005,7 @@ function sessionMenu(s, x, y, from = 'session') {
     { label: 'Move to project…', action: () => showEditDialog(s, 'project') },
     { label: s.running ? 'Restart session' : 'Start session', action: () => (s.running ? confirmRestart(s) : restartSession(s)) },
     s.running && { label: 'Stop session', action: () => confirmStop(s) },
-    { label: 'Open folder in Explorer', action: () => request('openFolder', { id: s.id }) },
+    { label: machine || s.server ? 'Browse the folder' : `Open folder in ${IS_MAC || IS_LINUX ? FILE_MANAGER : 'Explorer'}`, action: () => request('openFolder', { id: s.id }) },
     '-',
     { label: 'Move left', action: () => moveSession(s, -1) },
     { label: 'Move right', action: () => moveSession(s, 1) },
@@ -1641,9 +2016,13 @@ function sessionMenu(s, x, y, from = 'session') {
 }
 
 function terminalMenu(s, x, y) {
+  showMenu(x, y, terminalMenuItems(s));
+}
+
+function terminalMenuItems(s) {
   // These leave you in the terminal, ready to type (Enter after Paste, say).
   const inTerminal = (fn) => async () => { await fn(); s.term.focus(); };
-  showMenu(x, y, [
+  return [
     { label: 'Copy', kbd: 'Ctrl+C', action: inTerminal(() => s.term.hasSelection() && navigator.clipboard.writeText(s.term.getSelection())) },
     { label: 'Paste', kbd: 'Ctrl+V', action: inTerminal(() => pasteClipboard(s)) },
     { label: 'Select all', action: inTerminal(() => s.term.selectAll()) },
@@ -1651,7 +2030,99 @@ function terminalMenu(s, x, y) {
     '-',
     { label: 'Show conversation', action: () => openConversation(s) },
     { label: 'Back to all sessions', kbd: 'Shift+Esc', action: collapse },
-  ]);
+  ];
+}
+
+// ---------------------------------------------------------------- file paths in a terminal
+
+// A word that may be a path (no spaces), and a quoted one (which may have spaces): "C:\My Files\a.txt", 'a b/c.md'.
+// Both are looked for, as apostrophes in prose can look like quotes around a path.
+const PATH_WORD = /[^\s"'`<>|,;()[\]{}]+/g;
+const QUOTED_PATH = /"([^"\n]{2,})"|'([^'\n]{2,})'|`([^`\n]{2,})`/g;
+
+/**
+ * The path in a word of terminal output, or null if it can't be one: unless it was quoted, it needs a folder
+ * separator, a file extension or to be ~. Sentence punctuation after it and a :line or :line:column (as compilers and
+ * Claude write them) aren't part of it. Links (anything://), options (-x) and user@host:path aren't paths.
+ */
+function termPathText(word, quoted = false) {
+  if (word === '~') return word;
+  let t = word.replace(/[.,;:!?]+$/, '').replace(/:\d+(?::\d+)?$/, '');
+  if (t.length < 2 || t.length > 1024 || t.includes('://') || t.startsWith('-') || /^[\d.]+$/.test(t)) return null;
+  if (/^[a-z][\w+.@-]*:/i.test(t) && !/^[a-z]:[\\/]/i.test(t)) return null;
+  return quoted || /[\\/]/.test(t) || /\.[A-Za-z][A-Za-z0-9]{0,7}$/.test(t) ? t : null;
+}
+
+/**
+ * Makes the file and folder paths in a terminal's output links, once the host has said they're there (relative ones
+ * are from the session's folder). Click opens one (a file is opened for viewing or editing, never run); its right-click
+ * menu also opens the folder it's in. Paths wrapped onto the next row are found whole.
+ */
+function pathLinkProvider(s) {
+  const cache = new Map();   // path text -> { found, at }: what the host said, rechecked after a while
+  const fresh = (c) => c && performance.now() - c.at < (c.found ? 30000 : 3000);
+  return {
+    provideLinks(y, callback) {
+      const buf = s.term.buffer.active;
+      // The whole logical line this row is part of, with where each character is on screen.
+      let first = y - 1;
+      while (first > 0 && buf.getLine(first)?.isWrapped && y - 1 - first < 8) first--;
+      let text = '';
+      const at = [];
+      for (let row = first; row < first + 16; row++) {
+        const line = buf.getLine(row);
+        if (!line || (row > first && !line.isWrapped)) break;
+        for (let x = 0; x < line.length; x++) {
+          const cell = line.getCell(x);
+          if (!cell || cell.getWidth() === 0) continue;
+          const chars = cell.getChars() || ' ';
+          for (let i = 0; i < chars.length; i++) at.push({ x: x + 1, y: row + 1 });
+          text += chars;
+        }
+      }
+      const words = [];
+      const add = (word, start, quoted = false) => {
+        const path = termPathText(word, quoted);
+        if (!path) return;
+        const end = start + path.length - 1;
+        if (at[start]?.y > y || at[end]?.y < y) return;   // not on this row
+        words.push({ path, start, end });
+      };
+      for (const m of text.matchAll(QUOTED_PATH)) add(m[1] ?? m[2] ?? m[3], m.index + 1, true);
+      for (const m of text.matchAll(PATH_WORD)) add(m[0], m.index);
+      if (!words.length) return callback(undefined);
+      const ask = [...new Set(words.map((w) => w.path).filter((p) => !fresh(cache.get(p))))];
+      const lookup = ask.length ? request('terminal.paths', { id: s.id, paths: ask }) : Promise.resolve([]);
+      lookup.then((found) => {
+        ask.forEach((p, i) => cache.set(p, { found: found?.[i] ?? null, at: performance.now() }));
+        if (cache.size > 500) cache.clear();
+        const real = words.filter((w) => cache.get(w.path)?.found);
+        // Where a quoted path and a word inside it are both there, the longer (the quoted one) is the link.
+        const kept = real.filter((w) => !real.some((o) => o !== w && o.start <= w.start && o.end >= w.end && o.end - o.start > w.end - w.start));
+        callback(kept.map((w) => {
+          const link = cache.get(w.path).found;
+          return {
+            range: { start: at[w.start], end: at[w.end] },
+            text: w.path,
+            decorations: { underline: true, pointerCursor: true },
+            activate: (e) => { if (e.button === 0) openTermPath(s, link); },
+            hover: () => {
+              s.hoverPath = link;
+              s.surface.title = `${link.path}\nClick to open · right-click to open the folder it's in`;
+            },
+            leave: () => {
+              if (s.hoverPath === link) s.hoverPath = null;
+              s.surface.removeAttribute('title');
+            },
+          };
+        }));
+      }, () => callback(undefined));
+    },
+  };
+}
+
+function openTermPath(s, link, inFolder = false) {
+  request('terminal.openPath', { id: s.id, path: link.path, inFolder }).catch((e) => toast(e.message, true));
 }
 
 function moveSession(s, delta) {
@@ -1802,7 +2273,7 @@ const leafName = (path) => (path || '').split(/[\\/]/).filter(Boolean).pop() || 
  * Searchable list of Claude Code's and Codex's saved conversations (optionally limited to one folder, or one agent's).
  * onPick(conv, confirm) fires on click; confirm is true for a double-click. Each conversation's agent is conv.agent.
  */
-function conversationPicker({ directory = null, agent = null, onPick }) {
+function conversationPicker({ directory = null, agent = null, server = null, onPick }) {
   const search = h('input', { placeholder: 'Search conversations by title, prompt or folder…', spellcheck: 'false' });
   const list = h('div', { class: 'conv-list' }, h('div', { class: 'conv-empty' }, 'Loading conversations…'));
   let all = [];
@@ -1836,7 +2307,7 @@ function conversationPicker({ directory = null, agent = null, onPick }) {
   };
 
   search.addEventListener('input', render);
-  request('conversations', { directory, agent })
+  request('conversations', { directory, agent, ...onServer(server) })
     .then((r) => { all = r || []; render(); })
     .catch((e) => list.replaceChildren(h('div', { class: 'conv-empty' }, e.message)));
   return h('div', { class: 'conv-picker' }, search, list);
@@ -1852,7 +2323,31 @@ function showAddDialog(mode = 'new', from = null) {
   // previous default rather than a choice, so it gives way to the new one.
   const remembered = store.get('lastCommand', null);
   const lastCommand = !remembered || remembered === 'claude --continue' ? DEFAULT_COMMAND : remembered;
-  const dir = h('input', { value: from?.directory ?? '', placeholder: 'D:\\Source\\MyRepo', spellcheck: 'false' });
+  const dir = h('input', { value: from?.directory ?? '', spellcheck: 'false' });
+  // Which computer the session runs on: this one, or a server whose sessions show here too (LlamaTree installed there,
+  // reached with ssh as for a server's window). A window showing one server's sessions adds them there.
+  const NEW_SERVER = '*new';
+  const knownServers = [...new Set([...state.sessions.map((x) => x.server), ...servers.keys(), ...store.get('servers', [])].filter(Boolean))];
+  const computer = h('select', {},
+    h('option', { value: '' }, 'This computer'),
+    knownServers.map((t) => h('option', { value: t }, t)),
+    h('option', { value: NEW_SERVER }, 'A server…'));
+  computer.value = from?.server && knownServers.includes(from.server) ? from.server : '';
+  const newServer = h('input', { placeholder: 'user@server, or a Host from your SSH config', spellcheck: 'false', hidden: true });
+  const serverValue = () => (computer.value === NEW_SERVER ? newServer.value.trim() || null : computer.value || null);
+  const setPlaceholder = () => { dir.placeholder = machine || serverValue() || IS_LINUX ? '/home/you/my-repo' : IS_MAC ? '/Users/you/my-repo' : 'D:\\Source\\MyRepo'; };
+  setPlaceholder();
+  const computerChanged = () => {
+    newServer.hidden = computer.value !== NEW_SERVER;
+    if (!newServer.hidden && document.activeElement === computer) newServer.focus();
+    browserHost.hidden = true;
+    wtHost.hidden = true;
+    setPlaceholder();
+    if (mode === 'resume') setMode('resume');   // that computer's conversations
+    else loadWorktrees();
+  };
+  computer.addEventListener('change', computerChanged);
+  newServer.addEventListener('change', computerChanged);
   const name = h('input', { value: from?.name ?? '', placeholder: '(Session Name)', spellcheck: 'false' });
   const command = h('input', { value: lastCommand, spellcheck: 'false' });
   const wtHost = h('div', { class: 'field', hidden: true });
@@ -1868,7 +2363,7 @@ function showAddDialog(mode = 'new', from = null) {
     wtHost.hidden = true;
     if (!d || mode !== 'new') return;
     let worktrees;
-    try { worktrees = (await request('worktrees', { directory: d })) || []; } catch { worktrees = []; }
+    try { worktrees = (await request('worktrees', { directory: d, ...onServer(serverValue()) })) || []; } catch { worktrees = []; }
     if (dir.value.trim() !== d || mode !== 'new') return;   // a slow reply for a folder no longer in the dialog
     const norm = (p) => p.replace(/[\\/]+$/, '').toLowerCase();
     const existing = new Set(state.sessions.map((s) => norm(s.directory)));
@@ -1888,8 +2383,20 @@ function showAddDialog(mode = 'new', from = null) {
   }, 250);
   dir.addEventListener('input', loadWorktrees);
 
+  // A server's folders are browsed in the page (this computer's folder picker can't reach them), below the folder box.
+  const browserHost = h('div', { class: 'field', hidden: true });
   const browse = h('button', {
-    class: 'btn', onclick: async () => {
+    class: 'btn',
+    onclick: async () => {
+      if (machine || serverValue()) {
+        browserHost.hidden = !browserHost.hidden;
+        if (!browserHost.hidden) browserHost.replaceChildren(serverBrowser({
+          server: serverValue(),
+          path: dir.value.trim() || (serverValue() ? '' : lastDir),
+          onPick: (p) => { dir.value = p; browserHost.hidden = true; loadWorktrees(); dir.focus(); },
+        }));
+        return;
+      }
       const picked = await request('pickFolder', { initial: dir.value || lastDir });
       if (picked) { dir.value = picked; loadWorktrees(); }
     },
@@ -1912,10 +2419,13 @@ function showAddDialog(mode = 'new', from = null) {
     try {
       const projectId = await project.resolve();
       for (const item of list) item.project = projectId ?? '';
-      await request('addSessions', { sessions: list });
+      const server = serverValue();
+      if (computer.value === NEW_SERVER && !server) throw new Error('Enter the server as user@server, or a Host from your SSH config.');
+      await request('addSessions', { sessions: list, ...onServer(server) });
+      if (server) store.set('servers', [server, ...store.get('servers', []).filter((x) => x !== server)].slice(0, 8));
       // Make sure the new session is on screen even if its project was hidden.
       if (projectId && state.hiddenProjects.has(projectId)) toggleProject(projectId);
-      store.set('lastDir', d);
+      if (!server) store.set('lastDir', d);
       if (mode === 'new') store.set('lastCommand', cmd);
       closeModal();
       const added = state.sessions.find((x) => !before.has(x.id));
@@ -1923,6 +2433,9 @@ function showAddDialog(mode = 'new', from = null) {
     } catch (e) {
       error.hidden = false;
       error.textContent = e.message;
+      const server = serverValue();
+      if (server && /not installed on this server/.test(e.message))
+        error.append(' ', h('button', { class: 'btn', onclick: () => installServer(server) }, `Install LlamaTree on ${server}…`));
     }
   };
   for (const i of [dir, name, command, project.newName]) i.addEventListener('keydown', (e) => { if (e.key === 'Enter') add(); });
@@ -1941,6 +2454,7 @@ function showAddDialog(mode = 'new', from = null) {
       dir.value = '';
       name.value = '';
       pickerHost.replaceChildren(h('label', {}, 'Conversation (double-click to add)'), conversationPicker({
+        server: serverValue(),
         onPick: (c, confirm) => {
           picked = c;
           dir.value = c.cwd || '';
@@ -1994,8 +2508,10 @@ function showAddDialog(mode = 'new', from = null) {
 
   openModal('New session', [
     !firstPrompt && h('div', { class: 'seg' }, segNew, segResume),
+    !machine && field('Computer', h('div', { class: 'inline' }, computer, newServer), 'This computer, or a server: the session runs there, and shows here with the others.'),
     pickerHost,
     field('Folder (repository or worktree)', h('div', { class: 'inline' }, dir, browse)),
+    browserHost,
     field('Name', name, 'Leave it empty to use the folder\'s name.'),
     firstPrompt && field('First prompt', firstPrompt, 'From the panel. Starts a new conversation in this session; edit it first if you like.'),
     field('Command', h('div', { class: 'combo' }, command, suggest), commandNote),
@@ -2021,7 +2537,7 @@ function quickAddMenu(s, anchor) {
     { label: 'In the same folder', action: () => quickSession(s) },
     s.git?.isRepo && { label: 'In a new worktree…', action: () => showWorktreeDialog(s) },   // worktrees need a Git repository
     '-',
-    { label: 'A different folder…', action: () => showAddDialog('new', { directory: s.directory, project: s.project ?? null }) },
+    { label: 'A different folder…', action: () => showAddDialog('new', { directory: s.directory, project: s.project ?? null, server: s.server ?? null }) },
   ]);
 }
 
@@ -2042,7 +2558,7 @@ function freeName(base) {
 
 async function addAndOpen(item) {
   const before = new Set(state.sessions.map((x) => x.id));
-  await request('addSessions', { sessions: [item] });
+  await request('addSessions', { sessions: [item], ...onServer(item.server) });
   if (item.project && state.hiddenProjects.has(item.project)) toggleProject(item.project);
   const added = state.sessions.find((x) => !before.has(x.id));
   if (added) expand(added.id);
@@ -2050,7 +2566,7 @@ async function addAndOpen(item) {
 
 /** One click: another session in the same folder and project, with a conversation of its own. */
 function quickSession(s) {
-  addAndOpen({ directory: s.directory, name: freeName(s.name), command: ownOptionsOnly(s.command), project: s.project ?? '' })
+  addAndOpen({ directory: s.directory, name: freeName(s.name), command: ownOptionsOnly(s.command), project: s.project ?? '', server: s.server ?? undefined })
     .catch((e) => toast(e.message, true));
 }
 
@@ -2106,7 +2622,7 @@ function showWorktreeDialog(s, { startFrom = null } = {}) {
     }
     // The worktree exists now, so the dialog can't be retried: a failure from here on is reported on its own.
     try {
-      await addAndOpen({ directory: path, name: freeName(name.value.trim() || b), command: ownOptionsOnly(s.command), project: s.project ?? '' });
+      await addAndOpen({ directory: path, name: freeName(name.value.trim() || b), command: ownOptionsOnly(s.command), project: s.project ?? '', server: s.server ?? undefined });
     } catch (e) {
       toast(`The worktree was created in ${path}, but no session could be added there: ${e.message}`, true);
     }
@@ -2142,6 +2658,7 @@ function showResumeDialog(s) {
     conversationPicker({
       directory: s.directory,
       agent: agentOf(s.command)?.id ?? null,
+      server: s.server,
       onPick: (c, confirm) => { picked = c; resumeBtn.disabled = false; if (confirm) apply(c.sessionId); },
     }),
     h('div', { class: 'dim' }, `Close the conversation in any other terminal first, so two ${agentOf(s.command)?.name ?? 'agent'} processes don’t write to it at once.`),
@@ -2174,10 +2691,71 @@ function showNewConversations(ids) {
 function applyGitVisibility() {
   document.body.classList.toggle('git-hidden', !state.gitVisible);
   $('#gitPanel').style.width = state.gitWidth + 'px';
-  $('#btnGit').classList.toggle('active', state.gitVisible);
+  applySideEmpty();
+}
+
+/** Anything in the side panel for the selected session: the Git tabs, or (with those off) a panel or plugin. */
+const sideHasTabs = () => dock.groups.some((g) => groupTabs(g).length > 0);
+
+/**
+ * With the Git tabs off, the side panel shows only while it has a panel or plugin to show, and its title bar button
+ * stands for the side panel rather than Git. The button stays, so its ▾ can always bring the Git tabs back.
+ */
+function applySideEmpty() {
+  const empty = !sideHasTabs();
+  document.body.classList.toggle('side-empty', empty);
+  const btn = $('#btnGit');
+  btn.classList.toggle('active', state.gitVisible && !empty);
+  const git = anyGitTab();
+  btn.innerHTML = icon(git ? 'git' : 'panel');
+  btn.title = git ? 'Git and the side panel (Ctrl+Shift+G)'
+    : empty ? 'Side panel: nothing open (click for its options)' : 'Side panel: panels and plugins (Ctrl+Shift+G)';
+  $('#gitRefresh').hidden = !git;
+}
+
+/** Whether a Git tab ('changes' or 'repo') is turned on in the side panel's ▾. */
+const gitTabOn = (t) => !state.hiddenGitTabs.has(t);
+const anyGitTab = () => Object.keys(GIT_TABS).some(gitTabOn);
+
+/** Shows or hides Git Changes or Git Repository; where it sat in the side panel is kept for when it's back. */
+function setGitTab(t, on) {
+  if (on) state.hiddenGitTabs.delete(t); else state.hiddenGitTabs.add(t);
+  store.set('hiddenGitTabs', [...state.hiddenGitTabs]);
+  for (const s of state.sessions) renderTileHeader(s);   // the branch chip opens Git Changes only while it's on
+  if (on) { openDockTab(t); return; }   // turned on: open it, showing the side panel if need be
+  applyGitVisibility();
+  renderGit();
+  toast(`${GIT_TABS[t]} is hidden. Bring it back from the ▾ beside the side panel button.`);
+}
+
+/** Opens a side panel tab (a panel or plugin), showing the side panel if it's hidden. */
+function openDockTab(t) {
+  if (!state.gitVisible) { state.gitVisible = true; store.set('gitVisible', true); applyGitVisibility(); }
+  activateTab(groupOfTab(t), t);
+}
+
+/** The side panel button's ▾: the Git tabs on or off, what's open in the panel to jump to, and the layout. */
+function sidePanelMenu() {
+  const r = $('#btnGitMenu').getBoundingClientRect();
+  const open = dock.groups.flatMap(groupTabs).filter((t) => isPanelTab(t) || isPluginDockTab(t));
+  const empty = !sideHasTabs();
+  showMenu(r.right - 280, r.bottom + 2, [
+    { header: 'Side panel' },
+    !empty && { icon: 'panel', label: state.gitVisible ? 'Hide the side panel' : 'Show the side panel', kbd: 'Ctrl+Shift+G', action: toggleGit },
+    ...Object.entries(GIT_TABS).map(([t, label]) => ({ icon: 'git', label, checked: gitTabOn(t), action: () => setGitTab(t, !gitTabOn(t)) })),
+    open.length > 0 && '-',
+    open.length > 0 && { header: 'Open in the side panel' },
+    ...open.map((t) => isPluginDockTab(t)
+      ? { icon: pluginIcon(pluginOfTab(t)), label: pluginCaption(pluginOfTab(t)), action: () => openDockTab(t) }
+      : { icon: 'list', label: panelByTab(t).title, action: () => openDockTab(t) }),
+    ...reopenItems(),
+    '-',
+    { label: 'Reset layout', action: resetDock },
+  ]);
 }
 
 function toggleGit() {
+  if (!sideHasTabs()) { sidePanelMenu(); return; }   // nothing to show: offer the way to turn the Git tabs back on
   state.gitVisible = !state.gitVisible;
   store.set('gitVisible', state.gitVisible);
   applyGitVisibility();
@@ -2230,6 +2808,7 @@ function onGitStatus(m) {
   }
   s.git = m;
   renderTileHeader(s);
+  updateTabBranch(s);
   refreshOpenDiff(s);   // the visible diff follows its own session, whichever one the Git panel shows
   projectViewChanged(s);
   const historyPending = !s.log && !logFailed(s);
@@ -2302,8 +2881,10 @@ function placePanels() {
   if (changed) saveDock();
 }
 
-/** The tabs a group shows for the selected session: the Git ones always, panels when they show with it. */
-const groupTabs = (g) => g.tabs.filter((t) => isPluginDockTab(t) ? !!pluginById(pluginOfTab(t)) : !isPanelTab(t) || (panelByTab(t) && panelVisibleFor(panelByTab(t), currentSession())));
+/** The tabs a group shows for the selected session: the Git ones unless they're turned off, panels when they show with it. */
+const groupTabs = (g) => g.tabs.filter((t) => isPluginDockTab(t) ? !!pluginById(pluginOfTab(t))
+  : isPanelTab(t) ? !!panelByTab(t) && panelVisibleFor(panelByTab(t), currentSession())
+  : gitTabOn(t));
 
 /**
  * The tab a group has open: its chosen one, or its first while the chosen one isn't shown for this session. The choice
@@ -2321,6 +2902,7 @@ const markSeen = (t) => { const p = panelByTab(t); if (p) panelSeen.set(t, p.upd
 const isUnseen = (p) => panelSeen.get(panelTab(p)) !== p.updated;
 
 function renderGit() {
+  applySideEmpty();   // with the Git tabs off, the side panel comes and goes with its panels
   if (!state.gitVisible) return;
   placePanels();
   buildDock();
@@ -2681,6 +3263,7 @@ function makeDivider(g) {
       isPluginDockTab(t) && { label: 'Close plugin', action: () => closeDockPlugin(t) },
       ...reopenItems(),
       '-',
+      t in GIT_TABS && { label: `Hide ${GIT_TABS[t]}`, action: () => setGitTab(t, false) },
       { label: 'Example panel skill…', action: showExampleSkill },
       { label: 'Reset layout', action: resetDock },
     ].filter(Boolean);
@@ -2714,7 +3297,10 @@ function branchLine(s) {
   return h('div', { class: 'git-toolbar' },
     repoPicker(s),
     h('div', { class: 'git-branch', title: g.upstream ? `Tracking ${g.upstream}` : 'No upstream branch' },
-      iconEl('branch'), h('span', { class: 'name' }, g.branch || '(unknown)'),
+      h('button', {
+        class: 'branch-btn', title: `${g.upstream ? `Tracking ${g.upstream}` : 'No upstream branch'}\nSwitch branches or create a new one`,
+        onclick: (e) => branchPicker(s, e.currentTarget),
+      }, iconEl('branch'), h('span', { class: 'name' }, g.branch || '(unknown)'), iconEl('chevD')),
       g.upstream && h('span', { class: 'ab', title: `${plural(ahead, 'outgoing commit')} / ${plural(behind, 'incoming commit')}` },
         iconEl('up'), String(ahead), ' ', iconEl('down'), String(behind)),
       pr && h('button', {
@@ -2786,6 +3372,8 @@ function gitMoreMenu(s, x, y) {
   const info = s.prInfo?.data;
   const free = !s.remoteBusy;
   showMenu(x, y, [
+    { label: 'New Branch…', icon: 'newBranch', action: () => showNewBranchDialog(s) },
+    free && '-',
     free && { label: 'Fetch', action: () => remoteOp(s, 'fetch') },
     free && s.git.upstream && { label: 'Pull', action: () => remoteOp(s, 'pull') },
     free && { label: 'Push', action: () => remoteOp(s, 'push') },
@@ -2817,6 +3405,191 @@ async function remoteOp(s, op) {
   renderGit();
 }
 
+/**
+ * New Branch, after Visual Studio's: a name, what it's based on (a local or remote branch, or the commit it was opened
+ * from in Git Repository) and whether to switch to it. Switching with uncommitted changes asks first whether to bring
+ * them to the new branch or stash them (see askAboutChanges). A failure comes back to this dialog, as it was filled in.
+ */
+function showNewBranchDialog(s, { base = null, commit = null, name = '', checkout = true, error = null } = {}) {
+  const g = s.git;
+  if (!g?.isRepo) return;
+  const current = g.branch && !g.branch.startsWith('(') ? g.branch : null;
+  const branch = h('input', { value: name, placeholder: 'feature/my-change', spellcheck: 'false' });
+  const shortSha = (sha) => sha.slice(0, 7);
+  // The list fills in once the branches arrive; until then it holds just what it starts on.
+  const start = base ?? commit?.sha ?? current ?? 'HEAD';
+  const startLabel = commit && start === commit.sha ? `Commit ${shortSha(commit.sha)}: ${commit.subject}` : start === 'HEAD' ? 'HEAD (the current commit)' : start;
+  const select = h('select', {}, h('option', { value: start }, startLabel));
+  request('git.branches', { id: s.id }).then((all) => {
+    const local = all.filter((b) => !b.remote).map((b) => b.name), remote = all.filter((b) => b.remote).map((b) => b.name);
+    const chosen = select.value;
+    const opt = (v, label = v) => h('option', { value: v, selected: v === chosen }, label);
+    select.replaceChildren(...[
+      commit && opt(commit.sha, `Commit ${shortSha(commit.sha)}: ${commit.subject}`),
+      !current && opt('HEAD', 'HEAD (the current commit)'),
+      local.length > 0 && h('optgroup', { label: 'Local' }, local.map((b) => opt(b))),
+      remote.length > 0 && h('optgroup', { label: 'Remote' }, remote.map((b) => opt(b))),
+    ].filter(Boolean));
+    if (select.value !== chosen) select.prepend(opt(chosen, startLabel));   // e.g. a branch deleted meanwhile: keep it, git says if it's gone
+  }).catch(() => { /* keep the one option; creating still works */ });
+  const switchTo = h('input', { type: 'checkbox', checked: checkout });
+  const err = h('div', { class: 'form-error', hidden: !error }, error ?? '');
+  const create = h('button', { class: 'btn primary' }, 'Create');
+  const go = () => {
+    const b = branch.value.trim();
+    if (!b) { err.hidden = false; err.textContent = 'Name the new branch.'; branch.focus(); return; }
+    const opts = { base: select.value, commit, name: b, checkout: switchTo.checked };
+    if (opts.checkout && changeCount(s)) askAboutChanges(s, opts.name, (stash, button) => createBranch(s, opts, stash, button), () => showNewBranchDialog(s, opts));
+    else createBranch(s, opts, false, create);
+  };
+  create.addEventListener('click', go);
+  branch.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+  openModal('Create a new branch', [
+    field('Branch name', branch),
+    field('Based on', h('div', { class: 'combo' }, select, h('span', { class: 'combo-btn' }, iconEl('chevD')))),
+    h('label', { class: 'check-field' }, switchTo, 'Checkout branch'),
+    err,
+  ], [h('button', { class: 'btn', onclick: closeModal }, 'Cancel'), create]);
+}
+
+const changeCount = (s) => (s.git?.staged.length ?? 0) + (s.git?.unstaged.length ?? 0);
+
+/**
+ * Switching branches with uncommitted changes, as Visual Studio asks: bring them along (the default) or stash them.
+ * run(stash, button) does the switch; back, if given, returns to the dialog this came from. An error from a try is
+ * shown here, so the other choice can be made.
+ */
+function askAboutChanges(s, target, run, back = null, error = null) {
+  const changes = changeCount(s);
+  const bring = h('button', { class: 'btn primary' }, 'Bring the changes');
+  const stash = h('button', { class: 'btn' }, 'Stash and continue');
+  bring.addEventListener('click', () => run(false, bring));
+  stash.addEventListener('click', () => run(true, stash));
+  openModal('Uncommitted changes', [
+    h('div', {}, `You have ${changes} uncommitted change${changes === 1 ? '' : 's'} on ${s.git.branch || 'the current branch'}. What should happen to ${changes === 1 ? 'it' : 'them'} on ${target}?`),
+    h('ul', { class: 'dim' },
+      h('li', {}, h('b', {}, 'Bring the changes'), `: they come along to ${target}, uncommitted, as they are now. Git refuses if one is in a file ${target} has differently.`),
+      h('li', {}, h('b', {}, 'Stash and continue'), `: they are put away in a Git stash and ${target} starts clean. git stash pop brings them back.`)),
+    h('div', { class: 'form-error', hidden: !error }, error ?? ''),
+  ], [h('button', { class: 'btn', onclick: back ?? closeModal }, back ? 'Back' : 'Cancel'), stash, bring]);
+}
+
+/** Disables the open dialog's buttons and labels the one pressed while a branch operation runs. */
+function busyButtons(button, label) {
+  if (!button) return;
+  for (const b of $('#modalHost').querySelectorAll('.modal-footer button')) b.disabled = true;
+  button.textContent = label;
+}
+
+function branchDone(s, text) {
+  closeModal();
+  toast(text);
+  invalidateLog(s);   // a new branch shows on its commit in Git Repository, even when not switched to
+  renderGit();
+}
+
+async function createBranch(s, opts, stash, button) {
+  if (button.disabled) return;
+  busyButtons(button, 'Creating…');
+  try {
+    branchDone(s, await request('git.createBranch', { id: s.id, branch: opts.name, base: opts.base, checkout: opts.checkout, stash }));
+  } catch (e) {
+    showNewBranchDialog(s, { ...opts, error: e.message });
+  }
+}
+
+/** Switches to a branch from the picker; from the changes prompt, button is the choice pressed and errors stay there. */
+async function checkoutBranch(s, b, stash, button = null) {
+  if (button?.disabled) return;
+  busyButtons(button, 'Switching…');
+  try {
+    branchDone(s, await request('git.checkout', { id: s.id, branch: b.name, remote: b.remote, stash }));
+  } catch (e) {
+    if (button) askAboutChanges(s, localNameOf(b), (st, btn) => checkoutBranch(s, b, st, btn), null, e.message);
+    else toast(e.message, true);
+  }
+}
+
+/** The local branch a picked branch means: itself, or for origin/feature, feature. */
+const localNameOf = (b) => (b.remote ? b.name.replace(/^[^/]+\//, '') : b.name);
+
+/**
+ * The branch picker, after Visual Studio's branch button: a filter, New Branch, and the local and remote branches in
+ * two tabs. Picking one switches to it (a remote one through its local branch, made if needed), asking first what to
+ * do with uncommitted changes. Arrows and Enter work from the filter (see menuKey).
+ */
+async function branchPicker(s, anchor) {
+  // A second click on the button closes it: the press already did, as it was outside the picker.
+  if (Date.now() - (+anchor.dataset.closedAt || 0) < 400) return;
+  const filter = h('input', { class: 'bp-filter', placeholder: 'Filter branches', spellcheck: 'false' });
+  const list = h('div', { class: 'bp-list' }, h('div', { class: 'git-message' }, 'Loading…'));
+  let tab = 'local', branches = null;
+  const tabBtn = (key, label) => h('button', {
+    class: 'bp-tab', 'data-tab': key,
+    onclick: () => { tab = key; fill(); filter.focus(); },
+  }, label);
+  const tabs = h('div', { class: 'bp-tabs' }, tabBtn('local', 'Locals'), tabBtn('remote', 'Remotes'));
+  const here = (s.git?.root || s.directory).replace(/[\\/]+$/, '').toLowerCase();
+  const pick = (b) => {
+    closeMenu();
+    if (!b.remote && b.name === s.git.branch) return;
+    if (changeCount(s)) askAboutChanges(s, localNameOf(b), (stash, btn) => checkoutBranch(s, b, stash, btn));
+    else checkoutBranch(s, b, false);
+  };
+  const row = (b) => {
+    const current = !b.remote && b.name === s.git.branch;
+    const elsewhere = !b.remote && !current && b.worktree && b.worktree.replace(/[\\/]+$/, '').toLowerCase() !== here ? b.worktree : null;
+    const state = [b.ahead && `↑${b.ahead}`, b.behind && `↓${b.behind}`, b.gone && 'gone'].filter(Boolean).join(' ');
+    return h('div', {
+      class: 'menu-item bp-row' + (current ? ' current' : '') + (elsewhere ? ' elsewhere' : ''),
+      title: [b.name, current && 'The current branch', b.upstream && `Tracking ${b.upstream}${b.gone ? ' (gone from the remote)' : ''}`,
+        elsewhere && `Checked out in the worktree ${elsewhere}; Git can't check it out here too`].filter(Boolean).join('\n'),
+      onclick: () => {
+        if (elsewhere) { closeMenu(); toast(`${b.name} is checked out in the worktree ${elsewhere}, so it can't be checked out here too.`, true); return; }
+        pick(b);
+      },
+    }, h('span', { class: 'menu-icon' }, iconEl(b.upstream ? 'branchTracked' : 'branch')),
+    h('span', { class: 'bp-name' }, b.name),
+    elsewhere ? h('span', { class: 'bp-note' }, `in ${leafName(elsewhere)}`) : state && h('span', { class: 'bp-note' }, state));
+  };
+  const fill = () => {
+    for (const t of tabs.children) t.classList.toggle('active', t.dataset.tab === tab);
+    if (!branches) return;
+    const q = filter.value.trim().toLowerCase();
+    const shown = branches.filter((b) => b.remote === (tab === 'remote') && (!q || b.name.toLowerCase().includes(q)));
+    list.replaceChildren(...(shown.length ? shown.map(row)
+      : [h('div', { class: 'git-message' }, q ? 'No branches match.' : tab === 'remote' ? 'No remote branches. Fetch to see them.' : 'No branches.')]));
+    // Typing picks the first match, so Enter switches to it.
+    if (q) list.querySelector('.menu-item')?.classList.add('active');
+  };
+  filter.addEventListener('input', fill);
+  const popup = h('div', { class: 'menu branch-picker' },
+    h('div', { class: 'bp-head' }, filter,
+      h('button', { class: 'btn', onclick: () => { closeMenu(); showNewBranchDialog(s); } }, 'New Branch')),
+    tabs, list);
+  closeMenu();
+  $('#menuHost').append(popup);
+  const r = anchor.getBoundingClientRect();
+  popup.style.left = Math.max(4, Math.min(r.left, innerWidth - popup.offsetWidth - 4)) + 'px';
+  // Below the button, or above it when that's where the room is (the status bar's): pinned by its bottom edge then,
+  // so it grows upward as the branches arrive.
+  if (innerHeight - r.bottom >= 360 || r.top < innerHeight - r.bottom) popup.style.top = r.bottom + 2 + 'px';
+  else { popup.style.bottom = innerHeight - r.top + 2 + 'px'; popup.style.maxHeight = r.top - 8 + 'px'; }
+  openMenuEl = popup;
+  anchor.classList.add('open');
+  // closeMenu just removes the element: take the anchor's open look off once it's gone.
+  new MutationObserver((_, obs) => { if (!popup.isConnected) { anchor.classList.remove('open'); anchor.dataset.closedAt = Date.now(); obs.disconnect(); } }).observe($('#menuHost'), { childList: true });
+  fill();
+  filter.focus();
+  try {
+    branches = await request('git.branches', { id: s.id });
+  } catch (e) {
+    list.replaceChildren(h('div', { class: 'git-message' }, `Couldn't list the branches: ${e.message}`));
+    return;
+  }
+  if (popup.isConnected) fill();
+}
+
 function renderChanges(s, body) {
   const g = s.git;
   if (!g) { body.replaceChildren(h('div', { class: 'git-message' }, 'Loading…')); return; }
@@ -2842,6 +3615,7 @@ function renderChanges(s, body) {
     s.info && h('div', { class: 'infobar' + (s.info.error ? ' error' : '') }, h('span', { class: 'msg' }, s.info.text),
       h('button', { class: 'icon-btn small', title: 'Dismiss', onclick: () => { s.info = null; renderGit(); } }, iconEl('close'))),
     scroll,
+    gitStatusBar(s),
   ].filter(Boolean);
   if (ui.wrap.parentNode === body) {
     // Rebuild everything around the commit box but leave the box itself in place: taking it out of the page, even
@@ -2853,6 +3627,30 @@ function renderChanges(s, body) {
     fill(body, before, ui.wrap, ...after);
   }
   scroll.scrollTop = scrollTop;
+}
+
+/**
+ * The bar along the bottom of Git Changes, after Visual Studio's status bar: outgoing/incoming commits (opening Git
+ * Repository), how many files are changed, and the branch, which opens the branch picker.
+ */
+function gitStatusBar(s) {
+  const g = s.git;
+  const files = new Set([...g.staged, ...g.unstaged].map((f) => f.path)).size;
+  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  const sync = g.upstream
+    ? h(gitTabOn('repo') ? 'button' : 'span', {
+      class: 'sb-item',
+      title: `${plural(g.ahead, 'outgoing commit')} / ${plural(g.behind, 'incoming commit')} (${g.upstream})${gitTabOn('repo') ? '\nShow in Git Repository' : ''}`,
+      onclick: gitTabOn('repo') && (() => openDockTab('repo')),
+    }, iconEl('up'), String(g.ahead), iconEl('down'), String(g.behind))
+    : h('span', { class: 'sb-item dim', title: 'This branch isn\'t on the remote yet: Push publishes it' }, iconEl('up'), 'Not published');
+  return h('div', { class: 'git-statusbar' },
+    sync,
+    h('span', { class: 'sb-item', title: `${plural(files, 'changed file')}` }, iconEl('edit'), String(files)),
+    h('button', {
+      class: 'sb-item sb-branch', title: 'Switch branches or create a new one',
+      onclick: (e) => branchPicker(s, e.currentTarget),
+    }, iconEl('branch'), h('span', { class: 'name' }, g.branch || '(unknown)'), iconEl('chevU')));
 }
 
 /** The session's commit message box and button, created once so its text, caret, selection and focus survive refreshes. */
@@ -3007,7 +3805,7 @@ function fileSection(s, kind, title, files) {
           : { label: 'Stage', action: () => gitOp(s, 'git.stage', folderFiles.map((f) => f.path)) },
         undoableInFolder.length && { label: 'Undo Changes…', danger: true, action: () => confirmUndo(s, kind, undoableInFolder, folder) },
         '-',
-        { label: 'Open in File Explorer', action: () => request('git.openFolder', { id: s.id, path: folder }) },
+        { label: machine || s.server ? 'Browse the folder' : `Open in ${FILE_MANAGER}`, action: () => request('git.openFolder', { id: s.id, path: folder }) },
       ]);
     })];
 }
@@ -3182,6 +3980,13 @@ async function renderRepo(s, body) {
     class: 'commit-row' + (c.outgoing ? ' outgoing' : '') + (s.selectedCommit === c.sha ? ' selected' : ''),
     title: `${c.subject}\n${c.author} · ${new Date(c.date).toLocaleString()}\n${c.sha}`,
     onclick: () => selectCommit(s, c.sha),
+    oncontextmenu: (e) => {
+      e.preventDefault();
+      showMenu(e.clientX, e.clientY, [
+        { label: 'New Branch…', icon: 'newBranch', action: () => showNewBranchDialog(s, { commit: { sha: c.sha, subject: c.subject } }) },
+        { label: 'Copy Commit ID', action: () => navigator.clipboard.writeText(c.sha) },
+      ]);
+    },
   }, h('span', { class: 'graph' }), refBadges(c.refs), h('span', { class: 'commit-subject' }, c.subject),
   h('span', { class: 'commit-meta' }, `${c.author} · ${relTime(c.date)}`));
 
@@ -3630,7 +4435,7 @@ function refreshPanel(p) {
   if (owner?.startsOnOpen) { startSession(owner); toast(`Starting "${owner.name}". Refresh again once Claude is up.`); return; }
   if (!owner?.running) { toast(`"${owner?.name ?? 'Its session'}" isn't running, so it can't refresh this panel.`, true); return; }
   post({ type: 'input', id: owner.id, data: p.refresh });
-  setTimeout(() => post({ type: 'input', id: owner.id, data: '\r' }), 150);
+  setTimeout(() => pressEnter(owner), 150);
   toast(`Asked ${owner.name} to refresh "${p.title}".`);
 }
 
@@ -3751,7 +4556,7 @@ function loadMonaco() {
         renderOverviewRuler: true,
         enableSplitViewResizing: true,
         useInlineViewWhenSpaceIsLimited: false,
-        fontFamily: '"Cascadia Mono", Consolas, monospace',
+        fontFamily: '"Cascadia Mono", Consolas, Menlo, "DejaVu Sans Mono", monospace',
         fontSize: 13,
         scrollBeyondLastLine: false,
         minimap: { enabled: false },
@@ -4021,8 +4826,8 @@ function renderDocTabs() {
     el.classList.toggle('beside', !!side && !el.classList.contains('active') && (el.classList.contains('terminal') || el.dataset.id === side.key));
   }
   revealActive($('#docTabs'), '.doc-tab.active');
-  // The project label in the session tab row looks selected while its Project view is showing.
-  for (const label of document.querySelectorAll('.session-group-label')) label.classList.toggle('active', projectViewShowing(label.dataset.project));
+  // The project label in the session tab row (or its button down the left) looks selected while its Project view is showing.
+  for (const label of document.querySelectorAll('.session-group-label, .nav-view')) label.classList.toggle('active', projectViewShowing(label.dataset.project));
 }
 
 async function loadDiff(tab, keepView = false) {
@@ -4545,8 +5350,8 @@ async function loadProjectView(force = false) {
   try {
     await Promise.all([
       ...[...firstIn].map(async ([root, s]) => {
-        try { projectView.repos.set(root, { ...await request('worktree.overview', { id: s.id }), error: null }); }
-        catch (e) { projectView.repos.set(root, { root: s.git.root, baseBranch: null, worktrees: [], error: e.message }); }
+        try { projectView.repos.set(root, { ...await request('worktree.overview', { id: s.id }), server: s.server ?? null, error: null }); }
+        catch (e) { projectView.repos.set(root, { root: s.git.root, server: s.server ?? null, baseBranch: null, worktrees: [], error: e.message }); }
       }),
       ...members.filter((s) => s.running).map((s) => loadConversation(s, false)),
       ...members.filter((s) => !s.running && !s.convInfo).map((s) => loadConversationInfo(s)),
@@ -4810,7 +5615,7 @@ function startSessionIn(row) {
   const members = projectMembers(tab.projectId);
   const like = members.find((s) => agentOf(s.command)) ?? members[0];
   const name = freeName(leafName(row.branch && !row.branch.startsWith('(') ? row.branch : row.path));
-  addAndOpen({ directory: row.path, name, command: like ? ownOptionsOnly(like.command) : 'claude', project: tab.projectId === UNKNOWN ? '' : tab.projectId })
+  addAndOpen({ directory: row.path, name, command: like ? ownOptionsOnly(like.command) : 'claude', project: tab.projectId === UNKNOWN ? '' : tab.projectId, server: row.repo?.server ?? undefined })
     .catch((e) => toast(e.message, true));
 }
 
@@ -4830,7 +5635,7 @@ function confirmRemoveWorktree(row) {
     remove.textContent = 'Removing…';
     try {
       for (const s of row.sessions) await request('removeSession', { id: s.id });
-      await request('worktree.remove', { root: repo.root, path: row.path });
+      await request('worktree.remove', { root: repo.root, path: row.path, ...onServer(repo.server) });
       closeModal();
       toast(`Removed the worktree at ${row.path}. The branch ${row.branch ?? ''} stays.`);
     } catch (e) {
@@ -5061,7 +5866,7 @@ function showUpdateDialog() {
     if (updates.installing) return;
     updates.installing = true;
     install.disabled = true;
-    install.textContent = 'Downloading…';
+    install.textContent = u.asksPassword ? 'Installing…' : 'Downloading…';
     status.classList.remove('error');
     status.textContent = '';
     try {
@@ -5080,8 +5885,8 @@ function showUpdateDialog() {
     h('div', { class: 'update-from dim' }, `You have ${updates.current}.`),
     h('div', { class: 'update-notes md' }, renderMarkdown(updateNotes(u.notes) || 'No release notes.')),
     h('div', { class: 'update-what' }, u.canInstall
-      ? `LlamaTree will close, install the update and reopen.${running ? ` ${running} running session${running === 1 ? '' : 's'} will restart and carry on in ${running === 1 ? 'its' : 'their'} conversation${running === 1 ? '' : 's'}.` : ''}`
-      : 'This release can’t be installed automatically (it has no checksum). Download it from the release page.'),
+      ? `${u.asksPassword ? 'LlamaTree will install the update (your system asks for an administrator’s password), then close and reopen.' : 'LlamaTree will close, install the update and reopen.'}${running ? ` ${running} running session${running === 1 ? '' : 's'} will restart and carry on in ${running === 1 ? 'its' : 'their'} conversation${running === 1 ? '' : 's'}.` : ''}`
+      : 'This copy of LlamaTree can’t install this release itself. Download it from the release page.'),
     status,
   ], [
     h('button', { class: 'btn', onclick: () => request('openUrl', { uri: u.pageUrl }) }, 'Release page'),
@@ -5100,6 +5905,7 @@ function applyTheme(before = null) {
   const look = themeLook();
   store.set('themeLook', look);   // so it paints at once on the next start
   markTheme(look);
+  syncVeilSliders();   // the new theme's amount (its own, or yours for it)
   for (const s of state.sessions) lightCycle(s, look?.cursor === 'light-cycle');   // sets the terminal's colours either way
   if (window.monaco) monaco.editor.setTheme(diffTheme(look));
   applyAccent();
@@ -5146,7 +5952,7 @@ const notices = { list: [], shown: null, waiting: false, dismissed: new Set(stor
 // answered either way, and offers the switch in the version menu.
 
 const count = { enabled: undefined };   // undefined: not read yet; null: not asked yet; true or false: your answer
-const COUNT_SENT = "Everything it sends is anonymous: nothing in it says who you are, and nothing can be traced back to you. Once an hour while it's open, the app makes one request to count.llamachant.com that says six things: a random id made when you said yes (so a copy counts once, however often it asks), the app's version, the operating system and its version, and how many projects and sessions are open. Only how many: never their names, their folders or anything in them, and nothing about you. We don't keep your IP address, your user agent or anything else about the request. Saying no, or turning it off later, throws the id away.";
+const COUNT_SENT = "Everything it sends is anonymous: nothing in it says who you are, and nothing can be traced back to you. Once an hour while it's open, the app makes one request to api.llamatree.dev that says six things: a random id made when you said yes (so a copy counts once, however often it asks), the app's version, the operating system and its version, and how many projects and sessions are open. Only how many: never their names, their folders or anything in them, and nothing about you. We don't keep your IP address, your user agent or anything else about the request. Saying no, or turning it off later, throws the id away.";
 
 async function loadCount() {
   try { count.enabled = (await request('count.state')).enabled; } catch { count.enabled = false; }
@@ -5299,19 +6105,332 @@ function showNoticesDialog() {
 }
 
 /** The version number's menu: updates, release notes and the tips along the top. */
+// ------------------------------------------------------------------ closing the window
+
+/** What closing the window does with running sessions: 'ask', 'keep' (they run on without it) or 'stop'. */
+const closeChoice = () => store.get('closeChoice', 'ask');
+
+let closeAsking = false;
+
+/**
+ * The window's close button (HostLink.AskToClose): sessions run in the session host, so closing the window can leave
+ * them running. With any running, this asks whether to keep them running or stop them, unless you've chosen once
+ * and for all. The answer goes to the host, which closes the window.
+ */
+async function onCloseRequested() {
+  post({ type: 'window.closing' });   // the window waits a moment for this, then closes regardless
+  if (closeAsking) return;
+  let info;
+  try { info = await request('app.closeInfo'); } catch { info = { running: 0 }; }
+  const choice = closeChoice();
+  if (!info.running || choice !== 'ask') {
+    request('app.close', { stop: !!info.running && choice === 'stop' });
+    return;
+  }
+  closeAsking = true;
+  const remember = h('input', { type: 'checkbox' });
+  const answer = (stop) => {
+    if (remember.checked) store.set('closeChoice', stop ? 'stop' : 'keep');
+    closeModal();
+    request('app.close', { stop });
+  };
+  openModal('Close LlamaTree', [
+    ...info.message.split('\n\n').map((p) => h('p', {}, p)),
+    h('label', { class: 'check-field' }, remember, 'Don’t ask again (change it in the version menu, top right)'),
+  ], [
+    h('button', { class: 'btn', onclick: closeModal }, 'Cancel'),
+    h('div', { class: 'spacer' }),
+    h('button', { class: 'btn danger', onclick: () => answer(true) }, 'Stop sessions'),
+    h('button', { class: 'btn primary', 'data-autofocus': '', onclick: () => answer(false) }, 'Keep running'),
+  ]);
+  onModalClose = () => { closeAsking = false; };
+}
+
+/** The window couldn't reach a session host, nor start one. */
+// ------------------------------------------------------------------ servers
+
+/**
+ * Whose sessions this window shows: null for this computer's; for a server's (a window opened with Connect to a
+ * server…), { remote: the SSH target, machine, version: the server's LlamaTree, windowVersion: this one's }.
+ */
+let machine = null;
+
+/**
+ * Servers whose sessions show among this computer's (s.server is how each is reached: user@server, or a Host from the
+ * SSH config). This computer's LlamaTree keeps a connection to each (AppHost.Servers): target → { target, state:
+ * 'connecting' | 'online' | 'offline' | 'elsewhere', problem, machine, version }.
+ */
+const servers = new Map();
+
+function setServers(list) {
+  if (!list) return;
+  const before = JSON.stringify([...servers.values()]);
+  servers.clear();
+  for (const c of list) servers.set(c.target, c);
+  if (JSON.stringify([...servers.values()]) === before || !state.restored) return;
+  for (const s of state.sessions) if (s.server) renderTileHeader(s);
+  renderSessionTabs();
+}
+
+/** The connection to the session's server, or null for a session on this computer. */
+const serverOf = (s) => (s?.server ? servers.get(s.server) ?? { target: s.server, state: 'connecting' } : null);
+
+/** Whether the session is on a server that can't be reached now. */
+const serverDown = (s) => !!s?.server && serverOf(s).state !== 'online';
+
+/** For a request about a folder rather than a session: which server it's on ({} for this computer). */
+const onServer = (server) => (server ? { server } : {});
+
+function serverStateText(c) {
+  return {
+    online: `On ${c.target}`,
+    connecting: `Connecting to ${c.target}…`,
+    offline: `Can’t reach ${c.target}`,
+    elsewhere: `Showing in another window`,
+  }[c.state] ?? c.target;
+}
+
+function serverTitle(c) {
+  if (!c) return '';
+  if (c.state === 'online') return `Runs on ${c.machine || c.target}, reached over SSH as ${c.target}. It keeps running there when LlamaTree closes or the connection drops.` +
+    (c.outdated ? `\n${serverVersionText(c)} Click to update it.` : '');
+  if (c.state === 'connecting') return `Connecting to ${c.target}…`;
+  if (c.notInstalled) return `LlamaTree isn’t installed on ${c.target}.\nThe session is there, but nothing runs it until LlamaTree is. Click to install it.`;
+  if (c.state === 'elsewhere') return `${c.problem ?? ''}\nClick to show ${c.target}’s sessions here instead.`;
+  return `Can’t reach ${c.target}${c.problem ? ':\n' + c.problem : '.'}\nThe session keeps running there; LlamaTree keeps trying. Click to try now.`;
+}
+
+/** The server a session runs on, by its tile's name: click it to reconnect when the server can't be reached. */
+function serverTag(s) {
+  const c = serverOf(s);
+  if (!c) return null;
+  const down = c.state !== 'online';
+  const stale = !down && c.outdated;
+  return h('span', {
+    class: 'server-tag' + (down ? ' down' : stale ? ' stale' : ''), title: serverTitle(c),
+    onclick: c.notInstalled ? ((e) => { e.stopPropagation(); installServer(c.target); })
+      : down && c.state !== 'connecting' ? ((e) => { e.stopPropagation(); request('servers.reconnect', { server: c.target }).catch((err) => toast(err.message, true)); })
+      : stale && ((e) => { e.stopPropagation(); updateServer(c); }),
+  }, iconEl('server'), serverName(c), stale && iconEl('up'));
+}
+
+/**
+ * Installs LlamaTree on a server that doesn't have it (servers.install), once you've said yes: its install script from
+ * the latest release, run over ssh, installs the package with sudo where that needs no password, and otherwise a copy
+ * of your own in your home folder there. Then the connection is made again.
+ */
+function installServer(target) {
+  confirmDialog(`Install LlamaTree on ${target}?`, [
+    `LlamaTree isn't installed on ${target}, and its sessions need it there.`,
+    `${target} downloads LlamaTree's install script from its latest GitHub release and runs it. The script checks what it downloads against the checksums GitHub publishes, installs the package with sudo where sudo needs no password, and otherwise installs a copy just for your account, in ~/.local/share/LlamaTree (it updates itself).`,
+  ].join('\n\n'), 'Install', false, async () => {
+    toast(`Installing LlamaTree on ${target}…`);
+    try {
+      toast(await request('servers.install', { server: target }));
+    } catch (err) {
+      openModal(`LlamaTree wasn't installed on ${target}`, [h('pre', { class: 'host-error' }, err.message)],
+        [h('div', { class: 'spacer' }), h('button', { class: 'btn primary', onclick: closeModal }, 'OK')]);
+    }
+  });
+}
+
+/** What a server's version is next to this computer's, when they differ. */
+function serverVersionText(c) {
+  return `${serverName(c)} runs LlamaTree ${c.version}; this computer runs ${c.current}.`;
+}
+
+/**
+ * Updates a server's LlamaTree to this computer's version (servers.update), once you've said yes: the server downloads
+ * the release's package from GitHub, checks it and installs it with sudo where that needs no password (otherwise you're
+ * told what to run there), then LlamaTree restarts there, which stops its sessions.
+ */
+function updateServer(c) {
+  const name = serverName(c);
+  const running = state.sessions.filter((s) => s.server === c.target && s.running);
+  confirmDialog(`Update LlamaTree on ${name}?`, [
+    serverVersionText(c),
+    `${name} downloads LlamaTree ${c.current} from GitHub, checks it against the checksum GitHub publishes, and installs it with sudo. That works where sudo needs no password; otherwise you're told what to run there.`,
+    running.length
+      ? `LlamaTree then restarts on ${name}, which stops ${running.length === 1 ? 'its running session' : `its ${running.length} running sessions`} (${running.map((s) => s.name).join(', ')}). ${running.length === 1 ? 'It picks' : 'Each picks'} up its conversation where it left off when you open it again.`
+      : `LlamaTree then restarts on ${name}.`,
+  ].join('\n\n'), 'Update', running.length > 0, async () => {
+    toast(`Updating LlamaTree on ${name}…`);
+    try {
+      toast(await request('servers.update', { server: c.target }));
+    } catch (err) {
+      openModal(`LlamaTree wasn't updated on ${name}`, [h('pre', { class: 'host-error' }, err.message)],
+        [h('div', { class: 'spacer' }), h('button', { class: 'btn primary', onclick: closeModal }, 'OK')]);
+    }
+  });
+}
+
+/** A server, briefly: its own name once connected (vm-build), else how it's reached without the user (4.204.25.78). */
+function serverName(c) {
+  return c.machine || c.target.replace(/^ssh:\/\//, '').replace(/:\d+$/, '').replace(/^.*@/, '');
+}
+
+function onMachine(m) {
+  if (!m.remote) return;
+  machine = m;
+  document.body.classList.add('remote');
+  $('#remoteBadge')?.remove();
+  $('#appVersion').before(h('span', { id: 'remoteBadge', class: 'remote-badge', title: `These sessions run on ${m.machine || m.remote}, reached over SSH as ${m.remote}. They keep running there when this window closes or the connection drops.` },
+    iconEl('terminal'), m.remote));
+  if (m.version && m.windowVersion && m.version !== m.windowVersion)
+    toast(`${m.remote} has LlamaTree ${m.version}, and this computer ${m.windowVersion}. If something doesn’t work, update the older one.`, true);
+}
+
+/** The connection to the server dropped: its sessions run on there, and the window is trying to reach them again. */
+function onReconnecting(m) {
+  openModal(`Reconnecting to ${m.remote}…`, [
+    h('p', {}, 'The connection to the server dropped. Your sessions keep running there, and LlamaTree is trying to reach them again.'),
+    h('p', {}, 'They’ll show here as soon as it does.'),
+  ], [h('div', { class: 'spacer' }), h('button', { class: 'btn primary', onclick: closeModal }, 'OK')]);
+}
+
+/**
+ * A server's folders and files, for a window showing a server's sessions (this computer's file manager and folder
+ * picker can't reach them). Double-clicking a folder (or Enter) goes into it; a file opens on this computer, from a
+ * copy the server sends (fs.open). With onPick it chooses a folder: its button picks the folder selected, else the one
+ * shown. `select` names an entry to select once the folder is shown. Returns the element.
+ */
+function serverBrowser({ path = '', select = null, onPick = null, server = null } = {}) {
+  let shown = null;   // the folder's listing (fs.list): { path, parent, home, separator, entries, more }
+  let showHidden = store.get('browser.hidden', false);
+  const where = h('input', { class: 'fb-path', spellcheck: 'false', title: 'A folder on the server: type a path and press Enter' });
+  const list = h('div', { class: 'fb-list', tabindex: '0' });
+  const status = h('span', { class: 'fb-status' });
+  const pick = onPick && h('button', { class: 'btn primary', onclick: () => onPick(selectedEntry()?.folder ? full(selectedEntry().name) : shown?.path) }, 'Use this folder');
+  const full = (name) => shown.path.replace(/[\\/]+$/, '') + shown.separator + name;
+  const rows = () => [...list.querySelectorAll('.fb-item')];
+  const selectedEntry = () => { const r = list.querySelector('.fb-item.selected'); return r ? r._entry : null; };
+  const choose = (row) => {
+    for (const r of rows()) r.classList.toggle('selected', r === row);
+    row?.scrollIntoView({ block: 'nearest' });
+    if (pick) pick.textContent = row?._entry.folder ? `Use ${row._entry.name}` : 'Use this folder';
+  };
+  const go = async (p, sel = null) => {
+    try {
+      shown = await request('fs.list', { path: p, ...onServer(server) });
+    } catch (err) {
+      status.textContent = err.message;
+      status.classList.add('form-error');
+      if (!shown) where.value = p;
+      return;
+    }
+    status.classList.remove('form-error');
+    where.value = shown.path;
+    draw(sel);
+  };
+  const open = (e) => {
+    if (e.folder) { go(full(e.name)); return; }
+    toast(`Opening ${e.name}…`);
+    request('fs.open', { path: full(e.name), ...onServer(server) }).catch((err) => toast(err.message, true));
+  };
+  const up = () => { if (shown?.parent) go(shown.parent, shown.path.replace(/[\\/]+$/, '').split(/[\\/]/).pop()); };
+  const draw = (sel) => {
+    const entries = shown.entries.filter((e) => showHidden || !e.hidden);
+    list.replaceChildren(...entries.map((e) => {
+      const row = h('div', { class: 'fb-item' + (e.hidden ? ' hidden-entry' : ''), title: e.name, onclick: () => choose(row), ondblclick: () => open(e) },
+        iconEl(e.folder ? 'folder' : 'file'), h('span', { class: 'name' }, e.name), !e.folder && h('span', { class: 'size' }, sizeText(e.size)));
+      row._entry = e;
+      return row;
+    }));
+    if (!entries.length) list.append(h('div', { class: 'fb-empty' }, 'This folder is empty.'));
+    const folders = entries.filter((e) => e.folder).length;
+    const hiddenCount = shown.entries.length - entries.length;
+    const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+    status.textContent = `${plural(folders, 'folder')}, ${plural(entries.length - folders, 'file')}` +
+      (hiddenCount ? ` (${hiddenCount} hidden)` : '') + (shown.more ? ', and more not listed' : '');
+    choose(rows().find((r) => r._entry.name === sel) ?? null);
+    if (!sel) list.scrollTop = 0;
+  };
+  where.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); go(where.value); } });
+  list.addEventListener('keydown', (e) => {
+    const all = rows();
+    const at = all.findIndex((r) => r.classList.contains('selected'));
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      choose(all[Math.max(0, Math.min(all.length - 1, at + (e.key === 'ArrowDown' ? 1 : -1)))]);
+    } else if (e.key === 'Enter' && at >= 0) {
+      e.preventDefault(); e.stopPropagation();
+      open(all[at]._entry);
+    } else if (e.key === 'Backspace') {
+      e.preventDefault();
+      up();
+    }
+  });
+  const hiddenBox = h('input', { type: 'checkbox', checked: showHidden, onchange: () => { showHidden = hiddenBox.checked; store.set('browser.hidden', showHidden); if (shown) draw(selectedEntry()?.name); } });
+  go(path, select);
+  return h('div', { class: 'file-browser' },
+    h('div', { class: 'fb-bar' },
+      h('button', { class: 'icon-btn', title: 'Up a folder (Backspace)', onclick: up }, iconEl('up')),
+      h('button', { class: 'icon-btn', title: 'Home folder', onclick: () => go('~') }, iconEl('folder')),
+      where),
+    list,
+    h('div', { class: 'fb-foot' }, status, h('label', { class: 'fb-hidden' }, hiddenBox, 'Show hidden'), pick));
+}
+
+/** A size in bytes, as KB, MB or GB. */
+function sizeText(n) {
+  if (n == null) return '';
+  if (n < 1024) return `${n} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let v = n / 1024, i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${units[i]}`;
+}
+
+/** A server's folder, in a dialog of its own: what "open the folder" does for a window showing a server's sessions. */
+function browseServerFolder(path, select, server = null) {
+  const browser = serverBrowser({ path, select, server });
+  const c = server && servers.get(server);
+  openModal(`Files on ${c ? c.machine || c.target : server || machine?.machine || machine?.remote || 'the server'}`, [browser], [
+    h('button', { class: 'btn', onclick: () => navigator.clipboard.writeText(browser.querySelector('.fb-path').value) }, 'Copy path'),
+    h('div', { class: 'spacer' }),
+    h('button', { class: 'btn primary', onclick: closeModal }, 'Close'),
+  ]);
+  $('#modalHost .modal').classList.add('wide');
+  setTimeout(() => browser.querySelector('.fb-list').focus(), 30);
+}
+
+function onHostFailed(m = {}) {
+  if (m.remote) {
+    openModal(`Couldn’t reach ${m.remote}`, [
+      h('p', {}, 'LlamaTree couldn’t connect to the server’s sessions.'),
+      m.message && h('pre', { class: 'host-error' }, m.message),
+      h('p', { class: 'help' }, 'It signs in with ssh using your keys or ssh-agent, without asking for a password, and needs LlamaTree installed on the server (the llamatree command). Check that ssh ' + m.remote + ' works from a terminal.'),
+    ], [h('div', { class: 'spacer' }), h('button', { class: 'btn', onclick: closeModal }, 'Close'),
+      h('button', { class: 'btn primary', onclick: () => { closeModal(); request('app.reconnect').catch(() => {}); } }, 'Try again')]);
+    return;
+  }
+  openModal('LlamaTree couldn’t start', [
+    h('p', {}, 'The part of LlamaTree that runs your sessions didn’t start, so no sessions can be shown.'),
+    h('p', {}, 'Close LlamaTree and open it again. If it keeps happening, restart your computer.'),
+  ], [h('div', { class: 'spacer' }), h('button', { class: 'btn primary', onclick: closeModal }, 'OK')]);
+}
+
 function versionMenu(x, y) {
   showMenu(x, y, [
-    { icon: 'refresh', label: 'Check for updates', action: () => checkForUpdates(true) },
-    { icon: 'down', label: 'Check for updates automatically', checked: updates.auto, action: () => {
-      updates.auto = !updates.auto;
-      store.set('autoUpdateCheck', updates.auto);
-      if (updates.auto) checkForUpdates();
-    } },
+    // A server's LlamaTree is updated on the server, as its other packages are.
+    ...(machine ? [] : [
+      { icon: 'refresh', label: 'Check for updates', action: () => checkForUpdates(true) },
+      { icon: 'down', label: 'Check for updates automatically', checked: updates.auto, action: () => {
+        updates.auto = !updates.auto;
+        store.set('autoUpdateCheck', updates.auto);
+        if (updates.auto) checkForUpdates();
+      } },
+    ]),
     { icon: 'bulb', label: 'Show tips and offers', checked: notices.tips, action: () => setShowTips(!notices.tips) },
     { icon: 'gift', label: 'Tips and offers…', action: showNoticesDialog },
     '-',
     { icon: 'info', label: 'Count me among the users', checked: count.enabled === true, action: () => setCount(count.enabled !== true) },
     { label: [h('span', { class: 'menu-indent' }), 'What the count sends…'], action: showCountDialog },
+    '-',
+    { header: 'Closing the window with sessions running' },
+    ...[['ask', 'Ask each time'], ['keep', 'Keep them running'], ['stop', 'Stop them']].map(([value, label]) =>
+      ({ label, checked: closeChoice() === value, action: () => store.set('closeChoice', value) })),
+    { label: machine ? `Quit and stop all sessions on ${machine.remote}` : 'Quit and stop all sessions', action: () => request('app.close', { stop: true }) },
     '-',
     { icon: 'info', label: `LlamaTree ${updates.current ?? ''}`.trim() + ' · release notes',
       action: () => request('openUrl', { uri: 'https://github.com/LlamachantTechnology/LlamaTree/releases' }) },
@@ -5367,6 +6486,8 @@ function themeMenu(x, y) {
     { icon: h('span', { class: 'menu-dot', 'data-dots': dotStyle.id }, h('span', { class: 'dot attention' })),   // the style in use, waiting for you
       label: DOT_STYLES.find((d) => d.id === dotStyle.id).name, kbd: 'Change…', action: showDotStyleDialog },
     '-',
+    ...navLayoutItems(),
+    '-',
     { header: 'Plugins' },
     ...plugins.list.flatMap((p) => [
       { icon: pluginIcon(p.id), label: p.title, kbd: pluginPlacement(p) === 'panel' ? 'Side panel' : '', action: () => openPlugin(p.id) },
@@ -5374,7 +6495,9 @@ function themeMenu(x, y) {
       p.toolbar && hiddenPluginButtons.has(p.id) && { label: [h('span', { class: 'menu-indent' }), 'Show its title bar button'], action: () => setPluginButton(p.id, true) },
     ]),
     plugins.list.length > 0 && '~',   // the plugins, then what's done about them (as under Theme)
-    { icon: 'shield', label: 'Permissions', kbd: 'Plugins and sessions', action: () => openPermissions() },
+    relayWaiting() > 0
+      ? { icon: 'shield', label: 'Permissions', kbd: `${relayWaiting()} waiting for your answer`, action: () => openPermissions('session') }
+      : { icon: 'shield', label: 'Permissions', kbd: 'Plugins and sessions', action: () => openPermissions() },
     plugins.problems.length > 0 && { icon: 'warn', label: `${plugins.problems.length} couldn't be loaded`, kbd: 'Why?', action: () => toast(plugins.problems.join('\n'), true) },
     { icon: 'folder', label: plugins.list.length ? 'Open the plugins folder' : 'Add a plugin: open the plugins folder', action: () => request('plugins.openFolder') },
   ]);
@@ -5430,6 +6553,7 @@ function themeSnapshot(title) {
     ...(look?.grid ? { grid: true } : {}),
     ...(look?.rain ? { rain: true } : {}),
     ...(look?.cursor ? { cursor: look.cursor } : {}),
+    ...(veilOwn(look) !== null ? { terminalBackground: Math.round(veilAmount()) } : {}),   // as you have it now
     accent: { line: value('accent'), strong: value('accent-strong') },
     colors: Object.fromEntries(themes.names.colors.map((n) => [n, value(n)]).filter(([, v]) => v)),
     terminal: Object.fromEntries(themes.names.terminal.filter((n) => terminal[n]).map((n) => [n, terminal[n]])),
@@ -5576,28 +6700,32 @@ function makeScrollable(row, extraClass = '') {
  * `onDrop(draggedId, targetId, before)` is told where to put it. Listeners sit on the row itself, so its contents can
  * be re-rendered freely. With `outside`, a tab can also be dragged out below the row: `outside.over(id, x, y)` shows
  * where it would land and returns that place (or null), `outside.over(null)` hides it, and `outside.drop(id, place)`
- * puts it there. `fixed(id)` items stay where they are: only dragged out, and never a place to drop beside.
+ * puts it there. `fixed(id)` items stay where they are: only dragged out, and never a place to drop beside. `axis: 'y'`
+ * is for a list down the page (the bar down the left) rather than a row across it.
  *
  * Built on pointer events rather than HTML5 drag and drop: in WebView2 an HTML5 drag runs through the operating
  * system's drag loop, which AllowExternalDrop = false (set so dropped files can't navigate the page) also blocks.
  */
-function enableTabDrag(row, { item, canDrag = () => true, onDrop, outside = null, fixed = () => false }) {
+function enableTabDrag(row, { item, canDrag = () => true, onDrop, outside = null, fixed = () => false, axis = 'x' }) {
   const THRESHOLD = 8;   // pixels the pointer must move before a press becomes a drag (a hurried click can move ~5)
-  let press = null;      // { id, el, x, pointerId } from pointerdown until pointerup
+  let press = null;      // { id, el, x, y, pointerId } from pointerdown until pointerup
   let dragging = false;
   let place = null;      // where outside.over says a drop below the row lands
+  const down = axis === 'y';
+  const along = (e) => (down ? e.clientY : e.clientX);                         // the pointer's place along the row
+  const span = (r) => (down ? [r.top, r.bottom] : [r.left, r.right]);         // a box's extent along it
 
   const clear = () => row.querySelectorAll('.drop-before, .drop-after').forEach((el) => el.classList.remove('drop-before', 'drop-after'));
 
   /** The item nearest the pointer (other than the dragged one), and which side of it the drop lands on. */
-  const targetAt = (x) => {
+  const targetAt = (at) => {
     if (fixed(press.id)) return null;
     let best = null;
     for (const el of row.querySelectorAll(item)) {
       if (el.dataset.id === press.id || fixed(el.dataset.id)) continue;
-      const r = el.getBoundingClientRect();
-      const d = x < r.left ? r.left - x : x > r.right ? x - r.right : 0;
-      if (!best || d < best.d) best = { el, before: x < r.left + r.width / 2, d };
+      const [lo, hi] = span(el.getBoundingClientRect());
+      const d = at < lo ? lo - at : at > hi ? at - hi : 0;
+      if (!best || d < best.d) best = { el, before: at < (lo + hi) / 2, d };
     }
     return best;
   };
@@ -5629,7 +6757,7 @@ function enableTabDrag(row, { item, canDrag = () => true, onDrop, outside = null
     if (!dragging) {
       // Along the row only, unless a tab can be dragged out of it: then down counts too (the row loses the pointer once it's
       // out, so a drag must start before then).
-      const moved = outside ? Math.hypot(e.clientX - press.x, e.clientY - press.y) : Math.abs(e.clientX - press.x);
+      const moved = outside ? Math.hypot(e.clientX - press.x, e.clientY - press.y) : Math.abs(along(e) - (down ? press.y : press.x));
       if (moved < THRESHOLD) return;
       dragging = true;
       row.setPointerCapture(e.pointerId);   // keep receiving moves even when the pointer leaves the row
@@ -5641,9 +6769,11 @@ function enableTabDrag(row, { item, canDrag = () => true, onDrop, outside = null
       place = e.clientY > r.bottom + 6 ? outside.over(press.id, e.clientX, e.clientY) : (place != null && outside.over(null), null);
       if (place != null) { clear(); return; }
     }
-    if (e.clientX < r.left + 30) row.scrollLeft -= 12;
-    else if (e.clientX > r.right - 30) row.scrollLeft += 12;
-    const t = targetAt(e.clientX);
+    const [lo, hi] = span(r);
+    const scroll = down ? 'scrollTop' : 'scrollLeft';
+    if (along(e) < lo + 30) row[scroll] -= 12;
+    else if (along(e) > hi - 30) row[scroll] += 12;
+    const t = targetAt(along(e));
     clear();
     if (t) t.el.classList.add(t.before ? 'drop-before' : 'drop-after');
   });
@@ -5661,7 +6791,7 @@ function enableTabDrag(row, { item, canDrag = () => true, onDrop, outside = null
       if (under && row.contains(under)) under.click();
       return;
     }
-    const t = targetAt(e.clientX);
+    const t = targetAt(along(e));
     const id = press.id;
     const out = place;
     finish();
@@ -6044,7 +7174,6 @@ function applyGrants(grants) {
     if (g.hidden?.length) pluginHidden[id] = g.hidden;
     if (g.changed) pluginChanged.add(id);
   }
-  renderPermsButton();
   checkPluginSight();
   permissionsChanged();
 }
@@ -6303,17 +7432,8 @@ function relayTileMark(s) {
   return h('button', { class: 'icon-btn relay-tile', title: 'It may message other sessions by rules of its own: show them', onclick: () => openPermissions('session', s.id) }, iconEl('link'));
 }
 
-/** The title bar's Permissions button: shown once anything is allowed, or a message waits for your answer (counted on it). */
-function renderPermsButton() {
-  const b = $('#btnPerms');
-  if (!b) return;
-  const waiting = relay.waiting.reduce((n, w) => n + w.count, 0);
-  const any = waiting > 0 || relay.rules.some((r) => r.decision === 'allow') || Object.keys(pluginAccess).length > 0;
-  b.hidden = !any;
-  b.title = waiting ? `Permissions: ${waiting} message${waiting === 1 ? '' : 's'} waiting for your answer` : 'Permissions: what plugins and sessions may do';
-  fill(b, iconEl('shield'), waiting ? h('span', { class: 'plugin-btn-count' }, String(Math.min(waiting, 99))) : null);
-}
-$('#btnPerms')?.addEventListener('click', () => openPermissions(relay.waiting.length ? 'session' : null));
+/** Messages between sessions waiting for your answer (counted on Permissions in the palette menu). */
+const relayWaiting = () => relay.waiting.reduce((n, w) => n + w.count, 0);
 
 function setPermsBy(by) {
   permsView.by = by;
@@ -6345,9 +7465,9 @@ function permsChoice(id, kind, name) {
 }
 
 function renderPermissions() {
-  fill($('#permsBy'), [['plugin', 'By plugin'], ['session', 'By session'], ['messages', 'Messages']].map(([by, label]) =>
+  fill($('#permsBy'), [['plugin', 'By plugin'], ['session', 'By session'], ['messages', 'Messages'], ['agents', 'Agents']].map(([by, label]) =>
     h('button', { class: 'seg-btn' + (permsView.by === by ? ' active' : ''), role: 'tab', 'aria-selected': String(permsView.by === by), onclick: () => setPermsBy(by) }, label)));
-  fill($('#permsBody'), permsView.by === 'session' ? permsBySession() : permsView.by === 'messages' ? permsMessages() : permsByPlugin());
+  fill($('#permsBody'), permsView.by === 'session' ? permsBySession() : permsView.by === 'messages' ? permsMessages() : permsView.by === 'agents' ? permsAgents() : permsByPlugin());
 }
 
 // ---- the Messages tab: what sessions sent each other, and what became of each message
@@ -6401,6 +7521,42 @@ function permsMessages() {
             : h('span', { class: 'chip' }, st.word)),
         h('pre', { class: 'log-full' }, e.text));
     })),
+  ];
+}
+
+// ---- the Agents tab: what sessions did to the sessions they started (SessionControl's log)
+
+const CONTROL_ACTION = { start: 'started', prompt: 'sent a prompt to', approve: 'approved a prompt of', decline: 'declined a prompt of', interrupt: 'interrupted', stop: 'stopped' };
+
+async function loadControlLog() {
+  if (permsView.ctlLoading || permsView.ctlVersion === control.logVersion) return;
+  permsView.ctlLoading = true;
+  try {
+    const version = control.logVersion;
+    permsView.ctlLog = await request('control.log');
+    permsView.ctlVersion = version;
+  } catch (e) { toast(e.message, true); }
+  finally { permsView.ctlLoading = false; }
+  permissionsChanged();
+}
+
+function permsAgents() {
+  if (permsView.ctlVersion !== control.logVersion) loadControlLog();
+  const entries = permsView.ctlLog ?? [];
+  return [
+    h('div', { class: 'log-bar' },
+      h('span', { class: 'dim' }, `${entries.length} action${entries.length === 1 ? '' : 's'}, the latest 300 are kept (until LlamaTree closes)`),
+      h('span', { class: 'spacer' }),
+      h('button', { class: 'btn', onclick: () => request('control.clearLog').catch((e) => toast(e.message, true)) }, 'Clear')),
+    !entries.length ? h('p', { class: 'perms-empty' }, permsView.ctlLog ? 'No session has started or driven another yet.' : 'Loading…')
+    : h('section', { class: 'perms-card log-list' }, entries.map((e) => h('details', { class: 'log-row' },
+      h('summary', {},
+        decisionMark(e.ok ? 'allow' : 'deny', e.ok ? 'Done' : 'Refused or failed'),
+        h('span', { class: 'log-time', title: new Date(e.at).toLocaleString() }, new Date(e.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })),
+        h('b', {}, relayName(e.from)), h('span', { class: 'dim' }, e.ok ? CONTROL_ACTION[e.action] ?? e.action : `tried to ${e.action === 'start' ? 'start a session' : e.action}`),
+        e.target && h('b', {}, relayName(e.target)),
+        h('span', { class: 'log-text' }, e.detail.split('\n')[0].slice(0, 160))),
+      h('pre', { class: 'log-full' }, e.detail)))),
   ];
 }
 
@@ -6558,6 +7714,7 @@ function permsBySession() {
   return [
     h('p', { class: 'perms-note dim' }, 'Rules go one way: one session may message another without the other being able to answer, except to reply to a message it was sent (for an hour). A message reaches the other agent as a message from a session, not as your prompt. The most specific rule decides; one set to Default leaves it to the next.'),
     permsGlobal(),
+    permsControlGlobal(),
     ...sessions.map((s) => {
       const agent = agentOf(s.command);
       const unread = relay.unread[s.id] ?? 0;
@@ -6566,6 +7723,7 @@ function permsBySession() {
           unread > 0 && h('span', { class: 'chip', title: 'Messages it hasn’t read yet' }, `${unread} unread`),
           ownRelayRules(s).length > 0 && h('button', { class: 'link-btn perms-reset', title: 'Clear its own messaging rules, so All sessions’ rules decide', onclick: () => confirmResetSession(s) }, 'Reset')),
         agent ? permsMessaging(s) : h('div', { class: 'perms-row dim' }, 'Not a coding agent, so it can’t send or read messages.'),
+        agent && permsControl(s),
         h('div', { class: 'perms-row' }, h('div', { class: 'perms-what' }, h('b', {}, 'Plugins'), h('span', { class: 'dim' }, 'Click one to hide this session from it, or show it again.')),
           h('div', { class: 'perms-who' }, pluginChips(s))));
     }),
@@ -6607,7 +7765,7 @@ function relayFallback(levels) {
 
 /** What a message from → to gets, as RelayPolicy decides it: { decision, by: 'pair' or null, label }. */
 function relayDecide(from, to) {
-  if (relay.paused) return { decision: 'deny', by: null, label: 'Pause messages' };
+  if (relay.paused) return { decision: 'deny', by: null, label: 'Pause agents' };
   const pair = relay.rules.find((r) => r.from === from && r.to === to);
   if (pair) return { decision: pair.decision, by: 'pair', label: null };
   const a = state.byId.get(from), b = state.byId.get(to);
@@ -6628,7 +7786,6 @@ function relayChanged(st) {
   Object.assign(relay, st);
   if (relay.asking && !relay.waiting.some((w) => w.from === relay.asking.from && w.to === relay.asking.to)) closeModal();
   renderPermsPause();
-  renderPermsButton();
   for (const s of state.sessions) renderTileHeader(s);   // their marks
   permissionsChanged();
   for (const s of state.sessions) relayNotify(s);
@@ -6653,18 +7810,54 @@ function onRelayMessage(m) {
  * Tells a session's agent it has messages, by typing a line into it and sending it, as you would: only while it's idle
  * (not working, not asking you something) and you haven't typed into it in the last few seconds, so it never lands in
  * a prompt you're writing. The messages themselves reach it only through read_messages. Each new message is told once.
+ * A session brought back with the app that hasn't been opened yet is started by its message, so another agent's
+ * question doesn't wait for you to open it; it's told once its agent is up (its MCP connection, or 20 s on).
  */
 function relayNotify(s) {
   const n = relay.unread[s.id] ?? 0;
   if (!n) { delete relay.told[s.id]; relay.from[s.id]?.clear(); return; }
   if (n <= (relay.told[s.id] ?? 0)) return;
+  if (s.startsOnOpen && agentOf(s.command) && !serverDown(s)) { s.wokenAt = performance.now(); startSession(s); return; }
   if (!s.running || s.startsOnOpen || !agentOf(s.command) || !['running', 'attention'].includes(statusClass(s))) return;
   if (performance.now() - s.act.lastIn < 5000) return;   // you're typing in it: the next check tries again
+  if (s.wokenAt) {
+    // Typed while the agent is still starting, the line can stay in its prompt unsent.
+    const now = performance.now();
+    if (s.readyAt > s.wokenAt ? now - s.readyAt < 2000 : now - s.wokenAt < 20000) return;
+    s.wokenAt = null;
+  }
   relay.told[s.id] = n;
   const names = [...(relay.from[s.id] ?? [])].map((id) => `"${relayName(id)}"`);
   const text = `[LlamaTree] ${n === 1 ? 'A message has' : `${n} messages have`} come from ${names.length ? names.join(' and ') : 'another session'}. Read ${n === 1 ? 'it' : 'them'} with the read_messages tool, and answer with send_message: the sender doesn't see what you write here.`;
   s.term.paste(text);
-  setTimeout(() => post({ type: 'input', id: s.id, data: '\r' }), 150);
+  setTimeout(() => pressEnter(s), 150);
+  setTimeout(() => resendNotice(s, 3), 1500);
+}
+
+/**
+ * An Enter the agent missed (it was redrawing, or still starting) leaves the notice in its prompt: Enter is pressed
+ * again, a few times at most, unless you've typed into the session since (then what's in the prompt is yours to send).
+ */
+function resendNotice(s, tries) {
+  if (!s.running || performance.now() - s.act.lastIn < 1500 || !noticeInPrompt(s)) return;
+  pressEnter(s);
+  if (tries > 1) setTimeout(() => resendNotice(s, tries - 1), 1500);
+}
+
+/** Whether Claude's prompt (the box between the last two rules on the screen) still holds a notice. */
+function noticeInPrompt(s) {
+  const b = s.term.buffer.active;
+  const text = (i) => b.getLine(i)?.translateToString(true).trim() ?? '';
+  const rule = (i) => /^─{20,}$/.test(text(i));
+  let bottom = b.length - 1;
+  while (bottom > 0 && !text(bottom)) bottom--;   // a tall terminal has empty rows below Claude's screen
+  const from = Math.max(0, bottom - 40);
+  while (bottom >= from && !rule(bottom)) bottom--;
+  let top = bottom - 1;
+  while (top >= from && !rule(top)) top--;
+  if (top < from) return false;
+  for (let i = top + 1; i < bottom; i++) if (b.getLine(i)?.translateToString(true).includes('[LlamaTree] ')) return true;
+  return false;
 }
 
 /** A session asks to message another, with no rule to say: you're asked, one question at a time. */
@@ -6717,14 +7910,181 @@ setInterval(() => {
   for (const s of state.sessions) relayNotify(s);
 }, 3000);
 
+// ---- sessions starting and driving other sessions (SessionControl on the host)
+
+/** The host's control state changed: redraw, and ask about any request to start a session not asked yet (after a reload, say). */
+function controlChanged(st) {
+  if (!st) return;
+  Object.assign(control, st);
+  for (const r of control.pending) askSpawn(r);
+  for (const s of state.sessions) renderTileHeader(s);
+  permissionsChanged();
+}
+
+/** The decision of the control rule for ability and scope ('ask' when there's none). */
+const controlRule = (ability, scope) => control.rules.find((r) => r.ability === ability && r.scope === scope)?.decision ?? 'ask';
+
+/** What a session gets for an ability, as ControlPolicy decides it: { decision, by: 'session' | 'project' | 'all' | null }. */
+function controlDecide(ability, s) {
+  const fallback = ability === 'spawn' ? 'ask' : 'allow';
+  if (relay.paused) return { decision: 'deny', by: 'paused' };
+  const own = control.rules.find((r) => r.ability === ability && r.scope === s.id);
+  if (own) return { decision: own.decision, by: 'session' };
+  // A session another started goes by its own rule for starting sessions, so they don't multiply unasked.
+  if (ability === 'spawn' && s.startedBy) return { decision: fallback, by: null };
+  const project = s.project && control.rules.find((r) => r.ability === ability && r.scope === 'project:' + s.project);
+  if (project) return { decision: project.decision, by: 'project' };
+  const all = control.rules.find((r) => r.ability === ability && r.scope === '*');
+  return all ? { decision: all.decision, by: 'all' } : { decision: fallback, by: null };
+}
+
+function setControlRule(ability, scope, decision) {
+  request('control.set', { ability, scope, decision }).catch((e) => toast(e.message, true));
+}
+
+/** Tells the host each session's state when it changes, for wait_for_session and the rest. */
+function syncControlStatus(s) {
+  const st = statusClass(s);
+  if (control.told[s.id] === st) return;
+  control.told[s.id] = st;
+  post({ type: 'control.status', id: s.id, status: st });
+}
+setInterval(() => { for (const s of state.sessions) syncControlStatus(s); }, 1000);
+
+/**
+ * Types a prompt a session sent this one (send_prompt) and sends it, as relayNotify does: not while you're typing in
+ * it (it waits for a pause of a few seconds, for at most half a minute).
+ */
+function controlPrompt(id, text, tries = 0) {
+  const s = state.byId.get(id);
+  if (!s?.running || !text) return;
+  if (performance.now() - s.act.lastIn < 5000) {
+    // Never over what you're typing: after five minutes of it, the prompt is dropped instead.
+    if (tries < 300) setTimeout(() => controlPrompt(id, text, tries + 1), 1000);
+    else toast(`A prompt from “${relayName(s.startedBy)}” to “${s.name}” was dropped: you were typing in it.`, true);
+    return;
+  }
+  // The host refuses control characters already; this keeps a paste from ever carrying keys of its own.
+  text = text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '');
+  s.term.paste(text);
+  setTimeout(() => pressEnter(s), 150);
+}
+
+/** The tile's mark for a session another started: who, opening the starter. */
+function startedByMark(s) {
+  if (!s.startedBy) return null;
+  const by = state.byId.get(s.startedBy);
+  return h('button', {
+    class: 'chip started-by', title: by ? `Started by “${by.name}”, whose agent can send it prompts, answer its prompts and stop it: show “${by.name}”` : 'Started by a session since removed',
+    onclick: () => by && (state.expandedId ? expand(by.id) : showGit(by.id)),
+  }, iconEl('agent'), by ? by.name : 'removed session');
+}
+
+/** A session asks to start another, and no rule says: you're asked, one at a time; it waits for your answer. */
+function askSpawn(r) {
+  if (!r || control.asking?.id === r.id || (control.queue ??= []).some((q) => q.id === r.id)) return;
+  control.queue.push(r);
+  showSpawnAsk();
+}
+
+function spawnSettled(id) {
+  control.queue = (control.queue ?? []).filter((q) => q.id !== id);
+  if (control.asking?.id === id) { control.asking = null; closeModal(); }
+}
+
+function showSpawnAsk() {
+  if (control.asking || !$('#modalHost').hidden) return;   // after the dialog that's open (see the interval below)
+  const r = control.queue?.shift();
+  if (!r) return;
+  const a = state.byId.get(r.from);
+  if (!a) { showSpawnAsk(); return; }
+  control.asking = r;
+  const project = projectOf(a);
+  let scope = 'once';
+  const choice = (value, label, tip) => h('label', { class: 'perms-radio', title: tip },
+    h('input', { type: 'radio', name: 'spawnScope', value, checked: value === scope, onchange: () => { scope = value; } }), label);
+  let answered = false;
+  const answer = (allow) => {
+    answered = true;
+    request('control.answer', { id: r.id, allow, scope }).catch((e) => toast(e.message, true));
+    control.asking = null;
+    closeModal();
+  };
+  const agent = agentOf(a.command)?.name ?? 'The agent';
+  openModal(`Let “${a.name}” start a session?`, h('div', {},
+    h('p', {}, `${agent} in “${a.name}” wants to start a new session, which it can then send prompts to and stop. It waits for your answer.`),
+    controlDecide('answer', a).decision === 'allow' && h('p', { class: 'spawn-warn' },
+      `It can also approve the new session’s permission prompts (editing files, running commands) without you. To keep those for yourself, set “Answer its sessions’ permission prompts” to Not allowed in Permissions.`),
+    h('div', { class: 'spawn-ask' },
+      h('span', { class: 'k' }, 'Name'), h('span', {}, r.name),
+      h('span', { class: 'k' }, 'Folder'), h('span', {}, r.directory),
+      h('span', { class: 'k' }, 'Runs'), h('code', {}, ownOptionsOnly(a.command))),
+    h('div', { class: 'k dim' }, 'Its first prompt'),
+    h('pre', { class: 'spawn-prompt' }, r.prompt),
+    h('div', { class: 'perms-radios' },
+      choice('once', 'Just this once'),
+      choice('session', `Whenever “${a.name}” starts a session`, 'A rule on its card in Permissions'),
+      project && !a.startedBy && choice('project', `Whenever a session in ${project.name} starts one`, 'A rule for the project in Permissions; sessions started by agents still ask')),
+    h('p', { class: 'dim' }, 'Pause agents in Permissions stops every session starting or driving others.')), [
+    h('button', { class: 'btn', 'data-autofocus': true, onclick: () => answer(false) }, 'Don’t allow'),
+    h('button', { class: 'btn primary', onclick: () => answer(true) }, 'Allow'),
+  ]);
+  // Closed without an answer: that's a no, this once; the agent is waiting on it.
+  onModalClose = () => {
+    if (!answered) request('control.answer', { id: r.id, allow: false, scope: 'once' }).catch(() => {});
+    control.asking = null;
+    setTimeout(showSpawnAsk, 300);
+  };
+}
+setInterval(showSpawnAsk, 1000);
+
+/** Each session card's rows: whether it may start sessions, and answer their permission prompts. */
+function permsControl(s) {
+  const row = (ability, what, help) => {
+    const d = controlDecide(ability, s);
+    const own = controlRule(ability, s.id);
+    const by = { project: `as ${projectOf(s)?.name ?? 'its project'}’s rule says`, all: 'as All sessions’ rule says', paused: 'agents are paused' }[d.by];
+    const fallbackWord = ability === 'spawn' ? 'Ask first' : 'Allowed';
+    return h('div', { class: 'perms-row ' + d.decision },
+      h('div', { class: 'perms-what' }, h('b', {}, what), h('span', { class: 'dim' }, by ? `${help} Now: ${RELAY_CHOICE[d.decision].toLowerCase()}, ${by}.` : help)),
+      segChoice(own, [['allow', 'Allowed', ''], ['ask', own === 'ask' && d.by === null ? fallbackWord : 'Default', 'As the rules above say'], ['deny', 'Not allowed', '']],
+        (v) => setControlRule(ability, s.id, v), `${s.name}: ${what.toLowerCase()}`));
+  };
+  const children = state.sessions.filter((c) => c.startedBy === s.id);
+  return [
+    row('spawn', 'Start sessions', s.startedBy ? 'It was started by another session, so it goes only by this rule: with none, you’re asked.' : 'With no rule, you’re asked each time.'),
+    row('answer', 'Answer its sessions’ permission prompts', 'Approve or decline what the sessions it started ask to do. With no rule, it may.'),
+    row('close', 'Close its sessions', 'Remove the sessions it started once their work is done (their conversations are kept, and a worktree made for one stays). With no rule, it may.'),
+    children.length > 0 && h('div', { class: 'perms-row dim' }, `It started: ${children.map((c) => c.name).join(', ')}`),
+  ];
+}
+
+/** All sessions' and each project's rules for starting sessions and answering their prompts. */
+function permsControlGlobal() {
+  const row = (ability, scope, what, fallback) => h('div', { class: 'perms-row ' + (controlRule(ability, scope) === 'ask' ? fallback : controlRule(ability, scope)) },
+    h('div', { class: 'perms-what' }, h('b', {}, what)),
+    segChoice(controlRule(ability, scope), [['allow', 'Allowed', ''], ['ask', fallback === 'ask' ? 'Ask first' : 'Default', ''], ['deny', 'Not allowed', '']],
+      (v) => setControlRule(ability, scope, v), what));
+  return h('section', { class: 'perms-card' },
+    h('header', {}, h('b', {}, 'Agents starting sessions'), h('span', { class: 'dim' }, 'An agent can start sessions of its own and drive them. Its own rule (on its card) comes first, then its project’s, then these.')),
+    row('spawn', '*', 'All sessions: starting sessions', 'ask'),
+    row('answer', '*', 'All sessions: answering their sessions’ permission prompts', 'allow'),
+    row('close', '*', 'All sessions: closing the sessions they started', 'allow'),
+    ...state.projects.flatMap((p) => [
+      row('spawn', 'project:' + p.id, `${p.name}: starting sessions`, controlRule('spawn', '*') === 'ask' ? 'ask' : controlRule('spawn', '*')),
+      row('answer', 'project:' + p.id, `${p.name}: answering their sessions’ prompts`, controlRule('answer', '*') === 'ask' ? 'allow' : controlRule('answer', '*')),
+      row('close', 'project:' + p.id, `${p.name}: closing the sessions they started`, controlRule('close', '*') === 'ask' ? 'allow' : controlRule('close', '*')),
+    ]));
+}
+
 /** The Pause button on the Permissions view's toolbar. */
 function renderPermsPause() {
   const b = $('#permsPause');
   if (!b) return;
   b.classList.toggle('active', relay.paused);
   b.setAttribute('aria-pressed', String(relay.paused));
-  b.textContent = relay.paused ? 'Messages paused: resume' : 'Pause messages';
-  b.title = relay.paused ? 'Sessions can’t message each other until you resume' : 'Stop every session messaging another, whatever the rules say, until you resume';
+  b.textContent = relay.paused ? 'Agents paused: resume' : 'Pause agents';
+  b.title = relay.paused ? 'Sessions can’t message, start or drive each other until you resume' : 'Stop every session messaging, starting or driving another, whatever the rules say, until you resume';
 }
 $('#permsPause')?.addEventListener('click', () => setRelayPaused(!relay.paused));
 
@@ -6851,12 +8211,14 @@ addEventListener('message', (e) => {
 // Side panel plugins kept from last time show once the folder has been read.
 loadPlugins().then(() => renderGit());
 request('relay.state').then(relayChanged).catch(() => {});
+request('control.state').then(controlChanged).catch(() => {});
 loadThemes();
 
 // ------------------------------------------------------------------ boot
 
 $('#btnGrid').innerHTML = icon('grid');
 $('#btnGit').innerHTML = icon('git');
+$('#btnGitMenu').innerHTML = icon('chevD');
 $('#btnAdd').innerHTML = icon('plus') + '<span>New Session</span>';
 $('#gitRefresh').innerHTML = icon('refresh');
 $('#gitHide').innerHTML = icon('close');
@@ -6867,6 +8229,7 @@ $('#diffOpenFile').innerHTML = icon('openFile');
 
 $('#btnGrid').addEventListener('click', () => { showTerminalDoc(); collapse(); });
 $('#btnGit').addEventListener('click', toggleGit);
+$('#btnGitMenu').addEventListener('click', sidePanelMenu);
 // Not addEventListener('click', showAddDialog): the click event would arrive as its `mode` argument.
 $('#btnAdd').addEventListener('click', () => showAddDialog());
 $('#btnAddEmpty').addEventListener('click', () => showAddDialog());
@@ -6874,6 +8237,7 @@ $('#btnAddEmpty').addEventListener('click', () => showAddDialog());
 makeScrollable($('#projectTabs'));
 makeScrollable($('#sessionTabs'));
 makeScrollable($('#docTabs'), 'doc');
+$('#docTabs').parentElement.append(h('div', { id: 'docTools' }));   // the title bar's buttons, in Left (see applyNavLayout)
 
 /** Moves `id` before or after `targetId` in a list of ids. */
 function moveId(ids, id, targetId, before) {
@@ -6884,7 +8248,7 @@ function moveId(ids, id, targetId, before) {
 }
 
 // Session tabs: dropping into another project's group moves the session into that project, at that spot.
-enableTabDrag($('#sessionTabs'), {
+const sessionDrag = {
   item: '.session-tab',
   onDrop: (id, targetId, before) => {
     const s = state.byId.get(id), target = state.byId.get(targetId);
@@ -6897,10 +8261,10 @@ enableTabDrag($('#sessionTabs'), {
     }
     applyProjectFilter();
   },
-});
+};
 
 // Project tabs; Unknown isn't draggable and stays last, so a drop beside it goes at the end of the real projects.
-enableTabDrag($('#projectTabs'), {
+const projectDrag = {
   item: '.project-tab',
   canDrag: (id) => id !== UNKNOWN,
   onDrop: (id, targetId, before) => {
@@ -6908,7 +8272,98 @@ enableTabDrag($('#projectTabs'), {
     const ordered = targetId === UNKNOWN ? moveId(ids, id, ids[ids.length - 1], false) : moveId(ids, id, targetId, before);
     request('projects.reorder', { ids: ordered }).catch((e) => toast(e.message, true));
   },
-});
+};
+enableTabDrag($('#sessionTabs'), sessionDrag);
+enableTabDrag($('#projectTabs'), projectDrag);
+// The same down the left: each looks only for its own kind of row, so the two share the list.
+enableTabDrag($('#navList'), { ...sessionDrag, axis: 'y' });
+enableTabDrag($('#navList'), { ...projectDrag, axis: 'y' });
+
+// ------------------------------------------------------------------ where projects and sessions go
+
+const NAV_LAYOUTS = [
+  { id: 'top', label: 'Projects and sessions across the top' },
+  { id: 'hybrid', label: 'Projects on the left, sessions across the top' },
+  { id: 'left', label: 'Projects and sessions on the left' },
+];
+
+/**
+ * Applies the layout: Top keeps the two rows of tabs; Hybrid drops the projects row for the bar down the left (see
+ * renderNav), and the buttons that row held join the title bar, All sessions first and the version and theme last.
+ * Left drops the title bar too, with no session tabs left in it: All sessions and New Session go to the bar down the
+ * left (renderNav puts them there), and the rest to the end of the tab row above the terminals (#docTools).
+ */
+function applyNavLayout(render = true) {
+  const top = state.navLayout === 'top', left = state.navLayout === 'left';
+  document.body.dataset.nav = state.navLayout;
+  document.body.classList.toggle('no-nav-branches', !state.navBranches);
+  // In Left the tab row runs across the side panel too (a grid row of #main), so these stay put as it opens and closes.
+  const docRow = $('#docTools').parentElement;
+  if (left) $('#main').prepend(docRow);
+  else $('#stage').prepend(docRow);
+  if (left) $('#docTools').append($('#btnUpdate'), $('#pluginButtons'), $('#appVersion'), $('#btnGit').parentElement, $('#btnTheme'));
+  else {
+    $('#titlebar').append($('#btnUpdate'), $('#btnAdd'), $('#btnGit').parentElement, $('#pluginButtons'));   // as index.html has them
+    const row = top ? $('#projectBar') : $('#titlebar');
+    row.prepend($('#btnGrid'));
+    row.append($('#appVersion'), $('#btnTheme'));
+  }
+  $('#navBar').style.width = state.navWidth + 'px';
+  if (render) applyProjectFilter();   // redraws both bars, and the empty grid's hint says where the projects are
+}
+
+function setNavLayout(id) {
+  state.navLayout = id;
+  store.set('navLayout', id);
+  applyNavLayout();
+}
+
+const navLayoutItems = () => [
+  { header: 'Layout' },
+  ...NAV_LAYOUTS.map((l) => ({ label: l.label, checked: state.navLayout === l.id, action: () => setNavLayout(l.id) })),
+  // With the sessions down the left, their branches can go (a row each, rather than two).
+  state.navLayout === 'left' && '-',
+  state.navLayout === 'left' && { label: 'Show branches', checked: state.navBranches, action: () => setNavBranches(!state.navBranches) },
+].filter(Boolean);
+
+function setNavBranches(on) {
+  state.navBranches = on;
+  store.set('navBranches', on);
+  document.body.classList.toggle('no-nav-branches', !on);
+}
+
+applyNavLayout(false);   // the bars are filled once the sessions arrive
+
+// Right-click on a bar's free space offers the layouts (a tab's own right-click has its menu).
+for (const bar of [$('#projectBar'), $('#titlebar'), $('#navBar')]) {
+  bar.addEventListener('contextmenu', (e) => {
+    if (e.target.closest('button, .project-tab, .session-tab')) return;
+    e.preventDefault();
+    showMenu(e.clientX, e.clientY, navLayoutItems());
+  });
+}
+
+// The bar down the left's width: dragged like the side panel's (its terminals refit as #termPane resizes).
+(() => {
+  const sp = $('#navSplitter');
+  sp.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    sp.classList.add('dragging');
+    const startX = e.clientX, startW = state.navWidth;
+    const move = (ev) => {
+      state.navWidth = Math.max(160, Math.min(480, innerWidth - 400, startW + (ev.clientX - startX)));
+      $('#navBar').style.width = state.navWidth + 'px';
+    };
+    const up = () => {
+      sp.classList.remove('dragging');
+      store.set('navWidth', state.navWidth);
+      removeEventListener('mousemove', move);
+      removeEventListener('mouseup', up);
+    };
+    addEventListener('mousemove', move);
+    addEventListener('mouseup', up);
+  });
+})();
 
 // Diff tabs. The Terminal tab stays first, but can be dragged to a side of the area like them.
 enableTabDrag($('#docTabs'), {

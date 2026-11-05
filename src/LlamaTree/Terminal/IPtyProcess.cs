@@ -1,0 +1,32 @@
+namespace LlamaTree.Terminal;
+
+/// <summary>A program running in a pseudo terminal: ConPTY on Windows, a Unix pty on macOS and Linux.</summary>
+internal interface IPtyProcess : IDisposable
+{
+    /// <summary>Decoded UTF-8 output, raised on a background thread.</summary>
+    event Action<string>? Output;
+
+    /// <summary>The exit code, raised on a background thread once the remaining output has been delivered.</summary>
+    event Action<int>? Exited;
+
+    int ProcessId { get; }
+
+    /// <summary>
+    /// Starts <paramref name="command"/>, a command as the user would type it (see <see cref="CommandLineResolver"/>). With
+    /// <paramref name="within"/>, it starts only if the folder really is inside that one at that moment, and in that very
+    /// folder (see <see cref="ConfinedFolder"/>); otherwise it throws <see cref="IOException"/>.
+    /// </summary>
+    void Start(string command, string workingDirectory, IReadOnlyDictionary<string, string> environment, int cols, int rows, string? within = null);
+
+    void Write(string text);
+
+    void Resize(int cols, int rows);
+
+    /// <summary>Every process still running in the terminal: the started process and everything it launched.</summary>
+    int[] ProcessIds();
+}
+
+internal static class PtyProcess
+{
+    public static IPtyProcess Create() => OperatingSystem.IsWindows() ? new PseudoConsoleProcess() : new UnixPtyProcess();
+}

@@ -11,7 +11,7 @@ public sealed class TerminalSessionTests
     [Fact]
     public async Task Stop_kills_the_process_once_and_reports_it_without_an_exit_event()
     {
-        using var s = Session("cmd /c ping -n 30 127.0.0.1 >nul");
+        using var s = Session(Platforms.Command("cmd /c ping -n 30 127.0.0.1 >nul", "sleep 30"));
         var exits = 0;
         s.Exited += (_, _, _) => Interlocked.Increment(ref exits);
         s.Start(80, 25);
@@ -28,7 +28,7 @@ public sealed class TerminalSessionTests
     [Fact]
     public async Task Natural_exit_is_reported_once_with_its_code_and_generation()
     {
-        using var s = Session("cmd /c exit 3");
+        using var s = Session(Platforms.Command("cmd /c exit 3", "exit 3"));
         var exited = new TaskCompletionSource<(int Code, int Generation)>(TaskCreationOptions.RunContinuationsAsynchronously);
         var exits = 0;
         s.Exited += (_, code, generation) => { Interlocked.Increment(ref exits); exited.TrySetResult((code, generation)); };
@@ -46,7 +46,7 @@ public sealed class TerminalSessionTests
     [Fact]
     public async Task Restart_after_stop_runs_a_new_process_with_a_new_generation()
     {
-        using var s = Session("cmd /c ping -n 30 127.0.0.1 >nul");
+        using var s = Session(Platforms.Command("cmd /c ping -n 30 127.0.0.1 >nul", "sleep 30"));
         var exits = 0;
         s.Exited += (_, _, _) => Interlocked.Increment(ref exits);
         s.Start(80, 25);

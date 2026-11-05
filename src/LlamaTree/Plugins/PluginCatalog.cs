@@ -1,3 +1,4 @@
+using LlamaTree.Platform;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -58,6 +59,9 @@ internal static partial class PluginCatalog
     // A folder name that's a valid host name label, so it can be the plugin's address.
     [GeneratedRegex("^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$")]
     private static partial Regex IdPattern();
+
+    /// <summary>Whether <paramref name="id"/> could be a plugin's id (its folder's name, and a host name label).</summary>
+    public static bool IsValidId(string? id) => id != null && IdPattern().IsMatch(id);
 
     /// <summary>The plugins in <paramref name="folder"/>, by title; folders that aren't valid plugins are left out, with why.</summary>
     public static (List<PluginInfo> Plugins, List<string> Problems) Load(string folder)
@@ -227,7 +231,7 @@ internal static partial class PluginCatalog
     {
         if (relative.Length == 0 || Path.IsPathRooted(relative) || relative.Split('/').Any(p => p is ".." or ".")) return false;
         var full = Path.GetFullPath(Path.Combine(dir, relative.Split('?', '#')[0]));
-        return full.StartsWith(Path.GetFullPath(dir).TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase) && File.Exists(full);
+        return full.StartsWith(PathText.WithSeparator(Path.GetFullPath(dir)),StringComparison.OrdinalIgnoreCase) && File.Exists(full);
     }
 
     private static string? Str(JsonElement e, string name) =>

@@ -1,0 +1,84 @@
+# Builds, tests and deploys the opt-in user count's service (server/Count, an Azure Function app on Flex
+# Consumption) with its storage (server/count.bicep). Copies of the app that have said yes ping it once an hour; see
+# server/README.md for what it keeps and how to read the numbers.
+#
+# Run by hand (Run pipeline) on main after changing server/. Untick "Deploy" for a run that only builds and tests.
+#
+# One-time setup in Azure DevOps:
+#   - A pipeline created from the GitHub repository with this file
+#     (Existing Azure Pipelines YAML file › /azure-pipelines-count.yml).
+#   - Pipeline variables, kept out of the repository:
+#       CountResourceGroup   the existing resource group to deploy into
+#       CountAppName         the function app's name (globally unique)
+#       CountStorageAccount  a new storage account's name for it (3-24 lower-case letters and digits, globally unique)
+#   - The Azure Resource Manager service connection named in azureConnection below, permitted for this pipeline, whose
+#     identity has Contributor on that resource group.
+# The agent needs the .NET 10 SDK and the Azure CLI.
+
+trigger: none
+pr: none
+
+parameters:
+  - name: deploy
+    displayName: 'Deploy to Azure (untick to only build and test)'
+    type: boolean
+    default: true
+
+variables:
+  azureConnection: 'ClaudeTerminals-Storage' # the Azure service connection (Project settings › Service connections)
+
+pool:
+  name: 'SelfHostedPool'
+
+steps:
+  - checkout: self
+    clean: true
+
+  - task: UseDotNet@2
+    displayName: '.NET 10 SDK'
+    inputs:
+      packageType: sdk
+      version: '10.x'
+
+  # The storage tests need Azurite and pass without checking anything when it isn't running.
+  - script: dotnet test server/Count.Tests -c Release
+    displayName: 'Test'
+
+  - script: dotnet publish server/Count -c Release -o "$(Build.ArtifactStagingDirectory)/count"
+    displayName: 'Publish'
+
+  - task: ArchiveFiles@2
+    displayName: 'Package'
+    inputs:
+      rootFolderOrFile: '$(Build.ArtifactStagingDirectory)/count'
+      includeRootFolder: false
+      archiveType: zip
+      archiveFile: '$(Build.ArtifactStagingDirectory)/count.zip'
+
+  - task: PublishPipelineArtifact@1
+    displayName: 'Keep the package on the run'
+    inputs:
+      targetPath: '$(Build.ArtifactStagingDirectory)/count.zip'
+      artifact: 'count'
+
+  - ${{ if parameters.deploy }}:
+    - task: AzureCLI@2
+      displayName: 'Storage and function app (count.bicep)'
+      inputs:
+        azureSubscription: '${{ variables.azureConnection }}'
+        scriptType: ps
+        scriptLocation: inlineScript
+        inlineScript: |
+          az deployment group create --resource-group "$(CountResourceGroup)" --template-file server/count.bicep `
+            --parameters appName="$(CountAppName)" storageName="$(CountStorageAccount)" --query properties.outputs.hostName.value -o tsv
+          if ($LASTEXITCODE) { throw 'Deploying count.bicep failed.' }
+
+    - task: AzureFunctionApp@2
+      displayName: 'Deploy the function app'
+      inputs:
+        connectedServiceNameARM: '${{ variables.azureConnection }}'
+        appType: functionAppLinux
+        isFlexConsumption: true
+        appName: '$(CountAppName)'
+        package: '$(Build.ArtifactStagingDirectory)/count.zip'
+        deploymentMethod: auto

@@ -24,9 +24,9 @@ internal sealed record CountUsage(int Projects, int Sessions);
 internal static class TelemetryService
 {
     /// <summary>Only ever this address, our count service: nothing on the machine can point the app elsewhere.</summary>
-    internal const string PingUrl = "https://count.llamachant.com/ping";
+    internal const string PingUrl = "https://api.llamatree.dev/count/ping";
 
-    private const string PingHost = "count.llamachant.com";
+    private const string PingHost = "api.llamatree.dev";
 
     internal const string FileName = "telemetry.json";
 

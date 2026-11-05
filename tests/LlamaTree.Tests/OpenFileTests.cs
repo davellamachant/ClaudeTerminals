@@ -7,7 +7,7 @@ public sealed class OpenFileTests
 {
     private const string Root = @"C:\work\repo";
 
-    [Theory]
+    [WindowsTheory]
     [InlineData("a.txt", @"C:\work\repo\a.txt")]
     [InlineData("sub/b.cs", @"C:\work\repo\sub\b.cs")]
     [InlineData(@"sub\b.cs", @"C:\work\repo\sub\b.cs")]
@@ -16,7 +16,7 @@ public sealed class OpenFileTests
     public void Paths_inside_the_repository_resolve(string relative, string expected) =>
         Assert.Equal(expected, GitService.FullPathInRepo(Root, relative));
 
-    [Theory]
+    [WindowsTheory]
     [InlineData(@"..\outside.txt")]
     [InlineData("../outside.txt")]
     [InlineData("sub/../../outside.txt")]
@@ -41,7 +41,7 @@ public sealed class OpenFileTests
     [InlineData("setup.msi")]
     [InlineData("saver.scr")]
     public void Scripts_and_executables_count_as_runnable(string file) =>
-        Assert.True(MainForm.IsRunnable(file));
+        Assert.True(LlamaTree.Platform.Desktop.IsRunnable(file));
 
     [Theory]
     [InlineData("Program.cs")]
@@ -51,10 +51,10 @@ public sealed class OpenFileTests
     [InlineData("icon.png")]
     [InlineData("Makefile")]
     public void Documents_are_not_runnable(string file) =>
-        Assert.False(MainForm.IsRunnable(file));
+        Assert.False(LlamaTree.Platform.Desktop.IsRunnable(file));
 
     // An extension on none of the lists, associated on some machine with a program that runs it.
-    [Theory]
+    [WindowsTheory]
     [InlineData("\"%1\" %*", @"C:\tools\thing.exe", true)]               // runs the file itself, like .exe
     [InlineData("%1 %*", null, true)]
     [InlineData("\"C:\\Python313\\python.exe\" \"%1\" %*", @"C:\Python313\python.exe", true)]
@@ -65,15 +65,15 @@ public sealed class OpenFileTests
     [InlineData("\"C:\\Program Files\\Microsoft VS Code\\Code.exe\" \"%1\"", @"C:\Program Files\Microsoft VS Code\Code.exe", false)]
     [InlineData(null, null, false)]
     public void Default_actions_that_run_the_file_are_detected(string? command, string? program, bool runs) =>
-        Assert.Equal(runs, MainForm.DefaultActionRuns(command, program));
+        Assert.Equal(runs, LlamaTree.Platform.Desktop.DefaultActionRuns(command, program));
 
-    [Fact]
+    [WindowsFact]
     public void This_machines_cmd_association_counts_as_running() =>
-        Assert.True(MainForm.DefaultActionRuns(
+        Assert.True(LlamaTree.Platform.Desktop.DefaultActionRuns(
             LlamaTree.Terminal.Native.AssocQuery(LlamaTree.Terminal.Native.ASSOCSTR_COMMAND, ".cmd"),
             LlamaTree.Terminal.Native.AssocQuery(LlamaTree.Terminal.Native.ASSOCSTR_EXECUTABLE, ".cmd")));
 
-    [Fact]
+    [WindowsFact]
     public void Files_reached_through_a_junction_out_of_the_repository_are_rejected()
     {
         var top = Path.Combine(Path.GetTempPath(), "ct-junction-" + Guid.NewGuid().ToString("N")[..8]);
@@ -112,7 +112,7 @@ public sealed class OpenFileTests
         }
     }
 
-    [Fact]
+    [WindowsFact]
     public void A_differently_cased_sibling_folder_is_outside_the_repository()
     {
         // In a case-sensitive parent, Repo and repo are two folders; text equal after case folding is not "inside".
@@ -138,6 +138,7 @@ public sealed class OpenFileTests
         }
     }
 
+#if WINFORMS
     // ---- F3: only the app page itself may drive the host
 
     [Theory]
@@ -154,4 +155,5 @@ public sealed class OpenFileTests
     [InlineData(null, false)]
     public void Only_the_app_page_is_trusted(string? uri, bool trusted) =>
         Assert.Equal(trusted, MainForm.IsAppUri(uri));
+#endif
 }

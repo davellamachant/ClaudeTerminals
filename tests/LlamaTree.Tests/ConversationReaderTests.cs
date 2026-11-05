@@ -149,7 +149,7 @@ public sealed class ConversationReaderTests : IDisposable
         Directory.CreateDirectory(transcriptDir);
         File.WriteAllText(Path.Combine(transcriptDir, "abc.jsonl"), User("hello from the session"));
 
-        using var session = new TerminalSession(new SessionInfo { Name = "t", Directory = work, Command = "cmd /c ping -n 30 127.0.0.1 >nul" });
+        using var session = new TerminalSession(new SessionInfo { Name = "t", Directory = work, Command = Platforms.Command("cmd /c ping -n 30 127.0.0.1 >nul", "sleep 30") });
         session.Start(80, 24);
         var pids = session.ProcessIds();
         Assert.NotEmpty(pids);

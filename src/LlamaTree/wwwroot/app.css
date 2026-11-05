@@ -153,7 +153,8 @@
     linear-gradient(90deg, color-mix(in srgb, var(--accent) 8%, transparent) 1px, transparent 1px) 0 0 / 32px 32px,
     var(--chrome);
 }
-:root:is([data-grid], [data-rain]) :is(#stage, #splitter, #docSplitter) { background: transparent; }
+:root:is([data-grid], [data-rain]) :is(#stage, #splitter, #docSplitter, #navSplitter) { background: transparent; }
+:root:is([data-grid], [data-rain]) #navBar { background: color-mix(in srgb, var(--chrome-3) 70%, transparent); }
 :root:is([data-grid], [data-rain]) :is(#titlebar, .doc-tabs, .tab-scroller.doc, .dock-group > .tw-title) { background: color-mix(in srgb, var(--chrome-2) 70%, transparent); }
 :root:is([data-grid], [data-rain]) #gitPanel { background: color-mix(in srgb, var(--panel) 55%, transparent); }
 :root:is([data-grid], [data-rain]) .tile-header { background: color-mix(in srgb, var(--panel) 70%, transparent); }
@@ -162,8 +163,6 @@
 #rain { position: fixed; inset: 0; z-index: -1; pointer-events: none; }   /* behind the page's content, over its background */
 :root[data-rain] { background: var(--chrome); }
 :root[data-rain] body { background: transparent; }   /* the body's own background would paint over the canvas; the root's paints under it */
-:root[data-rain] .tile { background: color-mix(in srgb, var(--terminal-bg) 42%, transparent); }
-:root[data-rain] .xterm .xterm-viewport { background-color: transparent !important; }
 /* The terminal itself: its canvas is see-through under a Grid theme (dressCursor in app.js), and the tile paints the same
    lines over the terminal's own background, fixed to the window so they run on from the floor around it. */
 :root[data-grid] .tile {
@@ -171,10 +170,12 @@
     radial-gradient(120% 40% at 50% 100%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 70%),
     linear-gradient(color-mix(in srgb, var(--accent) 8%, transparent) 1px, transparent 1px) 0 0 / 32px 32px,
     linear-gradient(90deg, color-mix(in srgb, var(--accent) 8%, transparent) 1px, transparent 1px) 0 0 / 32px 32px,
-    var(--terminal-bg);
+    color-mix(in srgb, var(--terminal-bg) var(--terminal-veil, 100%), transparent);
   background-attachment: fixed, fixed, fixed, scroll;   /* the glow at the horizon and the lines run on from the floor around the tile */
 }
-:root[data-grid] .xterm .xterm-viewport { background-color: transparent !important; }   /* xterm paints its viewport black on its own */
+/* The terminal's canvas is see-through (data-veil, set by markVeil in app.js) over a floor and whenever the veil is under
+   100%; xterm paints its viewport in the theme's background on its own, so that's made see-through here too. */
+:root[data-veil] .xterm .xterm-viewport { background-color: transparent !important; }
 
 /* Project colours are picked for a dark background; their text is deepened to stay readable on a light one. */
 :root[data-theme="light"] .proj-tag,
@@ -204,6 +205,16 @@ svg.ic { width: 16px; height: 16px; flex: none; display: block; }
 .tb-btn:hover { background: var(--hover-strong); }
 .tb-btn.active { background: var(--hover-strong); border-color: var(--border); }
 .tb-btn.text { padding: 0 10px; }
+/* The side panel button and its ▾ (the side panel's options), as one button split in two. */
+.tb-split { display: inline-flex; flex: none; }
+.tb-split > #btnGit { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.tb-split > #btnGitMenu { min-width: 0; width: 16px; padding: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; color: var(--text-dim); }
+/* Hovering either half lights the pair: the half under the pointer strongly, the other half lightly. */
+.tb-split:hover > .tb-btn:not(:hover):not(.active) { background: var(--hover); }
+.tb-split:hover > #btnGitMenu { color: var(--text); }
+/* With the side panel showing, the ▾ joins the button's outline (its left edge is the button's right one). */
+.tb-split > #btnGit.active + #btnGitMenu { border-color: var(--border); border-left-color: transparent; }
+.tb-split > #btnGitMenu svg.ic { width: 11px; height: 11px; }
 
 .session-tabs { display: flex; gap: 2px; overflow-x: auto; min-width: 0; scrollbar-width: none; }
 .session-tab {
@@ -452,7 +463,8 @@ svg.ic { width: 16px; height: 16px; flex: none; display: block; }
 #grid { position: absolute; inset: 0; }
 #splitter { width: 5px; flex: none; cursor: col-resize; background: var(--chrome); border-left: 1px solid var(--border-soft); }
 #splitter:hover, #splitter.dragging { background: var(--accent-strong); }
-body.git-hidden #splitter, body.git-hidden #gitPanel { display: none; }
+body.git-hidden #splitter, body.git-hidden #gitPanel,
+body.side-empty #splitter, body.side-empty #gitPanel { display: none; }   /* side-empty: the Git tabs are off and no panel is open */
 
 #empty {
   position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
@@ -461,8 +473,11 @@ body.git-hidden #splitter, body.git-hidden #gitPanel { display: none; }
 .empty-sub { color: var(--text-dim); }
 
 /* ---------------------------------------------------------------- tiles */
+/* The terminal veil: the tile paints the terminal's background at --terminal-veil over whatever is behind it (the
+   window's floor under a Grid or rain theme): 100% unless the theme lets you see through ("terminalBackground"), when
+   markVeil in app.js puts its amount, or yours from the slider, on the root element. */
 .tile {
-  position: absolute; display: flex; flex-direction: column; background: var(--terminal-bg);
+  position: absolute; display: flex; flex-direction: column; background: color-mix(in srgb, var(--terminal-bg) var(--terminal-veil, 100%), transparent);
   border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
   transition: left .16s ease, top .16s ease, width .16s ease, height .16s ease, opacity .12s ease, border-color .2s;
 }
@@ -480,12 +495,25 @@ body.no-anim .tile, body.no-anim .surface { transition: none !important; }
 }
 .tile.expanded .tile-header { cursor: default; }
 .tile-name { font-weight: 600; white-space: nowrap; }
+/* A session on a server: which one (see serverTag), and an edge along its tile's header so it stands out among the
+   local ones. Red while its server can't be reached. */
+.server-tag { display: inline-flex; align-items: center; gap: 4px; padding: 0 7px; height: 18px; border-radius: 9px; font-size: 11px; font-weight: 600; white-space: nowrap; color: var(--link); background: color-mix(in srgb, var(--link) 14%, transparent); border: 1px solid color-mix(in srgb, var(--link) 45%, transparent); }
+.server-tag svg.ic { width: 12px; height: 12px; flex: none; }
+.server-tag.stale { color: var(--attention); background: color-mix(in srgb, var(--attention) 14%, transparent); border-color: color-mix(in srgb, var(--attention) 50%, transparent); cursor: pointer; }
+.server-tag.down { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); border-color: color-mix(in srgb, var(--danger) 50%, transparent); cursor: pointer; }
+.tile.on-server .tile-header { box-shadow: inset 3px 0 0 var(--link); }
+.tile.on-server.server-down .tile-header { box-shadow: inset 3px 0 0 var(--danger); }
+.tab-server { display: inline-flex; align-items: center; gap: 3px; max-width: 110px; padding: 0 5px; border-radius: 8px; font-size: 11px; color: var(--link); background: color-mix(in srgb, var(--link) 14%, transparent); }
+.tab-server span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab-server svg.ic { width: 11px; height: 11px; flex: none; }
+.tab-server.down { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
 .tile-title { color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
 .chip {
   display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 7px; border-radius: 10px;
   background: var(--panel-2); color: var(--text-dim); white-space: nowrap; font-size: 11px; border: 1px solid transparent;
 }
 button.chip { cursor: pointer; }
+span.chip { cursor: default; }   /* the branch chip, with the Git tabs off */
 button.chip:hover { border-color: var(--border); color: var(--text); }
 .chip svg.ic { width: 12px; height: 12px; }
 .chip .add { color: var(--st-a); }
@@ -502,6 +530,7 @@ button.chip:hover { border-color: var(--border); color: var(--text); }
 .cycle-head { position: absolute; color: var(--cycle); filter: drop-shadow(0 0 2px var(--cycle)) drop-shadow(0 0 6px var(--cycle)); animation: cycle-idle 1.8s ease-in-out infinite; }
 .cycle-head svg { display: block; width: 100%; height: 100%; overflow: visible; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 @keyframes cycle-idle { 50% { opacity: .7; } }
+.xterm:not(.focus) .cycle-head { opacity: .3; animation: none; }   /* only the focused terminal's cycle is lit, as only its cursor blinks */
 .cycle-trail { position: absolute; background: var(--cycle); box-shadow: 0 0 4px var(--cycle), 0 0 10px var(--cycle); opacity: .85; animation: cycle-fade .8s ease-out forwards; }
 @keyframes cycle-fade { to { opacity: 0; } }
 .tile-cover { position: absolute; inset: 0; cursor: zoom-in; z-index: 2; }
@@ -599,7 +628,7 @@ body.dock-dragging iframe, body.tab-dragging iframe { pointer-events: none; }
 .tw-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--working); flex: none; }
 textarea.skill-text {
   width: 100%; height: 340px; resize: vertical; margin-top: 8px; padding: 8px; border-radius: 4px; border: 1px solid var(--border);
-  background: var(--code-bg); color: var(--text); font: 12px/1.5 "Cascadia Mono", Consolas, monospace; white-space: pre; user-select: text;
+  background: var(--code-bg); color: var(--text); font: 12px/1.5 "Cascadia Mono", Consolas, Menlo, "DejaVu Sans Mono", monospace; white-space: pre; user-select: text;
 }
 .tw-tab.drop-before { box-shadow: inset 3px 0 0 var(--accent); }
 .tw-tab.drop-after { box-shadow: inset -3px 0 0 var(--accent); }
@@ -654,7 +683,7 @@ textarea.commit-msg { resize: vertical; min-height: 54px; height: 54px; user-sel
 .row .chev { width: 16px; display: flex; justify-content: center; color: var(--text-dim); flex: none; }
 .row .label { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .row .hint { color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.row .status { margin-left: auto; width: 14px; text-align: center; font-weight: 600; flex: none; font-family: Consolas, monospace; }
+.row .status { margin-left: auto; width: 14px; text-align: center; font-weight: 600; flex: none; font-family: Consolas, Menlo, "DejaVu Sans Mono", monospace; }
 .row .row-actions { display: none; margin-left: auto; }
 .row:hover .row-actions { display: flex; }
 .row:hover .row-actions + .status { margin-left: 4px; }
@@ -717,7 +746,7 @@ textarea.commit-msg { resize: vertical; min-height: 54px; height: 54px; user-sel
 .diff-summary { margin-right: 8px; color: var(--text-dim); }
 .diff-summary .add { color: var(--st-a); }
 .diff-summary .del { color: var(--st-d); }
-.diff-labels { display: flex; height: 24px; background: var(--panel); border-bottom: 1px solid var(--border-soft); flex: none; font-family: Consolas, monospace; }
+.diff-labels { display: flex; height: 24px; background: var(--panel); border-bottom: 1px solid var(--border-soft); flex: none; font-family: Consolas, Menlo, "DejaVu Sans Mono", monospace; }
 .diff-labels div { flex: 1; padding: 4px 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-dim); }
 .diff-labels div + div { border-left: 1px solid var(--border-soft); }
 #diffDoc.inline .diff-labels div + div { display: none; }
@@ -810,7 +839,7 @@ img.plugin-ic { width: 16px; height: 16px; flex: none; object-fit: contain; }
 /* ---------------------------------------------------------------- undo changes */
 .undo-confirm { display: flex; flex-direction: column; gap: 10px; }
 .undo-list { border: 1px solid var(--border); border-radius: 4px; background: var(--chrome-2); padding: 4px 0; max-height: 240px; overflow: auto; user-select: text; }
-.undo-file { display: flex; gap: 8px; padding: 2px 10px; font-family: Consolas, monospace; white-space: nowrap; }
+.undo-file { display: flex; gap: 8px; padding: 2px 10px; font-family: Consolas, Menlo, "DejaVu Sans Mono", monospace; white-space: nowrap; }
 .undo-file .status { width: 12px; font-weight: 600; flex: none; }
 .undo-note { color: var(--text-dim); }
 
@@ -854,6 +883,87 @@ img.plugin-ic { width: 16px; height: 16px; flex: none; object-fit: contain; }
 .project-all.active { color: var(--text); border-color: var(--border); }
 .project-add { margin-left: 2px; color: var(--text-dim); }
 .tile.off-project { display: none; }
+.project-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------------------------------------------------------------- the bar down the left (Hybrid and Left layouts)
+   body[data-nav] is the layout (applyNavLayout in app.js). Off the top, the projects row goes and its buttons join the
+   title bar; in Left the sessions are listed beneath their projects here, in place of the session tab row. */
+#navBar, #navSplitter { display: none; }
+body:is([data-nav="hybrid"], [data-nav="left"]) #navBar { display: flex; }
+body:is([data-nav="hybrid"], [data-nav="left"]) #navSplitter { display: block; }
+body:is([data-nav="hybrid"], [data-nav="left"]) #projectBar { display: none; }
+body[data-nav="left"] #titlebar { display: none; }   /* its buttons are in the bar down the left and in #docTools */
+#titlebar > .app-version { margin-left: 4px; }
+/* In Left, the tab row runs across the terminals and the side panel alike (applyNavLayout moves it into #main), with
+   the sidebar the full height beside it; the title bar's other buttons sit at its end (#docTools). */
+body[data-nav="left"] #main {
+  display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto auto; grid-template-rows: auto minmax(0, 1fr);
+}
+body[data-nav="left"] #navBar { grid-area: 1 / 1 / 3 / 2; }
+body[data-nav="left"] #navSplitter { grid-area: 1 / 2 / 3 / 3; }
+body[data-nav="left"] #main > .tab-scroller.doc { grid-area: 1 / 3 / 2 / 6; width: auto; min-width: 0; }
+body[data-nav="left"] #stage { grid-area: 2 / 3 / 3 / 4; min-height: 0; }
+body[data-nav="left"] #splitter { grid-area: 2 / 4 / 3 / 5; }
+body[data-nav="left"] #gitPanel { grid-area: 2 / 5 / 3 / 6; min-height: 0; }
+body[data-nav="left"] #navHead { height: 30px; }   /* level with the tab row */
+#docTools { display: none; flex: none; align-items: center; gap: 3px; height: 100%; padding: 0 4px 0 8px; margin-left: auto; }
+body[data-nav="left"] #docTools { display: flex; }
+#docTools .tb-btn { height: 24px; min-width: 24px; }
+#docTools .app-version { margin: 0 12px 0 2px; }   /* set apart from the buttons after it */
+#navHead > #btnGrid { flex: none; height: 24px; min-width: 24px; margin: 0 4px 0 -4px; }
+#navFoot { display: flex; align-items: center; gap: 2px; }
+#navFoot > #btnAdd { flex: none; padding: 0 8px; color: var(--text-dim); }
+#navFoot > #btnAdd:hover { color: var(--text); }
+
+#navBar { flex: none; flex-direction: column; min-width: 160px; min-height: 0; background: var(--chrome-3); }
+#navSplitter { width: 5px; flex: none; cursor: col-resize; background: var(--chrome); border-right: 1px solid var(--border-soft); }
+#navSplitter:hover, #navSplitter.dragging { background: var(--accent-strong); }
+#navHead { flex: none; display: flex; align-items: center; gap: 2px; height: 34px; padding: 0 6px 0 10px; border-bottom: 1px solid var(--border-soft); }
+#navHead .project-bar-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#navHead .project-all { height: 22px; padding: 0 8px; flex: none; }
+#navList { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding: 8px 6px; scrollbar-width: thin; }
+#navFoot { flex: none; padding: 6px; border-top: 1px solid var(--border-soft); }
+.nav-hint { padding: 4px; color: var(--text-dim); font-size: 12px; line-height: 1.45; }
+
+.nav-group { --proj: #8a8a92; display: flex; flex-direction: column; gap: 3px; }
+#navList .project-tab { display: flex; width: 100%; height: 28px; border-radius: 6px; }
+#navList .project-name { flex: 1; min-width: 0; }
+#navList .project-name .badge { margin-left: auto; }
+.nav-view { flex: none; margin-right: 4px; color: var(--text-dim); visibility: hidden; }
+.project-tab:hover .nav-view, .nav-view:focus-visible, .nav-view.active { visibility: visible; }
+.nav-view.active { color: var(--text); background: color-mix(in srgb, var(--proj) 30%, transparent); }
+
+/* A project's sessions, beneath it on a line in its colour */
+.nav-sessions { display: flex; flex-direction: column; gap: 1px; margin-left: 13px; padding-left: 6px; border-left: 2px solid color-mix(in srgb, var(--proj) 45%, transparent); }
+.nav-sessions.unnamed { margin-left: 0; padding-left: 0; border-left: 0; }
+#navList .session-tab { display: flex; width: 100%; height: 28px; padding-left: 8px; }
+body:not(.no-nav-branches) #navList .session-tab:has(.tab-branch:not(:empty)) { height: 38px; }   /* room for the branch beneath the name */
+body.no-nav-branches #navList .tab-branch { display: none; }   /* Layout ▸ Show branches, off */
+#navList .session-tab .tab-label { flex: 1; min-width: 0; }
+#navList .session-tab .tab-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* A session's name with the branch it's on beneath it (tabBranch in app.js). */
+#navList .tab-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+#navList .tab-text .tab-name { white-space: nowrap; }
+.tab-branch { display: inline-flex; align-items: center; gap: 3px; min-width: 0; font-size: 11px; color: var(--text-faint); }
+.tab-branch:empty { display: none; }
+.tab-branch span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab-branch svg.ic { width: 11px; height: 11px; flex: none; }
+#navList .session-tab .key { margin-left: auto; min-width: 40px; text-align: right; }
+/* Which agent a session runs and where, before its Ctrl+N (sessionMarks in app.js) */
+.session-marks { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; flex: none; }
+#navList .session-marks + .key { margin-left: 2px; }   /* the marks take the free space, so they line up down the list */
+.session-mark { display: inline-flex; color: var(--text-faint); }
+.session-mark svg.ic { width: 12px; height: 12px; }
+.session-mark.agent.colored { --agent: var(--agent-dark); color: var(--agent); }
+:root[data-theme="light"] .session-mark.agent.colored { --agent: var(--agent-light); }
+.session-mark.where.remote { color: var(--link); }   /* a session elsewhere stands out from the ones here, as its tab's server chip does */
+.session-mark.where.down { color: var(--danger); }
+#navList .session-add { align-self: flex-start; margin: 2px 0 2px 6px; }
+.nav-group .session-add { color: var(--proj); border-color: color-mix(in srgb, var(--proj) 45%, transparent); }
+.nav-group .session-add:hover { border-color: color-mix(in srgb, var(--proj) 75%, transparent); background: color-mix(in srgb, var(--proj) 16%, transparent); }
+/* Dragging down the list: the bar goes above or below the row the drop lands beside. */
+#navList .drop-before { box-shadow: inset 0 3px 0 var(--accent); }
+#navList .drop-after { box-shadow: inset 0 -3px 0 var(--accent); }
 .stack { display: flex; flex-direction: column; gap: 6px; }
 .field select { height: 28px; }
 
@@ -886,6 +996,20 @@ img.plugin-ic { width: 16px; height: 16px; flex: none; object-fit: contain; }
 .swatch-row .proj-tag { margin-left: 8px; }
 .swatch-auto { display: inline-flex; align-items: center; gap: 6px; }
 .swatch-auto:disabled { opacity: .5; cursor: default; }
+/* How solid the terminals are: a small slider in a tile's bottom-right corner (veilSlider in app.js), only under a theme
+   that lets you see through (data-veil-slider): always on the open terminal, on the others while the pointer is over
+   them; faint until the pointer is on it. It sits clear of the conversation rail, and above the "Starts when you open
+   it" badge when that's showing. */
+.tile-veil {
+  position: absolute; right: 24px; bottom: 8px; z-index: 3; display: none; align-items: center; gap: 6px; padding: 3px 8px;
+  border-radius: 10px; background: color-mix(in srgb, var(--panel) 85%, transparent); border: 1px solid var(--border-soft);
+  color: var(--text-dim); font-size: 11px; opacity: .5; transition: opacity .15s;
+}
+:root[data-veil-slider] :is(.tile:hover, .tile.expanded) .tile-veil { display: inline-flex; }
+.tile-veil:hover, .tile-veil:focus-within { opacity: 1; }
+.tile-veil input[type=range] { width: 84px; height: 12px; margin: 0; accent-color: var(--accent-strong); cursor: pointer; }
+.tile-veil span { min-width: 3.5ch; text-align: right; font-variant-numeric: tabular-nums; }
+.tile-exited:not([hidden]) ~ .tile-veil { bottom: 44px; }
 
 /* Status dots dialog: a card per style, each showing every state moving. */
 .dot-style-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 10px; }
@@ -1011,7 +1135,7 @@ body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; user-selec
 .chat-tool { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 1px 0; }
 .chat-tool::before { content: '● '; color: var(--ok); }
 .chat-tool-name { color: var(--text); font-weight: 600; }
-.chat-tool-detail { font-family: "Cascadia Mono", Consolas, monospace; font-size: 11.5px; }
+.chat-tool-detail { font-family: "Cascadia Mono", Consolas, Menlo, "DejaVu Sans Mono", monospace; font-size: 11.5px; }
 
 /* Claude's Markdown */
 .md > :first-child { margin-top: 0; }
@@ -1020,9 +1144,9 @@ body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; user-selec
 .md li > ul, .md li > ol { margin: 2px 0; }
 .md .md-h { font-weight: 600; margin: 12px 0 6px; color: var(--text-strong); }
 .md .md-h1 { font-size: 17px; } .md .md-h2 { font-size: 15px; } .md .md-h3, .md .md-h4, .md .md-h5, .md .md-h6 { font-size: 13.5px; }
-.md code.md-inline { font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; padding: 1px 4px; border-radius: 3px; background: var(--bubble); color: var(--code-fg); }
+.md code.md-inline { font-family: "Cascadia Mono", Consolas, Menlo, "DejaVu Sans Mono", monospace; font-size: 12px; padding: 1px 4px; border-radius: 3px; background: var(--bubble); color: var(--code-fg); }
 .md pre.md-code { padding: 8px 10px; border-radius: 6px; background: var(--code-bg); border: 1px solid var(--border-soft); overflow-x: auto; }
-.md pre.md-code code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; white-space: pre; }
+.md pre.md-code code { font-family: "Cascadia Mono", Consolas, Menlo, "DejaVu Sans Mono", monospace; font-size: 12px; white-space: pre; }
 .md blockquote { padding-left: 10px; border-left: 3px solid var(--border); color: var(--text-dim); }
 .md table { border-collapse: collapse; display: block; overflow-x: auto; }
 .md th, .md td { border: 1px solid var(--border); padding: 3px 8px; text-align: left; vertical-align: top; }
@@ -1095,7 +1219,6 @@ body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; user-selec
 .perms-radios-sub { margin-top: 6px; }
 .relay-tile { flex: none; }
 button.chip.relay-tile { color: var(--attention); }
-#btnPerms { position: relative; }
 .log-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .log-bar .dim { font-size: 12px; }
 .log-filter { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; }
@@ -1139,7 +1262,7 @@ button.chip.relay-tile { color: var(--attention); }
 .pv-row:focus-visible { outline: 1px solid var(--focus); outline-offset: -1px; }
 .pv-row .dot { justify-self: center; }
 .pv-branch { min-width: 0; display: grid; gap: 1px; }
-.pv-branch b { font-weight: 500; font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pv-branch b { font-weight: 500; font-family: "Cascadia Mono", Consolas, Menlo, "DejaVu Sans Mono", monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pv-branch span { color: var(--text-faint); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pv-session { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pv-none { color: var(--text-faint); font-style: italic; }
@@ -1165,7 +1288,7 @@ button.chip.relay-tile { color: var(--attention); }
 .pv-turn .t { color: var(--text-faint); font-size: 11px; padding-top: 2px; white-space: nowrap; }
 .pv-turn .you { color: var(--text); font-weight: 500; white-space: pre-wrap; }
 .pv-turn .cl { color: var(--text-dim); }
-.pv-files { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; }
+.pv-files { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; font-family: "Cascadia Mono", Consolas, Menlo, "DejaVu Sans Mono", monospace; font-size: 12px; }
 .pv-files li { display: flex; gap: 8px; align-items: center; min-width: 0; }
 .pv-files .s { width: 12px; text-align: center; font-weight: 600; flex: none; }
 .pv-files .s.M { color: var(--st-m); } .pv-files .s.A, .pv-files .s.\? { color: var(--st-a); } .pv-files .s.D { color: var(--st-d); } .pv-files .s.R { color: var(--st-r); }
@@ -1178,7 +1301,7 @@ button.chip.relay-tile { color: var(--attention); }
 .pv-overlap:hover { color: var(--text); }
 .pv-overlap.none:empty { display: none; }
 .pv-overlap .pv-tri { color: var(--attention); }
-.pv-overlap code { color: var(--text); font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; }
+.pv-overlap code { color: var(--text); font-family: "Cascadia Mono", Consolas, Menlo, "DejaVu Sans Mono", monospace; font-size: 12px; }
 .pv-legend { color: var(--text-faint); font-size: 12px; display: flex; gap: 14px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
 .pv-legend span { display: inline-flex; align-items: center; gap: 5px; }
 
@@ -1191,7 +1314,7 @@ button.chip.relay-tile { color: var(--attention); }
 .panel-md { padding: 10px 12px; }
 .panel-item { display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border-bottom: 1px solid var(--border-soft); }
 .panel-item-top { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.panel-key { font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; font-weight: 600; }
+.panel-key { font-family: "Cascadia Mono", Consolas, Menlo, "DejaVu Sans Mono", monospace; font-size: 12px; font-weight: 600; }
 .panel-item-top a { color: var(--link); text-decoration: none; }
 .panel-item-top a:hover, .panel-item-title a:hover { text-decoration: underline; }
 .panel-item-title { font-weight: 600; word-break: break-word; }
@@ -1315,3 +1438,85 @@ svg.sparkline circle { fill: var(--accent); }
 .update-what { color: var(--text-dim); }
 .update-status { margin-top: 8px; }
 .update-status.error { color: var(--danger); }
+
+/* The branch button in the Git toolbar and its picker (after Visual Studio's): filter, New Branch, Locals / Remotes */
+.branch-btn {
+  display: inline-flex; align-items: center; gap: 6px; min-width: 0; height: 24px; padding: 0 4px 0 6px; margin-left: -6px;
+  border: 1px solid transparent; border-radius: 4px; background: transparent; color: var(--text); cursor: pointer;
+}
+.branch-btn:hover, .branch-btn.open { background: var(--hover-strong); }
+.branch-btn > svg.ic:last-child { width: 12px; height: 12px; color: var(--text-dim); flex: none; }
+.branch-picker { width: 360px; max-width: calc(100vw - 8px); padding: 8px; }
+.bp-head { display: flex; gap: 6px; }
+.bp-filter { flex: 1; min-width: 0; height: 28px; background: var(--chrome-2); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font: inherit; padding: 4px 6px; outline: none; user-select: text; }
+.bp-filter:focus { border-color: var(--focus); }
+.bp-head .btn { height: 28px; flex: none; }
+.bp-tabs { display: flex; gap: 14px; padding: 8px 4px 4px; }
+.bp-tab { border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--text-dim); padding: 2px 2px 3px; cursor: pointer; }
+.bp-tab:hover { color: var(--text); }
+.bp-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.bp-list { max-height: 320px; overflow-y: auto; margin-top: 2px; }
+.bp-row .bp-name { overflow: hidden; text-overflow: ellipsis; }
+.bp-row.current .bp-name { font-weight: 700; }
+.bp-row.elsewhere { color: var(--text-dim); }
+.bp-row .bp-note { margin-left: auto; padding-left: 16px; color: var(--text-faint); flex: none; }
+.bp-row:hover .bp-note, .bp-row.active .bp-note { color: #ddd; }
+.bp-list .git-message { padding: 10px 6px; }
+
+/* Git Changes' status bar (after Visual Studio's): ↑↓, changed files, branch ^ */
+.git-statusbar {
+  display: flex; align-items: center; justify-content: flex-end; gap: 2px; flex: none; min-width: 0; padding: 2px 6px;
+  border-top: 1px solid var(--border); background: var(--chrome-2); color: var(--text-dim);
+}
+.sb-item {
+  display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 6px; flex: none; white-space: nowrap;
+  border: 0; border-radius: 3px; background: transparent; color: inherit; font: inherit;
+}
+.sb-item svg.ic { width: 13px; height: 13px; }
+button.sb-item { cursor: pointer; }
+button.sb-item:hover, .sb-item.open { background: var(--hover-strong); color: var(--text); }
+.sb-branch { min-width: 0; flex: 0 1 auto; color: var(--text); }
+.sb-branch .name { overflow: hidden; text-overflow: ellipsis; }
+.branch-picker { overflow: hidden; display: flex; flex-direction: column; }
+.branch-picker .bp-list { flex: 1 1 auto; min-height: 0; }
+
+/* A window showing a server's sessions: which server, before the version. */
+.remote-badge {
+  margin-left: auto; flex: none; display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px;
+  border-radius: 11px; background: var(--chrome-2, transparent); border: 1px solid var(--border-soft);
+  font-size: 11.5px; font-weight: 600; color: var(--text, inherit); white-space: nowrap; max-width: 260px; overflow: hidden; text-overflow: ellipsis;
+}
+.remote-badge svg.ic { width: 12px; height: 12px; flex: none; }
+.remote-badge + .app-version { margin-left: 0; }
+.host-error { white-space: pre-wrap; max-height: 160px; overflow: auto; font-size: 12px; padding: 8px; border-radius: 4px; background: var(--chrome-3); }
+
+/* A server's folders and files (serverBrowser): a window showing a server's sessions can't use this computer's file manager. */
+.file-browser { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.fb-bar { display: flex; align-items: center; gap: 4px; }
+.fb-bar .fb-path { flex: 1; min-width: 0; height: 28px; user-select: text; }
+.fb-list { border: 1px solid var(--border); border-radius: 4px; height: 280px; overflow: auto; background: var(--chrome-2); outline: none; }
+.fb-list:focus-visible { border-color: var(--accent); }
+.fb-item { display: flex; align-items: center; gap: 8px; height: 24px; padding: 0 8px; cursor: default; white-space: nowrap; }
+.fb-item:hover { background: var(--hover); }
+.fb-item.selected { background: var(--accent-strong); color: #fff; }
+.fb-item.hidden-entry:not(.selected) { color: var(--text-dim); }
+.fb-item svg.ic { width: 14px; height: 14px; flex: none; }
+.fb-item .name { overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
+.fb-item .size { color: var(--text-faint); font-size: 12px; }
+.fb-item.selected .size { color: inherit; }
+.fb-empty { padding: 8px; color: var(--text-faint); }
+.fb-foot { display: flex; align-items: center; gap: 12px; min-height: 28px; }
+.fb-status { flex: 1; min-width: 0; color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fb-hidden { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+/* Sessions started by agents: the mark on their tile, and the dialog asking you first */
+.chip.started-by { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip.started-by svg.ic { width: 12px; height: 12px; flex: none; }
+.spawn-ask { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 8px 0 10px; }
+.spawn-ask .k, .k.dim { color: var(--text-dim); }
+.spawn-ask span:not(.k) { word-break: break-all; }
+.spawn-prompt {
+  max-height: 180px; overflow: auto; margin: 4px 0 10px; padding: 8px; white-space: pre-wrap; word-break: break-word; user-select: text;
+  background: var(--chrome-2); border: 1px solid var(--border); border-radius: 4px; font: inherit;
+}
+.spawn-warn { padding: 6px 8px; border-radius: 4px; background: var(--info-bg); border: 1px solid var(--info-border); }
+.spawn-ask code { word-break: break-all; }

@@ -23,7 +23,7 @@ public class PanelTests : IDisposable
 
     // ---- the command line
 
-    [Fact]
+    [WindowsFact]
     public void Claude_is_connected_to_the_panel_server_and_its_tools_are_allowed() =>
         Assert.Equal("claude --continue --mcp-config \"C:\\a b\\mcp.json\" --allowedTools mcp__llamatree",
             ClaudeAgent.PrepareCommand("claude --continue", null, () => true, mcpConfig: "C:\\a b\\mcp.json"));
@@ -35,7 +35,7 @@ public class PanelTests : IDisposable
     public void The_panel_server_is_only_added_to_an_interactive_claude_without_its_own_config(string command) =>
         Assert.Equal(command, ClaudeAgent.PrepareCommand(command, null, () => true, mcpConfig: "M.json"));
 
-    [Fact]
+    [WindowsFact]
     public void A_session_started_from_a_panel_is_a_new_conversation_starting_with_the_prompt()
     {
         var line = ClaudeAgent.PrepareCommand("claude --continue --model opus", "abc-123", () => true, "T.json", "M.json",
@@ -48,7 +48,7 @@ public class PanelTests : IDisposable
     public void A_new_conversation_without_a_prompt_on_the_command_line_still_drops_continue() =>
         Assert.Equal("claude", ClaudeAgent.PrepareCommand("claude --continue", null, () => true, newConversation: true));
 
-    [Theory]
+    [WindowsTheory]
     [InlineData("plain", "\"plain\"")]
     [InlineData("say \"hi\"", "\"say \\\"hi\\\"\"")]
     [InlineData(@"C:\dir\", "\"C:\\dir\\\\\"")]               // trailing backslashes doubled before the closing quote
@@ -155,7 +155,7 @@ public class PanelTests : IDisposable
             """));
         Assert.Null(panel.Items);
         Assert.Equal(["In progress", "Backlog"], panel.Groups!.Select(g => g.Title));
-        Assert.True(panel.Groups[1].Collapsed);
+        Assert.True(panel.Groups![1].Collapsed);
         Assert.False(panel.Groups[0].Collapsed);
         Assert.Equal("LT-482", new PanelStore(StoreFile).Snapshot()[0].Groups![0].Items[0].Key);
 
@@ -185,7 +185,7 @@ public class PanelTests : IDisposable
         var todo = Assert.Single(panel.Groups!);
         Assert.Single(todo.Items);
         Assert.Equal(["High", "Low"], todo.Groups!.Select(g => g.Title));
-        Assert.Equal("LT-1", todo.Groups[0].Groups![0].Items[0].Key);
+        Assert.Equal("LT-1", todo.Groups![0].Groups![0].Items[0].Key);
         Assert.Empty(todo.Groups[0].Items);   // a group may hold only groups
         Assert.Equal(4, panel.Groups!.SelectMany(PanelSpec.Flatten).Count());
 
@@ -235,7 +235,7 @@ public class PanelTests : IDisposable
         Assert.False(item.Checked);
         Assert.Equal((3d, 8d), (item.Progress!.Value, item.Progress.Max));
         Assert.Equal(["copy", "here"], item.Buttons!.Select(b => b.Target));
-        Assert.Equal("git checkout fix/e-1", item.Buttons[0].Prompt);
+        Assert.Equal("git checkout fix/e-1", item.Buttons![0].Prompt);
         Assert.Null(panel.Groups[0].Items[1].Progress);
     }
 

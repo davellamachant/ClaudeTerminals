@@ -8,7 +8,13 @@ using System.Text.RegularExpressions;
 namespace LlamaTree.Updates;
 
 /// <param name="Sha256">What the installer must hash to: GitHub's own digest of the file, or else the one in the notes.</param>
-internal sealed record UpdateInfo(Version Version, string Name, string PageUrl, string Notes, string AssetName, string AssetUrl, long Size, string? Sha256);
+/// <param name="ForThisMachine">Whether the asset is the one this copy installs itself from (on macOS, or a Linux release
+/// without its packages, it is the Windows installer, there only to say the release exists).</param>
+internal sealed record UpdateInfo(Version Version, string Name, string PageUrl, string Notes, string AssetName, string AssetUrl, long Size, string? Sha256,
+    bool ForThisMachine = true)
+{
+    public bool CanInstall => Sha256 != null && ForThisMachine && UpdateService.CanInstallHere;
+}
 
 /// <summary>
 /// Updates from the GitHub releases of the public repository: finds the latest release, downloads its installer,
@@ -23,12 +29,24 @@ internal static partial class UpdateService
     private static readonly string? TestUrl =
         AppProfile.Variable("LLAMATREE_UPDATE_URL", "CLAUDE_TERMINALS_UPDATE_URL") is { } url && !string.IsNullOrWhiteSpace(url) ? url : null;   // set but empty = not set
 
+    /// <summary>Whether a local test server stands in for GitHub (LLAMATREE_UPDATE_URL).</summary>
+    public static bool Testing => TestUrl != null;
+
     private static string LatestUrl => TestUrl ?? $"https://api.github.com/repos/{Repo}/releases/latest";
 
     // Before Http: static initializers run in order, and the client's User-Agent carries the version.
     public static Version CurrentVersion { get; } = Normalize(Assembly.GetEntryAssembly()?.GetName().Version ?? new Version(0, 0, 0));
 
     private static readonly HttpClient Http = CreateClient();
+
+    /// <summary>How this copy was installed: decides which release asset it updates from, and how.</summary>
+    public static InstallKind Install => install.Value;
+
+    private static readonly Lazy<InstallKind> install = new(() =>
+        OperatingSystem.IsWindows() ? InstallKind.Windows : OperatingSystem.IsLinux() ? LinuxUpdate.Detect() : InstallKind.None);
+
+    /// <summary>Whether an update can install itself; otherwise (macOS for now) the dialog links the release page.</summary>
+    public static bool CanInstallHere => Install != InstallKind.None;
 
     private static HttpClient CreateClient()
     {
@@ -52,11 +70,37 @@ internal static partial class UpdateService
         return info != null && info.Version > CurrentVersion ? info : null;
     }
 
+    /// <summary>
+    /// The files of the release for <paramref name="version"/> (a server is updated to match this computer, see
+    /// ServerUpdate), each with GitHub's SHA-256 of it: name → (download address, hash). Only files GitHub gave a digest
+    /// for are listed. Throws when there's no such release.
+    /// </summary>
+    public static async Task<Dictionary<string, (string Url, string Sha256)>> ReleaseFilesAsync(Version version, CancellationToken ct = default)
+    {
+        var url = TestUrl ?? $"https://api.github.com/repos/{Repo}/releases/tags/v{version}";
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+        using var response = await Http.SendAsync(request, ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            throw new InvalidOperationException($"There's no LlamaTree {version} release on GitHub to update to.");
+        response.EnsureSuccessStatusCode();
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+        var files = new Dictionary<string, (string, string)>(StringComparer.OrdinalIgnoreCase);
+        if (doc.RootElement.TryGetProperty("assets", out var assets) && assets.ValueKind == JsonValueKind.Array)
+            foreach (var a in assets.EnumerateArray())
+                if (Str(a, "name") is { } name && Str(a, "browser_download_url") is { } link &&
+                    Str(a, "digest") is { } digest && digest.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
+                    files[name] = (link, digest[7..].ToLowerInvariant());
+        return files;
+    }
+
     [GeneratedRegex(@"SHA-256[\s\S]{0,300}?\b([0-9a-fA-F]{64})\b")]
     private static partial Regex NotesHash();
 
     /// <summary>Reads GitHub's "latest release" answer; null when it has no usable version or installer.</summary>
-    internal static UpdateInfo? Parse(string json)
+    internal static UpdateInfo? Parse(string json) => Parse(json, Install);
+
+    internal static UpdateInfo? Parse(string json, InstallKind kind)
     {
         using var doc = JsonDocument.Parse(json);
         var r = doc.RootElement;
@@ -67,16 +111,19 @@ internal static partial class UpdateService
         if (!r.TryGetProperty("assets", out var assets) || assets.ValueKind != JsonValueKind.Array) return null;
 
         // The installer for this version. Releases also carry it under its name from before the rename, for copies that
-        // only know that one, so it is the fallback.
-        string[] wanted = [$"LlamaTree-Setup-{version}.exe", $"ClaudeTerminals-Setup-{version}.exe"];
+        // only know that one, so it is the fallback. On Linux, the package for how this copy was installed comes first;
+        // the Windows installer still shows the release exists when that package is missing (or on macOS).
+        string[] ours = kind == InstallKind.Windows ? [] : LinuxUpdate.AssetName(kind, version) is { } linux ? [linux] : [];
+        string[] wanted = [.. ours, $"LlamaTree-Setup-{version}.exe", $"ClaudeTerminals-Setup-{version}.exe"];
         JsonElement? asset = null;
-        foreach (var want in wanted)
+        var matched = -1;
+        for (var i = 0; i < wanted.Length && asset == null; i++)
         {
             foreach (var a in assets.EnumerateArray())
-                if (string.Equals(Str(a, "name"), want, StringComparison.OrdinalIgnoreCase)) { asset = a; break; }
-            if (asset != null) break;
+                if (string.Equals(Str(a, "name"), wanted[i], StringComparison.OrdinalIgnoreCase)) { asset = a; matched = i; break; }
         }
         if (asset is not { } chosen) return null;
+        var forThisMachine = kind == InstallKind.Windows || matched < ours.Length;
 
         var notes = Str(r, "body") ?? "";
         var digest = Str(chosen, "digest");
@@ -93,7 +140,8 @@ internal static partial class UpdateService
             Str(chosen, "name")!,
             Str(chosen, "browser_download_url") ?? "",
             chosen.TryGetProperty("size", out var size) && size.TryGetInt64(out var bytes) ? bytes : 0,
-            sha);
+            sha,
+            forThisMachine);
     }
 
     /// <summary>Downloads the installer into a new temporary folder and checks it. Returns its path.</summary>
@@ -134,13 +182,13 @@ internal static partial class UpdateService
     }
 
     /// <summary>
-    /// Runs the installer once this process has exited (setup won't replace a running copy): silently, with its
-    /// progress window, then reopening the app. A hidden PowerShell waits for the exit.
+    /// Runs the installer once <paramref name="processes"/> (the session host and its window) have exited, as setup won't
+    /// replace a running copy: silently, with its progress window, then reopening the app. A hidden PowerShell waits.
     /// </summary>
-    public static void InstallAfterExit(string installer)
+    public static void InstallAfterExit(string installer, int[] processes)
     {
         static string Quote(string s) => "'" + s.Replace("'", "''") + "'";
-        var script = $"Wait-Process -Id {Environment.ProcessId} -Timeout 120 -ErrorAction SilentlyContinue; " +
+        var script = $"Wait-Process -Id {string.Join(',', processes)} -Timeout 120 -ErrorAction SilentlyContinue; " +
                      $"Start-Process -FilePath {Quote(installer)} -ArgumentList '/SILENT','/SUPPRESSMSGBOXES','/NORESTART','/RELAUNCH=1'";
         var powershell = Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe");
         var psi = new ProcessStartInfo(powershell)

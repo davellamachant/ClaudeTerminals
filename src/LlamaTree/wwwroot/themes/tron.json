@@ -4,6 +4,7 @@
   "font": "Bahnschrift",
   "glow": true,
   "grid": true,
+  "terminalBackground": 100,
   "cursor": "light-cycle",
   "monochrome": true,
   "accents": [

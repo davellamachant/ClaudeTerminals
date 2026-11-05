@@ -7,57 +7,113 @@ using LlamaTree.Relay;
 using LlamaTree.Sessions;
 using LlamaTree.Terminal;
 using LlamaTree.Updates;
-using Microsoft.Web.WebView2.Core;
-using Microsoft.Web.WebView2.WinForms;
+using LlamaTree.Hosting;
+using LlamaTree.Platform;
 
 namespace LlamaTree;
 
 /// <summary>
-/// Hosts the whole UI in a WebView2 (xterm.js terminals + Monaco diffs) and bridges it to
-/// ConPTY sessions and git through JSON web messages.
+/// The app behind the page (xterm.js terminals + Monaco diffs): its sessions in pseudo terminals, git, panels and
+/// plugins, bridged to the page through JSON messages. It runs in the session host (see <see cref="SessionHost"/>),
+/// so sessions carry on while no window is open; the window that shows the page attaches to it (<see cref="IHostWindow"/>).
+/// Everything here runs on the host's app thread.
 /// </summary>
-internal sealed class MainForm : Form
+internal sealed partial class AppHost
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
-    /// <summary>The only document allowed in the WebView, and the only one whose messages the host acts on.</summary>
-    private const string AppPage = "https://app.local/index.html";
-
-    private readonly WebView2 webView = new() { Dock = DockStyle.Fill, DefaultBackgroundColor = Color.FromArgb(0x1f, 0x1f, 0x1f) };
+    private readonly IHostWindow window;
     private readonly Dictionary<string, TerminalSession> sessions = [];
     private readonly List<string> order = [];
     private readonly List<ProjectInfo> projects = ProjectStore.Load();
     private readonly Dictionary<string, StringBuilder> pendingOutput = [];
-    private readonly System.Windows.Forms.Timer flushTimer = new() { Interval = 16 };
-    private bool webReady;
-    private bool closingForUpdate;
+    /// <summary>Each session's recent output, shown by a window that attaches while it runs.</summary>
+    private readonly Dictionary<string, OutputTail> tails = [];
+    /// <summary>Sessions to redraw at their next resize: a window has just attached, and its terminals start empty.</summary>
+    private readonly HashSet<string> repaint = [];
+    private readonly System.Threading.Timer flushTimer;
+    private int flushQueued;
+    private volatile bool webReady;   // read by sessions' output threads too
+    private bool shutDown;
     private UpdateInfo? update;
-    /// <summary>The count of users (see <see cref="TelemetryService"/>): one request an hour, if you've said yes; looked at every ten minutes.</summary>
-    private readonly System.Windows.Forms.Timer countTimer = new() { Interval = 600_000 };
+    /// <summary>
+    /// The count of users (see <see cref="TelemetryService"/>): one request an hour, if you've said yes. Started when the
+    /// page is first ready, it looks 20 seconds later (so it never competes with the start) and then every ten minutes.
+    /// </summary>
+    private readonly System.Threading.Timer countTimer;
+    private bool countStarted;
+
+    /// <summary>The window title: shown in the taskbar, Alt+Tab and the Dock.</summary>
+    public static string Title => $"LlamaTree {UpdateService.CurrentVersion}";
+
+    /// <summary>Whether any session's program is running.</summary>
+    public bool AnyRunning => sessions.Values.Any(s => s.IsRunning);
+
+    /// <summary>A session started or ended (on the app thread).</summary>
+    public event Action? RunningChanged;
+
+    /// <summary>The app should end: the sessions were stopped on the way out, or an update is about to install.</summary>
+    public event Action? QuitRequested;
+
+    /// <summary>
+    /// How the window reached this host when it's on another computer (its SSH target), else null. Then nothing opens on
+    /// this machine's desktop (no one is looking at it): a file opens on the window's computer, which is sent a copy,
+    /// and a folder in the page's folder browser. This copy isn't updated from the window: a server updates its
+    /// LlamaTree as it does its other packages.
+    /// </summary>
+    public string? Remote { get; set; }
+
+    /// <summary>Files on their way from a window on another computer, pasted into a session.</summary>
+    private readonly ServerFiles.Uploads uploads = new(ServerFiles.UploadFolder);
+
+    /// <summary>Opens a folder: in the file manager, or for a window on another computer, in the page's folder browser.</summary>
+    private void OpenFolder(string path)
+    {
+        if (Remote != null) Post(new { type = "files.browse", path });
+        else Desktop.OpenExternal(path);
+    }
+
+    /// <summary>Shows a file or folder in the folder it's in.</summary>
+    private void ShowInFolder(string path)
+    {
+        if (Remote != null) Post(new { type = "files.browse", path = Path.GetDirectoryName(path) ?? path, select = Path.GetFileName(path) });
+        else Desktop.ShowInFolder(path);
+    }
+
+    /// <summary>Opens a file for viewing (never running it): here, or on a window's computer, which is sent a copy. Off the app thread.</summary>
+    private void OpenFile(string path)
+    {
+        if (Remote != null) window.SendFile(path);
+        else Desktop.OpenFileForViewing(path);
+    }
 
     /// <summary>Each session's conversation, noted just before an update restarts the app (see <see cref="TerminalSession.ResumeOnce"/>).</summary>
     private static string ResumeFile => Path.Combine(SessionStore.AppDataFolder, "resume-after-update.json");
 
-    public MainForm()
+    public AppHost(IHostWindow window)
     {
-        Text = $"LlamaTree {UpdateService.CurrentVersion}";   // shown in the taskbar and Alt+Tab
-        BackColor = Color.FromArgb(0x1f, 0x1f, 0x1f);
-        StartPosition = FormStartPosition.CenterScreen;
-        Size = new Size(1600, 1000);
-        WindowState = FormWindowState.Maximized;
-        var icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
-        if (icon != null) Icon = icon;
-        Controls.Add(webView);
-
-        flushTimer.Tick += (_, _) => FlushOutput();
-        flushTimer.Start();
-        countTimer.Tick += (_, _) => _ = TelemetryService.PingIfDueAsync(CountUsage());
+        this.window = window;
+        appThread = Environment.CurrentManagedThreadId;   // made on the host's app thread
+        Terminal.SessionEnvironment.Warm();   // macOS, Linux: the login shell's environment, read while the page loads
+        // Output is sent to the page in batches, at most 60 times a second.
+        flushTimer = new System.Threading.Timer(_ =>
+        {
+            lock (pendingOutput) if (pendingOutput.Count == 0) return;
+            if (Interlocked.Exchange(ref flushQueued, 1) == 0) RunOnUi(() => { flushQueued = 0; FlushOutput(); });
+        }, null, 16, 16);
+        conversationTimer = new System.Threading.Timer(_ => RunOnUi(FollowConversations), null, 10_000, 10_000);
+        countTimer = new System.Threading.Timer(_ => RunOnUi(() => _ = TelemetryService.PingIfDueAsync(CountUsage())), null, Timeout.Infinite, Timeout.Infinite);
 
         var tidied = false;
         foreach (var info in SessionStore.Load())
         {
             // A session whose project no longer exists (e.g. projects.json was lost) just has no project.
             if (info.Project != null && !projects.Any(p => p.Id == info.Project)) info.Project = null;
+            if (info.Server != null)
+            {
+                AddServerSession(info);   // run by its server's LlamaTree (see AppHost.Servers)
+                continue;
+            }
             tidied |= TidyConversation(info);
             AddSessionRuntime(info);
         }
@@ -69,9 +125,6 @@ internal sealed class MainForm : Form
         }
         if (tidied) SaveSessions();
         StartPanels();
-
-        conversationTimer.Tick += (_, _) => FollowConversations();
-        conversationTimer.Start();
     }
 
     // ---------------------------------------------------------------- each session's own conversation
@@ -106,7 +159,7 @@ internal sealed class MainForm : Form
         return noted == null;
     }
 
-    private readonly System.Windows.Forms.Timer conversationTimer = new() { Interval = 10_000 };
+    private readonly System.Threading.Timer conversationTimer;
     private bool following;
 
     /// <summary>
@@ -118,12 +171,13 @@ internal sealed class MainForm : Form
     {
         if (following) return;
         var running = sessions.Values.Where(s => s.IsRunning && TerminalSession.CanTrackConversation(s.Info.Command))
-            .Select(s => (Session: s, Pids: s.ProcessIds(), Others: OthersConversations(s))).ToList();
+            .Select(s => (Session: s, Others: OthersConversations(s))).ToList();
         if (running.Count == 0) return;
         following = true;
         try
         {
-            var live = await Task.Run(() => running.Select(r => (r.Session, Id: r.Session.Agent?.LiveConversation(r.Session, r.Pids, r.Others))).ToList());
+            // Off the window's thread: finding each session's processes reads the process table (on macOS, runs ps).
+            var live = await Task.Run(() => running.Select(r => (r.Session, Id: r.Session.Agent?.LiveConversation(r.Session, r.Session.ProcessIds(), r.Others))).ToList());
             var changed = false;
             // Two sessions started together in one folder could both see the same new conversation (Codex's are told
             // apart only by folder and time): the first takes it.
@@ -171,13 +225,221 @@ internal sealed class MainForm : Form
     /// <summary>Your answers about plugins (see PluginGrants), kept in plugin-grants.json.</summary>
     private readonly PluginGrants grants = new(Path.Combine(SessionStore.AppDataFolder, "plugin-grants.json"));
 
+    /// <summary>Sessions starting and driving others (start_session and the rest); what each may do is kept in control.json.</summary>
+    private SessionControl? control;
+
+    /// <summary>The host's app thread, where everything here runs (see ControlHost.OnUi).</summary>
+    private readonly int appThread;
+
+    private SessionControl Driving => control ??= new SessionControl(
+        new ControlPolicy(Path.Combine(SessionStore.AppDataFolder, "control.json")), new ControlHost(this), () => relay.Policy.Paused);
+
+    /// <summary>What may be done, what's being asked, and the log's version, as the page reads them.</summary>
+    private object ControlState() => new
+    {
+        rules = Driving.Policy.Rules().Select(r => new { ability = r.Ability.ToString().ToLowerInvariant(), scope = r.Scope, decision = r.Decision.ToString().ToLowerInvariant() }),
+        pending = Driving.Pending().Select(SpawnAsk),
+        logVersion = Driving.LogVersion,
+    };
+
+    private static object SpawnAsk(SpawnRequest r) => new { id = r.Id, from = r.From, name = r.Name, directory = r.Directory, branch = r.Branch, prompt = r.Prompt };
+
+    /// <summary>
+    /// The app's sessions as <see cref="SessionControl"/> sees and changes them, here and on servers. It calls from the
+    /// panel server's threads (a session here) or the app thread (a session on a server, see AppHost.Servers), and
+    /// everything is done on the app thread.
+    /// </summary>
+    private sealed class ControlHost(AppHost app) : IControlHost
+    {
+        private T OnUi<T>(Func<T> f)
+        {
+            if (Environment.CurrentManagedThreadId == app.appThread) return f();
+            var done = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+            app.RunOnUi(() =>
+            {
+                try { done.SetResult(f()); }
+                catch (Exception ex) { done.SetException(ex); }
+            });
+            return done.Task.GetAwaiter().GetResult();
+        }
+
+        private void OnUi(Action a) => OnUi(() => { a(); return 0; });
+
+        private Task<T> OnUiAsync<T>(Func<Task<T>> f) => OnUi(f);
+
+        public IReadOnlyList<ControlSession> Sessions() => OnUi(() => app.order.Select(id => app.sessions.TryGetValue(id, out var s)
+            ? new ControlSession(s.Id, s.Info.Name.Length > 0 ? s.Info.Name : s.Id, s.Info.Directory, s.Info.Project, s.Info.StartedBy, s.Agent != null, s.IsRunning, null)
+            : app.serverSessions[id] is var x
+                ? new ControlSession(x.Info.Id, x.Info.Name.Length > 0 ? x.Info.Name : x.Info.Id, x.Info.Directory, x.Info.Project, x.Info.StartedBy, Agents.For(x.Info.Command) != null, x.Running, x.Info.Server)
+                : null!).ToList());
+
+        /// <summary>The starter's own agent and options, never a command of the agent's choosing, in a conversation of its own.</summary>
+        private static string CommandLike(string command) => TerminalSession.StripContinue(TerminalSession.TakeConversation(command).Command);
+
+        public Task<string> StartAsync(string parent, string name, string directory, string prompt, string? within) => OnUiAsync(async () =>
+        {
+            if (app.serverSessions.TryGetValue(parent, out var sp))
+            {
+                // A session on a server starts one on the same server: its folders are there.
+                // The server checks the folder is really inside the allowed one (within), links resolved there; one too old
+                // to check isn't asked to start it there at all.
+                var c = app.ServerFor(sp.Info.Server!);
+                await c.WhenSettledAsync(TimeSpan.FromSeconds(30));
+                if (within != null && c.IsOnline && !c.Supports("confined-start"))
+                    throw new ControlException($"LlamaTree on {c.Target} is too old to check where a new session's folder leads, so a session can't be started there. Update it first (the server's badge or its sessions' menu).");
+                var before = app.serverSessions.Keys.ToHashSet();
+                app.addingTo[c.Target] = sp.Info.Project;
+                JsonElement made;
+                try
+                {
+                    await c.WhenSettledAsync(TimeSpan.FromSeconds(30));
+                    made = await c.RequestAsync(new { type = "addSessions", sessions = new[] { new { directory, name, command = CommandLike(sp.Info.Command), prompt, within } } });
+                }
+                catch (InvalidOperationException ex) { throw new ControlException(ex.Message); }
+                finally { app.addingTo.Remove(c.Target); }
+                // The session the server says it made (it's in its session list by now); a server from before it said
+                // so: the one new session of it here.
+                var added = StartedOnServer(made, rid => app.FindServerSession(c.Target, rid),
+                    app.serverSessions.Values.Where(x => !before.Contains(x.Info.Id) && x.Info.Server == sp.Info.Server));
+                if (added == null) throw new ControlException($"{c.Target} didn't add the session.");
+                added.Info.StartedBy = parent;
+                app.SaveSessions();
+                app.Post(app.SessionList());
+                app.Post(new { type = "control.start", id = added.Info.Id });   // the page starts it, at its tile's size
+                return added.Info.Id;
+            }
+            var p = app.sessions.GetValueOrDefault(parent) ?? throw new ControlException("That session isn't in LlamaTree any more.");
+            if (!Directory.Exists(directory)) throw new ControlException($"{directory} doesn't exist.");
+            // Every session an agent starts is held to a folder: the one it was allowed, resolved once here, the folder
+            // checked against that very value, which is what's kept (and checked again as its process starts).
+            var confined = PathText.Confine(directory, within ?? throw new ControlException("A started session needs the folder it's allowed."))
+                ?? throw new ControlException($"{directory} isn't inside {within} (a folder on the way leads elsewhere, or isn't there), so a session can't be started there.");
+            var info = new SessionInfo
+            {
+                Name = name, Directory = confined.Folder, Command = CommandLike(p.Info.Command), Project = p.Info.Project, StartedBy = parent,
+                Within = confined.Root,
+            };
+            if (TerminalSession.NeedsOwnConversation(info)) info.Conversation = Guid.NewGuid().ToString();
+            var session = app.AddSessionRuntime(info);
+            session.FirstPromptOnce = prompt;
+            app.SaveSessions();
+            app.Post(app.SessionList());
+            app.Post(new { type = "control.start", id = info.Id });   // the page starts it, at its tile's size
+            return info.Id;
+        });
+
+        public Task<string> AddWorktreeAsync(string parent, string branch) => OnUiAsync(async () =>
+        {
+            if (app.serverSessions.TryGetValue(parent, out var sp)) return await ServerWorktreeAsync(sp, branch);
+            var p = app.sessions.GetValueOrDefault(parent) ?? throw new ControlException("That session isn't in LlamaTree any more.");
+            var root = await GitService.GetTopLevelAsync(p.RepoRoot ?? p.Info.Directory)
+                ?? throw new ControlException("This session's folder isn't in a Git repository, so there's no worktree to make; give a folder instead.");
+            root = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var slug = System.Text.RegularExpressions.Regex.Replace(branch, "[^A-Za-z0-9._-]+", "-").Trim('-', '.');
+            var path = $"{root}-{(slug.Length > 0 ? slug : "worktree")}";
+            for (var i = 2; Directory.Exists(path) || File.Exists(path); i++) path = $"{root}-{slug}-{i}";
+            var result = await GitService.AddWorktreeAsync(root, path, branch, null);
+            if (!result.Ok) throw new ControlException(string.IsNullOrWhiteSpace(result.Error) ? "git couldn't make the worktree." : result.Error.Trim());
+            return path;
+        });
+
+        /// <summary>
+        /// A new worktree of a server session's repository, beside it on the server (its folder's name with the branch's
+        /// after it, numbered if that's taken), made by the server's LlamaTree as for its own sessions.
+        /// </summary>
+        private async Task<string> ServerWorktreeAsync(ServerSession sp, string branch)
+        {
+            var root = sp.RepoRoot?.TrimEnd('/')
+                ?? throw new ControlException("This session's folder isn't in a Git repository (or its server hasn't said yet), so there's no worktree to make; give a folder instead.");
+            var c = app.ServerFor(sp.Info.Server!);
+            var slug = System.Text.RegularExpressions.Regex.Replace(branch, "[^A-Za-z0-9._-]+", "-").Trim('-', '.');
+            var name = root[(root.LastIndexOf('/') + 1)..] + "-" + (slug.Length > 0 ? slug : "worktree");
+            var parentDir = root[..Math.Max(root.LastIndexOf('/'), 1)];
+            try
+            {
+                // What's already beside it there, to pick a free name.
+                var listing = await c.RequestAsync(new { type = "fs.list", path = parentDir });
+                var taken = listing.TryGetProperty("entries", out var entries)
+                    ? entries.EnumerateArray().Select(e => e.GetProperty("name").GetString()).ToHashSet(StringComparer.Ordinal) : [];
+                var pick = name;
+                for (var i = 2; taken.Contains(pick); i++) pick = $"{name}-{i}";
+                var path = parentDir.TrimEnd('/') + "/" + pick;
+                var made = await c.RequestAsync(new { type = "worktree.add", id = sp.Info.RemoteId, branch, path, @base = (string?)null });
+                return made.ValueKind == JsonValueKind.String ? made.GetString()! : path;
+            }
+            catch (InvalidOperationException ex) { throw new ControlException(ex.Message); }
+        }
+
+        // Typed by the page, as you would: a session on a server gets it there.
+        public void TypePrompt(string id, string text) => app.RunOnUi(() => app.Post(new { type = "control.prompt", id, text }));
+
+        public void SendKeys(string id, string keys) => app.RunOnUi(() =>
+        {
+            if (app.sessions.GetValueOrDefault(id) is { } s) s.Write(keys);
+            else if (app.serverSessions.GetValueOrDefault(id) is { } x && app.servers.GetValueOrDefault(x.Info.Server!) is { IsOnline: true } c)
+                c.Send(JsonSerializer.Serialize(new { type = "input", id = x.Info.RemoteId, data = keys }, JsonOptions));
+        });
+
+        public void Stop(string id) => app.RunOnUi(() =>
+        {
+            if (app.serverSessions.GetValueOrDefault(id) is { } x)
+            {
+                if (app.servers.GetValueOrDefault(x.Info.Server!) is { IsOnline: true } c)
+                    _ = c.RequestAsync(new { type = "stop", id = x.Info.RemoteId }).ContinueWith(_ => { }, TaskScheduler.Default);
+                return;
+            }
+            if (app.sessions.GetValueOrDefault(id) is not { } s) return;
+            app.CatchUpConversation(s);
+            if (!s.Stop()) return;
+            app.FlushOutput();
+            app.Post(new { type = "exited", id, code = (int?)null });
+            app.RunningChanged?.Invoke();
+        });
+
+        public void Remove(string id) => OnUi(() =>
+        {
+            if (app.sessions.GetValueOrDefault(id) is { } s)
+            {
+                app.RemoveSession(s);
+                return;
+            }
+            if (app.serverSessions.GetValueOrDefault(id) is not { } x) return;
+            // Removed on its server too, as when you close it (one that can't be reached keeps it, and shows it again).
+            if (app.servers.GetValueOrDefault(x.Info.Server!) is { IsOnline: true } c)
+                _ = c.RequestAsync(new { type = "removeSession", id = x.Info.RemoteId }).ContinueWith(_ => { }, TaskScheduler.Default);
+            app.ForgetServerSession(x);
+            app.ForgetPanels(id);
+            app.SaveSessions();
+            app.Post(app.SessionList());
+        });
+
+        public SessionReport? Report(string id)
+        {
+            // A session on a server: its conversation is there (what it shows comes through its terminal and status).
+            // The session's process is read on the app thread, as everywhere; its conversation file off it.
+            var (s, running, pids) = OnUi(() => app.sessions.GetValueOrDefault(id) is { } x ? ((TerminalSession?)x, x.IsRunning, (int[]?)x.ProcessIds()) : (null, false, null));
+            var agent = s?.Agent;
+            if (s == null || agent == null) return null;
+            var conv = (running && pids != null ? agent.ReadConversation(s, pids) : null) ?? agent.ReadSavedConversation(s);
+            if (conv?.Turns.LastOrDefault() is not { } turn) return null;
+            var said = turn.Items.Where(i => i.Kind == "text").Select(i => i.Text).ToList();
+            var last = turn.Items.LastOrDefault();
+            return new SessionReport(turn.Prompt, said.Count > 0 ? string.Join("\n\n", said) : null,
+                last?.Kind == "tool" ? $"{last.Tool}: {last.Text}" : null);
+        }
+    }
+
     private List<RelayPeer> RelayPeers()
     {
         // A session counts in a project only while that project exists (as the page shows it), for plugins' projects too.
-        string? ProjectOf(TerminalSession s) => projects.Any(p => p.Id == s.Info.Project) ? s.Info.Project : null;
-        var list = order.Select(id => sessions[id]).Where(s => s.Agent != null).Select(s => new RelayPeer(
-            s.Id, s.Info.Name.Length > 0 ? s.Info.Name : s.Id, ProjectOf(s), projects.FirstOrDefault(p => p.Id == s.Info.Project)?.Name,
+        string? ProjectOf(SessionInfo s) => projects.Any(p => p.Id == s.Project) ? s.Project : null;
+        var list = order.Where(sessions.ContainsKey).Select(id => sessions[id]).Where(s => s.Agent != null).Select(s => new RelayPeer(
+            s.Id, s.Info.Name.Length > 0 ? s.Info.Name : s.Id, ProjectOf(s.Info), projects.FirstOrDefault(p => p.Id == s.Info.Project)?.Name,
             s.Agent?.Name, s.IsRunning)).ToList();
+        // Sessions on servers too: their tool calls are answered here while their server is connected (AppHost.Servers).
+        list.AddRange(order.Where(serverSessions.ContainsKey).Select(id => serverSessions[id]).Where(x => Agents.For(x.Info.Command) != null).Select(x => new RelayPeer(
+            x.Info.Id, x.Info.Name.Length > 0 ? x.Info.Name : x.Info.Id, ProjectOf(x.Info), projects.FirstOrDefault(p => p.Id == x.Info.Project)?.Name,
+            Agents.For(x.Info.Command)?.Name, x.Running)));
         // Plugins allowed to message sessions take part too, as "plugin:<id>" (see PluginGrants.RelayGate).
         list.AddRange(plugins.Values.Where(p => p.Access.Contains("message") && grants.State(p.Id, "message") == "allow")
             .Select(p => new RelayPeer(PluginGrants.PeerPrefix + p.Id, p.Title, null, null, "Plugin", true, p.Inbox)));
@@ -212,6 +474,7 @@ internal sealed class MainForm : Form
         _ => throw new ArgumentException($"There's no decision \"{s}\"."),
     };
     private PanelServer? panelServer;
+    private PanelMcp? mcp;   // the tools sessions call (panels, messages), here and on servers (see AppHost.Servers)
 
     private static string PanelConfigFolder => Path.Combine(SessionStore.AppDataFolder, "panels");
 
@@ -223,22 +486,22 @@ internal sealed class MainForm : Form
     private readonly Dictionary<string, PluginInfo> plugins = [];
 
     /// <summary>
-    /// Reads the plugins folder and gives each plugin its address: its folder, served as https://&lt;id&gt;.plugin.local/.
-    /// Reads from other origins are refused (DenyCors), so neither another plugin nor a page elsewhere can fetch its files.
+    /// Reads the plugins folder and gives each plugin its address, where the window serves its folder (see
+    /// <see cref="IHostWindow.ServePlugin"/>).
     /// </summary>
     private (List<PluginInfo> Found, List<string> Problems) LoadPlugins()
     {
-        var core = webView.CoreWebView2;
         var (found, problems) = PluginCatalog.Load(PluginFolder);
+        AddServerPlugins(found, problems);   // and connected servers' (see AppHost.Servers)
         foreach (var gone in plugins.Keys.Except(found.Select(p => p.Id)).ToList())
         {
-            core.ClearVirtualHostNameToFolderMapping(PluginCatalog.HostFor(gone));
+            window.StopServingPlugin(gone);
             plugins.Remove(gone);
         }
         foreach (var p in found)
         {
             if (!plugins.TryGetValue(p.Id, out var had) || had.Folder != p.Folder)
-                core.SetVirtualHostNameToFolderMapping(p.Host, p.Folder, CoreWebView2HostResourceAccessKind.DenyCors);
+                window.ServePlugin(p);
             plugins[p.Id] = p;
         }
         return (found, problems);
@@ -246,9 +509,9 @@ internal sealed class MainForm : Form
 
     private void StartPanels()
     {
-        panelStore.KeepOwners(sessions.Keys);
+        panelStore.KeepOwners(order);
         panelStore.Changed += change => RunOnUi(() => Post(PanelsMessage(change)));
-        relay.Policy.KeepSessions(sessions.Keys);
+        relay.Policy.KeepSessions(order);
         relay.Gate = grants.RelayGate;
         relay.SetPeers(RelayPeers());
         // Answers about plugins change which plugins take part in messages, so the peers are read again too.
@@ -258,10 +521,16 @@ internal sealed class MainForm : Form
         relay.Delivered += m => RunOnUi(() => Post(new { type = "relay.message", to = m.To, from = m.From, unread = relay.Unread(m.To) }));
         relay.Changed += () => RunOnUi(() => Post(new { type = "relay", state = RelayState() }));
         relay.Policy.Changed += () => RunOnUi(() => Post(new { type = "relay", state = RelayState() }));
-        var mcp = new PanelMcp(panelStore, relay);
+        Driving.Policy.Keep(order, projects.Select(p => p.Id));
+        Driving.Asked += r => RunOnUi(() => Post(new { type = "control.ask", request = SpawnAsk(r) }));
+        Driving.Settled += id => RunOnUi(() => Post(new { type = "control.settled", id }));
+        Driving.Changed += () => RunOnUi(() => Post(new { type = "control", state = ControlState() }));
+        Driving.Policy.Changed += () => RunOnUi(() => Post(new { type = "control", state = ControlState() }));
+        mcp = new PanelMcp(panelStore, relay, Driving);
         // A first prompt that couldn't go on the command line is typed once Claude is up (it connects as it starts).
         mcp.Initialized += id => RunOnUi(async () =>
         {
+            Post(new { type = "agent.ready", id });   // the page tells a session it woke of its messages once it's up
             if (!sessions.TryGetValue(id, out var s) || s.PromptToType is not { } prompt) return;
             s.PromptToType = null;
             await Task.Delay(1500);
@@ -269,6 +538,8 @@ internal sealed class MainForm : Form
         });
         try { panelServer = PanelServer.TryStart(mcp); }
         catch (Exception) { /* sessions start without panels */ }
+        // Shown among another computer's sessions: its window answers the sessions' tool calls while it's attached.
+        if (panelServer != null) panelServer.ForwardToolCall = (session, m) => Remote != null ? window.ForwardToolCall(session, m) : null;
     }
 
     private object PanelsMessage(PanelChange? change = null) => new
@@ -304,8 +575,10 @@ internal sealed class MainForm : Form
     private void ForgetPanels(string sessionId)
     {
         panelServer?.Forget(sessionId);
-        panelStore.KeepOwners(sessions.Keys);
-        relay.Policy.KeepSessions(sessions.Keys);
+        panelStore.KeepOwners(order);
+        relay.Policy.KeepSessions(order);
+        Driving.Policy.Keep(order, projects.Select(p => p.Id));
+        Driving.Forget(sessionId);
         try { File.Delete(Path.Combine(PanelConfigFolder, $"mcp-{sessionId}.json")); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
@@ -329,151 +602,48 @@ internal sealed class MainForm : Form
         }
     }
 
-    private System.Windows.Forms.Timer? accentTimer;
+    /// <summary>
+    /// The accent colour and app mode, as a message for the page (Windows reports both; elsewhere the page follows the
+    /// system's light or dark). The window sends it too, when Windows says they've changed.
+    /// </summary>
+    public static string AccentMessage() =>
+        JsonSerializer.Serialize(new { type = "accent", palette = AccentColors.Read(), lightApps = AccentColors.AppsUseLightTheme() }, JsonOptions);
 
-    private void PostAccent() => Post(new { type = "accent", palette = AccentColors.Read(), lightApps = AccentColors.AppsUseLightTheme() });
-
-    /// <summary>The window's own colours (title bar, and what shows before the page paints) follow the page's theme.</summary>
-    /// <param name="background">The page's background ("#rrggbb"), for a theme with its own.</param>
-    private void ApplyWindowTheme(bool light, string? background = null)
+    /// <summary>A window has attached: it serves the plugins again, and shows the sessions once its page says it's ready.</summary>
+    public void Attached()
     {
-        var dark = light ? 0 : 1;
-        Native.DwmSetWindowAttribute(Handle, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, ref dark, sizeof(int));
-        var own = background is { Length: 7 } hex && hex[0] == '#' &&
-            int.TryParse(hex[1..], System.Globalization.NumberStyles.HexNumber, null, out var rgb)
-            ? Color.FromArgb(rgb >> 16 & 0xff, rgb >> 8 & 0xff, rgb & 0xff)
-            : (Color?)null;
-        // Such a theme's title bar takes its colour too (Windows 11; earlier versions keep the dark one).
-        var caption = own is { } c ? ColorTranslator.ToWin32(c) : unchecked((int)0xFFFFFFFF) /* DWMWA_COLOR_DEFAULT */;
-        Native.DwmSetWindowAttribute(Handle, 35 /* DWMWA_CAPTION_COLOR */, ref caption, sizeof(int));
-        var color = own ?? (light ? Color.FromArgb(0xee, 0xee, 0xee) : Color.FromArgb(0x1f, 0x1f, 0x1f));
-        webView.DefaultBackgroundColor = color;
-        BackColor = color;
+        webReady = false;
+        foreach (var p in plugins.Values) window.ServePlugin(p);
     }
 
-    /// <summary>Follows the Windows accent colour when it's changed in Settings.</summary>
-    protected override void WndProc(ref Message m)
+    /// <summary>The window has gone: sessions run on, their output kept in <see cref="tails"/> for the next one.</summary>
+    public void Detached()
     {
-        base.WndProc(ref m);
-        const int WM_SETTINGCHANGE = 0x001A, WM_DWMCOLORIZATIONCOLORCHANGED = 0x0320;
-        var accentChanged = m.Msg == WM_DWMCOLORIZATIONCOLORCHANGED ||
-            (m.Msg == WM_SETTINGCHANGE && m.LParam != IntPtr.Zero &&
-             System.Runtime.InteropServices.Marshal.PtrToStringUni(m.LParam) == "ImmersiveColorSet");
-        if (!accentChanged || !webReady) return;
-        // Windows sends several of these, and may write the new shades just after: read once things settle.
-        if (accentTimer == null)
-        {
-            accentTimer = new System.Windows.Forms.Timer { Interval = 400 };
-            accentTimer.Tick += OnAccentTimer;
-        }
-        accentTimer.Stop();
-        accentTimer.Start();
+        webReady = false;
+        lock (pendingOutput) pendingOutput.Clear();
+        uploads.AbandonAll();
     }
 
-    private void OnAccentTimer(object? sender, EventArgs e)
+    /// <summary>The app is ending: stop the sessions, each noting the conversation it's in so it reopens there. Once only.</summary>
+    public void Shutdown()
     {
-        accentTimer?.Stop();
-        PostAccent();
-    }
-
-    protected override void OnHandleCreated(EventArgs e)
-    {
-        base.OnHandleCreated(e);
-        var on = 1;
-        Native.DwmSetWindowAttribute(Handle, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, ref on, sizeof(int));
-    }
-
-    protected override async void OnLoad(EventArgs e)
-    {
-        base.OnLoad(e);
-        try
-        {
-            // A custom profile (LLAMATREE_DATA) keeps its browser data with it, so it never shares a browser process with the default one.
-            var userData = AppProfile.CustomFolder != null
-                ? Path.Combine(SessionStore.AppDataFolder, "WebView2")
-                : Path.Combine(AppProfile.LocalFolder, "WebView2");
-            var env = await CoreWebView2Environment.CreateAsync(null, userData);
-            await webView.EnsureCoreWebView2Async(env);
-            var core = webView.CoreWebView2;
-            core.Settings.AreBrowserAcceleratorKeysEnabled = false;
-            core.Settings.IsStatusBarEnabled = false;
-            core.Settings.IsZoomControlEnabled = false;
-            core.Settings.AreDefaultContextMenusEnabled = false;
-#if DEBUG
-            core.Settings.AreDevToolsEnabled = true;
-#else
-            core.Settings.AreDevToolsEnabled = false;
-#endif
-            // A file or link dropped on the window would otherwise replace the app page (and could then talk to the host).
-            webView.AllowExternalDrop = false;
-            core.NavigationStarting += (_, args) => { if (!IsAppUri(args.Uri)) args.Cancel = true; };
-            var root = Path.Combine(AppContext.BaseDirectory, "wwwroot");
-            core.SetVirtualHostNameToFolderMapping("app.local", root, CoreWebView2HostResourceAccessKind.Allow);
-            core.WebMessageReceived += OnWebMessage;
-            core.NewWindowRequested += (_, args) => args.Handled = true;
-            // Plugins are pages in frames of their own (see PluginCatalog): a plugin's frame stays on plugin addresses.
-            core.FrameNavigationStarting += (_, args) => { if (!PluginCatalog.IsPluginUri(args.Uri) && args.Uri != "about:blank") args.Cancel = true; };
-            // And on its own plugin's address: the page answers a plugin's frame with what that plugin was allowed to see,
-            // so another plugin's page mustn't get into it.
-            core.FrameCreated += (_, created) =>
-            {
-                string? host = null;
-                created.Frame.NavigationStarting += (_, args) =>
-                {
-                    if (!Uri.TryCreate(args.Uri, UriKind.Absolute, out var u) || u.Scheme != Uri.UriSchemeHttps) return;
-                    host ??= u.Host;
-                    if (!string.Equals(host, u.Host, StringComparison.OrdinalIgnoreCase)) args.Cancel = true;
-                };
-            };
-            // The terminal's Paste menu item reads the clipboard; without this WebView2 asks "Allow clipboard access?"
-            // the first time, a prompt that also takes focus away from the terminal. Only the app's own origin gets it
-            // (requests name the origin, not the page; navigation never leaves the app page anyway).
-            core.PermissionRequested += (_, args) =>
-            {
-                if (args.PermissionKind == CoreWebView2PermissionKind.ClipboardRead &&
-                    Uri.TryCreate(args.Uri, UriKind.Absolute, out var origin) &&
-                    origin.Scheme == Uri.UriSchemeHttps && string.Equals(origin.Host, "app.local", StringComparison.OrdinalIgnoreCase))
-                    args.State = CoreWebView2PermissionState.Allow;
-                // A plugin gets nothing: no clipboard, camera, location or notifications, and no prompt asking for them.
-                else if (PluginCatalog.IsPluginUri(args.Uri))
-                    args.State = CoreWebView2PermissionState.Deny;
-            };
-            // The page's files come from the install folder and only change when the app is updated, but the browser
-            // caches them heuristically from their timestamps; after an upgrade it could keep running the previous
-            // version's app.js, possibly mixed with new files. Start each launch with an empty HTTP cache.
-            try { await core.CallDevToolsProtocolMethodAsync("Network.clearBrowserCache", "{}"); }
-            catch (Exception) { /* best effort: worst case is the old behaviour */ }
-            core.Navigate(AppPage);
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show(this, "Failed to initialise WebView2:\n\n" + ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
-        }
-    }
-
-    protected override void OnFormClosing(FormClosingEventArgs e)
-    {
-        var running = sessions.Values.Where(s => s.IsRunning).ToList();
-        if (running.Count > 0 && e.CloseReason == CloseReason.UserClosing && !closingForUpdate &&
-            MessageBox.Show(this, CloseMessage(running), Text, MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK)
-        {
-            e.Cancel = true;
-            return;
-        }
-        flushTimer.Stop();
-        conversationTimer.Stop();
-        countTimer.Stop();
+        if (shutDown) return;
+        shutDown = true;
+        flushTimer.Dispose();
+        conversationTimer.Dispose();
+        countTimer.Dispose();
         foreach (var s in sessions.Values) CatchUpConversation(s);   // so each reopens where it was
         foreach (var s in sessions.Values) s.Dispose();
         panelServer?.Dispose();
+        DisposeServers();
         relay.Flush();   // unread and waiting messages, for next time
-        base.OnFormClosing(e);
     }
 
     /// <summary>
-    /// Closing only stops the sessions: Claude keeps every conversation and the sessions come back with the app (a Claude
-    /// session starts when it's first opened), so say that (and which of them carry on their conversation) rather than
-    /// that they'll be "terminated".
+    /// What closing the window asks when sessions are running: keep them running without the window, or stop them. Stopping
+    /// loses nothing: Claude keeps every conversation and the sessions come back with the app (a Claude session starts
+    /// when it's first opened), so say that (and which of them carry on their conversation) rather than that they'll be
+    /// "terminated".
     /// </summary>
     internal static string CloseMessage(IReadOnlyCollection<TerminalSession> running)
     {
@@ -492,8 +662,9 @@ internal sealed class MainForm : Form
             _ => $"They come back the next time you open LlamaTree: {carryOn} pick{(carryOn == 1 ? "s" : "")} up where {(carryOn == 1 ? "it" : "they")} left off, " +
                  $"{fresh} start{(fresh == 1 ? "s" : "")} a new conversation (the current one can be reopened with \"Resume a different conversation…\").",
         };
-        return $"{sessionsAre} running. Closing stops {(n == 1 ? "it" : "them")}, but nothing is lost: Claude keeps every conversation.\n\n" +
-               $"{restart}\n\nAnything Claude is in the middle of will be interrupted.\n\nClose LlamaTree?";
+        return $"{sessionsAre} running.\n\n" +
+               $"Kept running, {(n == 1 ? "it carries" : "they carry")} on without the window and {(n == 1 ? "is" : "are")} here when you open LlamaTree again.\n\n" +
+               $"Stopping {(n == 1 ? "it" : "them")} loses nothing: Claude keeps every conversation. {restart} Anything Claude is in the middle of will be interrupted.";
     }
 
     // ---------------------------------------------------------------- sessions
@@ -501,10 +672,13 @@ internal sealed class MainForm : Form
     private TerminalSession AddSessionRuntime(SessionInfo info)
     {
         var s = new TerminalSession(info);
+        var tail = tails[info.Id] = new OutputTail();
         s.Output += (session, text) =>
         {
+            tail.Append(text);
             lock (pendingOutput)
             {
+                if (!webReady) return;   // no page to send it to: the tail keeps it for the next window
                 if (!pendingOutput.TryGetValue(session.Id, out var sb)) pendingOutput[session.Id] = sb = new StringBuilder();
                 sb.Append(text);
             }
@@ -516,6 +690,7 @@ internal sealed class MainForm : Form
             if (generation != session.Generation) return;
             FlushOutput();
             Post(new { type = "exited", id = session.Id, code });
+            RunningChanged?.Invoke();
         });
         s.StatusChanged += (session, status) => RunOnUi(() => Post(StatusMessage(session, status)));
         sessions[info.Id] = s;
@@ -524,12 +699,27 @@ internal sealed class MainForm : Form
         return s;
     }
 
-    private void SaveSessions() => SessionStore.Save(order.Select(id => sessions[id].Info));
+    /// <summary>Removes a session here: its process ends, its panels go with it (its conversation stays, to resume).</summary>
+    private void RemoveSession(TerminalSession s)
+    {
+        CatchUpConversation(s);
+        s.Dispose();
+        sessions.Remove(s.Id);
+        order.Remove(s.Id);
+        tails.Remove(s.Id);
+        repaint.Remove(s.Id);
+        RunningChanged?.Invoke();
+        SaveSessions();
+        ForgetPanels(s.Id);
+        Post(SessionList());
+    }
+
+    private void SaveSessions() => SessionStore.Save(order.Select(id => sessions.TryGetValue(id, out var s) ? s.Info : serverSessions[id].Info));
 
     private object SessionList()
     {
         relay.SetPeers(RelayPeers());   // the list goes out whenever sessions or projects change
-        grants.Keep(sessions.Keys.ToHashSet(), projects.Select(p => p.Id).ToHashSet());
+        grants.Keep(order.ToHashSet(), projects.Select(p => p.Id).ToHashSet());
         return SessionListMessage();
     }
 
@@ -538,16 +728,19 @@ internal sealed class MainForm : Form
         type = "sessions",
         agents = Agents.All.Select(a => a.Describe()),
         projects = projects.Select(p => new { id = p.Id, name = p.Name, color = p.Color }),
-        sessions = order.Select(id => sessions[id]).Select(s => new
+        sessions = order.Select(id => sessions.TryGetValue(id, out var s) ? (s.Info, s.IsRunning) : (serverSessions[id].Info, serverSessions[id].Running)).Select(x => new
         {
-            id = s.Id,
-            name = s.Info.Name,
-            directory = s.Info.Directory,
-            command = s.Info.Command,
-            project = s.Info.Project,
-            conversation = s.Info.Conversation,
-            running = s.IsRunning,
+            id = x.Info.Id,
+            name = x.Info.Name,
+            directory = x.Info.Directory,
+            command = x.Info.Command,
+            project = x.Info.Project,
+            conversation = x.Info.Conversation,
+            running = x.Item2,
+            server = x.Info.Server,
+            startedBy = x.Info.StartedBy,
         }),
+        servers = ServersState(),
     };
 
     /// <summary>A project id from the page, or null for "no project" (empty or unknown ids included).</summary>
@@ -590,30 +783,18 @@ internal sealed class MainForm : Form
 
     // ---------------------------------------------------------------- bridge
 
-    private void Post(object message)
-    {
-        if (webView.CoreWebView2 is not { } core || !IsAppUri(core.Source)) return;
-        core.PostWebMessageAsJson(JsonSerializer.Serialize(message, JsonOptions));
-    }
+    private void Post(object message) => window.PostJson(JsonSerializer.Serialize(message, JsonOptions));
 
-    /// <summary>True for the app page itself (ignoring any query or fragment); false for every other document, including others under app.local.</summary>
-    internal static bool IsAppUri(string? uri) =>
-        uri != null && string.Equals(uri.Split('#', '?')[0], AppPage, StringComparison.OrdinalIgnoreCase);
+    /// <summary>Runs <paramref name="action"/> on the UI thread, later (never inline); dropped once the window has closed.</summary>
+    private void RunOnUi(Action action) => window.RunOnUi(action);
 
-    private void RunOnUi(Action action)
+    /// <summary>A message from the app page, which the window has made sure came from it (and not from a plugin's frame).</summary>
+    public async void Receive(string json)
     {
-        if (IsDisposed) return;
-        if (InvokeRequired) BeginInvoke(action);
-        else action();
-    }
-
-    private async void OnWebMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
-    {
-        if (!IsAppUri(e.Source)) return;
         JsonElement msg;
         try
         {
-            msg = JsonDocument.Parse(e.WebMessageAsJson).RootElement;
+            msg = JsonDocument.Parse(json).RootElement;
         }
         catch (JsonException)
         {
@@ -635,12 +816,20 @@ internal sealed class MainForm : Form
 
     private async Task<object?> HandleAsync(string type, JsonElement msg)
     {
+        if (await TryForwardAsync(type, msg) is (true, var forwarded)) return forwarded;
         switch (type)
         {
             case "ready":
-                webReady = true;
-                PostAccent();   // first: with Windows' app mode the page knows its theme before sessions start
+                window.PostJson(AccentMessage());   // first: with Windows' app mode the page knows its theme before sessions start
                 Post(SessionList());
+                // Sessions that ran on while no window was open: what they showed, and a redraw at the page's size.
+                foreach (var s in order.Where(sessions.ContainsKey).Select(id => sessions[id]).Where(s => s.IsRunning))
+                {
+                    if (tails[s.Id].ToString() is { Length: > 0 } shown) Post(new { type = "replay", id = s.Id, data = shown });
+                    repaint.Add(s.Id);
+                }
+                webReady = true;   // after the replay, so live output follows it
+                ServersPageReady();
                 Post(PanelsMessage());
                 if (newConversations.Count > 0)
                 {
@@ -648,26 +837,40 @@ internal sealed class MainForm : Form
                     newConversations.Clear();
                 }
                 foreach (var s in sessions.Values) _ = s.RefreshStatusAsync();
-                if (!countTimer.Enabled)
+                if (!countStarted)
                 {
-                    countTimer.Start();
-                    _ = CountSoonAsync();   // this hour's request, if you've said yes, once the start is out of the way
+                    countStarted = true;
+                    countTimer.Change(TimeSpan.FromSeconds(20), TimeSpan.FromMinutes(10));
                 }
                 return null;
 
             case "start":
             {
                 var s = Get(msg);
+                tails[s.Id].Clear();
+                var prompted = s.FirstPromptOnce != null;   // starts on a prompt: its first output is work, not start-up
                 s.Start(Int(msg, "cols"), Int(msg, "rows"), OptStr(msg, "theme"), PanelLinkFor(s));
-                return null;
+                RunningChanged?.Invoke();
+                return new { prompted };
             }
             case "input":
                 Get(msg).Write(Str(msg, "data"));
                 return null;
 
             case "resize":
-                Get(msg).Resize(Int(msg, "cols"), Int(msg, "rows"));
+            {
+                var s = Get(msg);
+                int cols = Int(msg, "cols"), rows = Int(msg, "rows");
+                if (repaint.Remove(s.Id) && rows > 2)
+                {
+                    // A terminal told the size it already has hears nothing, so a program that ran on without a window
+                    // is shrunk by a row and given its size back: it redraws its whole screen in the new terminal.
+                    s.Resize(cols, rows - 1);
+                    await Task.Delay(80);
+                }
+                s.Resize(cols, rows);
                 return null;
+            }
 
             case "restart":
             {
@@ -677,12 +880,29 @@ internal sealed class MainForm : Form
                 if (Bool(msg, "resume") && s.IsRunning && LiveConversation(s) is { } live)
                     s.ResumeOnce = live;
                 s.Stop();
+                tails[s.Id].Clear();
+                var prompted = s.FirstPromptOnce != null;
                 s.Start(Int(msg, "cols"), Int(msg, "rows"), OptStr(msg, "theme"), PanelLinkFor(s));
+                RunningChanged?.Invoke();
+                return new { prompted };
+            }
+            case "app.closeInfo":
+            {
+                // Asked by the page when the window is closing, before it asks you whether to keep sessions running.
+                var running = sessions.Values.Where(s => s.IsRunning).ToList();
+                return new { running = running.Count, message = running.Count > 0 ? CloseMessage(running) : null };
+            }
+            case "app.close":
+            {
+                // Your answer: the window closes either way; stopping the sessions also ends the app.
+                var stop = Bool(msg, "stop");
+                RunOnUi(() =>
+                {
+                    window.Close();
+                    if (stop) QuitRequested?.Invoke();
+                });
                 return null;
             }
-            case "theme":
-                ApplyWindowTheme(Bool(msg, "light"), OptStr(msg, "background"));
-                return null;
             case "stop":
             {
                 // Stopping disposes the process without raising Exited, so tell the page itself (code null = stopped).
@@ -692,6 +912,7 @@ internal sealed class MainForm : Form
                 {
                     FlushOutput();
                     Post(new { type = "exited", id = s.Id, code = (int?)null });
+                    RunningChanged?.Invoke();
                 }
                 return null;
             }
@@ -701,20 +922,34 @@ internal sealed class MainForm : Form
                 var items = msg.GetProperty("sessions").EnumerateArray()
                     .Select(item => (Dir: Str(item, "directory"), Name: Str(item, "name"), Command: Str(item, "command"), Project: ProjectId(item),
                         Prompt: OptStr(item, "prompt")?.Trim() is { Length: > 0 and <= PanelSpec.MaxPrompt } p ? p : null,
-                        Conversation: OptStr(item, "conversation") is { } conv && TerminalSession.IsConversationId(conv) ? conv : null))
+                        Conversation: OptStr(item, "conversation") is { } conv && TerminalSession.IsConversationId(conv) ? conv : null,
+                        Within: OptStr(item, "within")))
                     .ToList();
                 // All or nothing: check every folder before adding any. Adding as we went left the earlier sessions
                 // added but unsaved and unshown after a failure, and a retry then added them a second time.
-                foreach (var item in items)
-                    if (!Directory.Exists(item.Dir)) throw new DirectoryNotFoundException(item.Dir);
+                for (var i = 0; i < items.Count; i++)
+                {
+                    if (!Directory.Exists(items[i].Dir)) throw new DirectoryNotFoundException(items[i].Dir);
+                    // Started by another session (start_session on another computer): it must really be inside the
+                    // folder it was allowed, links resolved here, where they lead; that folder is resolved once, and the
+                    // value checked against is the one kept (see PathText.Confine).
+                    if (items[i].Within is { } within)
+                    {
+                        var confined = PathText.Confine(items[i].Dir, within)
+                            ?? throw new InvalidOperationException($"{items[i].Dir} isn't inside {within} (a folder on the way leads elsewhere, or isn't there), so a session can't be started there.");
+                        items[i] = items[i] with { Dir = confined.Folder, Within = confined.Root };
+                    }
+                }
+                var made = new List<string>();
                 foreach (var item in items)
                 {
                     var info = new SessionInfo
                     {
-                        Name = string.IsNullOrWhiteSpace(item.Name) ? Path.GetFileName(item.Dir.TrimEnd('\\')) : item.Name.Trim(),
+                        Name = string.IsNullOrWhiteSpace(item.Name) ? Path.GetFileName(PathText.TrimEnd(item.Dir)) : item.Name.Trim(),
                         Directory = item.Dir,
                         Command = string.IsNullOrWhiteSpace(item.Command) ? "claude" : item.Command.Trim(),
                         Project = item.Project,
+                        Within = item.Within,   // as resolved and checked above; checked again at each start
                     };
                     TidyConversation(info);   // a "claude --resume X" typed as the command: conversation X
                     if (item.Conversation != null && TerminalSession.CanTrackConversation(info.Command))
@@ -728,10 +963,11 @@ internal sealed class MainForm : Form
                     if (TerminalSession.NeedsOwnConversation(info)) info.Conversation = Guid.NewGuid().ToString();
                     var added = AddSessionRuntime(info);
                     added.FirstPromptOnce = item.Prompt;   // from a panel's button: its first start is a new conversation with this prompt
+                    made.Add(info.Id);
                 }
                 SaveSessions();
                 Post(SessionList());
-                return null;
+                return made;
             }
             case "updateSession":
             {
@@ -810,16 +1046,8 @@ internal sealed class MainForm : Form
                 return null;
             }
             case "removeSession":
-            {
-                var s = Get(msg);
-                s.Dispose();
-                sessions.Remove(s.Id);
-                order.Remove(s.Id);
-                SaveSessions();
-                ForgetPanels(s.Id);   // its panels go with it
-                Post(SessionList());
+                RemoveSession(Get(msg));
                 return null;
-            }
             case "panels.scope":
                 panelStore.SetScope(Str(msg, "owner"), Str(msg, "id"), Str(msg, "scope"));
                 return null;
@@ -869,6 +1097,29 @@ internal sealed class MainForm : Form
                 }
                 return null;
             }
+            // ---- sessions starting and driving others (SessionControl)
+            case "control.state":
+                return ControlState();
+            case "control.status":
+                Driving.SetStatus(Str(msg, "id"), Str(msg, "status"));
+                return null;
+            case "control.answer":
+                Driving.AnswerSpawn(Str(msg, "id"), Bool(msg, "allow"), OptStr(msg, "scope") ?? "once");
+                return null;
+            case "control.set":
+                Driving.Policy.Set(Str(msg, "ability") switch
+                {
+                    "spawn" => ControlAbility.Spawn,
+                    "answer" => ControlAbility.Answer,
+                    "close" => ControlAbility.Close,
+                    var a => throw new ArgumentException($"There's no ability \"{a}\"."),
+                }, Str(msg, "scope"), ParseDecision(Str(msg, "decision")));
+                return null;
+            case "control.log":
+                return Driving.Log().Select(e => new { at = e.At, from = e.From, target = e.Target, action = e.Action, detail = e.Detail, ok = e.Ok });
+            case "control.clearLog":
+                Driving.ClearLog();
+                return null;
             case "relay.pause":
                 relay.Policy.Paused = Bool(msg, "paused");
                 return null;
@@ -932,7 +1183,7 @@ internal sealed class MainForm : Form
             }
             case "reorder":
             {
-                var ids = msg.GetProperty("ids").EnumerateArray().Select(x => x.GetString()!).Where(sessions.ContainsKey).ToList();
+                var ids = msg.GetProperty("ids").EnumerateArray().Select(x => x.GetString()!).Where(id => sessions.ContainsKey(id) || serverSessions.ContainsKey(id)).Distinct().ToList();
                 if (ids.Count == order.Count)
                 {
                     order.Clear();
@@ -940,13 +1191,6 @@ internal sealed class MainForm : Form
                     SaveSessions();
                 }
                 return null;
-            }
-            case "pickFolder":
-            {
-                using var dlg = new FolderBrowserDialog { Description = "Choose the folder (worktree) for the session", UseDescriptionForTitle = true };
-                var initial = Str(msg, "initial");
-                if (Directory.Exists(initial)) dlg.InitialDirectory = initial;
-                return dlg.ShowDialog(this) == DialogResult.OK ? dlg.SelectedPath : null;
             }
             case "worktree.add":
             {
@@ -1041,17 +1285,48 @@ internal sealed class MainForm : Form
                 var c = await Task.Run(() => s.Agent?.FindConversation(id, s.Info.Directory));
                 return new { id, saved = c != null, title = c?.Title, started = c?.Started, modified = c?.Modified };
             }
-            case "openUrl":
+            case "openFolder":
+                OpenFolder(Get(msg).Info.Directory);
+                return null;
+            case "terminal.paths":
             {
-                if (Uri.TryCreate(Str(msg, "uri"), UriKind.Absolute, out var u) && (u.Scheme == Uri.UriSchemeHttp || u.Scheme == Uri.UriSchemeHttps))
-                    OpenExternal(u.AbsoluteUri);
+                // Which of the paths in a terminal's output are there (relative ones from the session's folder), to
+                // underline as links. Off the UI thread: a mapped drive can be slow to answer.
+                var dir = Get(msg).Info.Directory;
+                var texts = msg.GetProperty("paths").EnumerateArray().Select(p => p.GetString() ?? "").Take(200).ToArray();
+                return await Task.Run(() => texts.Select(t => TerminalPaths.Resolve(t, dir) is { } f ? new { path = f.Path, folder = f.IsFolder } : null).ToArray());
+            }
+            case "terminal.openPath":
+            {
+                // A path link: open it (a file never runs: see OpenFileForViewing), or show it in its folder.
+                var found = TerminalPaths.Resolve(Str(msg, "path"), Get(msg).Info.Directory)
+                    ?? throw new InvalidOperationException("That file or folder isn't there any more.");
+                var inFolder = msg.TryGetProperty("inFolder", out var f) && f.ValueKind == JsonValueKind.True;
+                if (inFolder) ShowInFolder(found.Path);
+                else if (found.IsFolder) OpenFolder(found.Path);
+                else await Task.Run(() => OpenFile(found.Path));
                 return null;
             }
-            case "openFolder":
-                OpenExternal(Get(msg).Info.Directory);
+
+            // ---- a server's files, for a window on another computer (see ServerFiles)
+            case "fs.list":
+                return await Task.Run(() => ServerFiles.List(Str(msg, "path")));
+            case "fs.open":
+            {
+                var path = ServerFiles.Resolve(Str(msg, "path"), Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+                if (Directory.Exists(path)) OpenFolder(path);
+                else if (File.Exists(path)) await Task.Run(() => OpenFile(path));
+                else throw new InvalidOperationException("That file or folder isn't there any more.");
                 return null;
-            case "clipboard.files":
-                return ClipboardFiles();   // on the UI thread, as the clipboard needs
+            }
+            case "upload.begin":
+                uploads.Begin(Str(msg, "token"), Str(msg, "name"));
+                return null;
+            case "upload.data":
+                uploads.Write(Str(msg, "token"), Str(msg, "data"));
+                return null;
+            case "upload.end":
+                return uploads.End(Str(msg, "token"));
 
             // ---- plugins
             case "plugins.list":
@@ -1060,13 +1335,13 @@ internal sealed class MainForm : Form
                 var (found, problems) = LoadPlugins();
                 grants.Reconcile(found);   // a plugin whose plugin.json changed is asked again
                 relay.SetPeers(RelayPeers());
-                return new { folder = PluginFolder, plugins = found.Select(p => new { id = p.Id, title = p.Title, description = p.Description, url = p.Url, placement = p.Placement,
+                return new { folder = PluginFolder, plugins = found.Select(p => new { id = p.Id, title = p.Title, description = p.Description, url = window.PluginBase(p.Id) + p.Entry, placement = p.Placement,
                     menu = p.Menu.Select(i => new { label = i.Label, command = i.Command, where = i.Where }), access = p.Access, inbox = p.Inbox, icon = p.Icon,
                     toolbar = p.Toolbar is { } t ? new { icon = t.Icon, tooltip = t.Tooltip, command = t.Command } : null }), problems };
             }
             case "plugins.openFolder":
                 Directory.CreateDirectory(PluginFolder);
-                OpenExternal(PluginFolder);
+                OpenFolder(PluginFolder);
                 return null;
             // What a plugin allowed to see sessions asks for. Only the app's page asks (as for everything here); it checks
             // the plugin was allowed before it does.
@@ -1114,7 +1389,7 @@ internal sealed class MainForm : Form
                 return Themes.ThemeCatalog.Save(ThemeFolder, BuiltInThemeFolder, msg.GetProperty("theme"));
             case "themes.openFolder":
                 Directory.CreateDirectory(ThemeFolder);
-                OpenExternal(ThemeFolder);
+                OpenFolder(ThemeFolder);
                 return null;
 
             // ---- git
@@ -1183,6 +1458,31 @@ internal sealed class MainForm : Form
                 if (!result.Ok) throw new InvalidOperationException(string.IsNullOrEmpty(result.Error) ? result.Text : result.Error);
                 return result.Text.Trim();
             }
+            case "git.branches":
+                return (await GitService.GetBranchesAsync(GitDir(msg))).Select(b => new
+                {
+                    name = b.Name, remote = b.Remote, upstream = b.Upstream, ahead = b.Ahead, behind = b.Behind, gone = b.Gone, worktree = b.Worktree,
+                });
+            case "git.checkout":
+            {
+                // The branch picker: switch to a local branch, or to a remote one's local branch (made if needed).
+                var s = Get(msg);
+                var result = await GitService.CheckoutBranchAsync(GitDir(msg), Str(msg, "branch"), Bool(msg, "remote"), Bool(msg, "stash"));
+                await s.RefreshStatusAsync();
+                if (!result.Ok) throw new InvalidOperationException(result.Message);
+                return result.Message;
+            }
+            case "git.createBranch":
+            {
+                // Visual Studio's New Branch: from a branch or commit, switched to unless unticked, with the changes
+                // brought along or stashed first.
+                var s = Get(msg);
+                var result = await GitService.CreateBranchAsync(GitDir(msg), Str(msg, "branch").Trim(), OptStr(msg, "base"),
+                    Bool(msg, "checkout"), Bool(msg, "stash"));
+                await s.RefreshStatusAsync();
+                if (!result.Ok) throw new InvalidOperationException(result.Message);
+                return result.Message;
+            }
             case "app.version":
                 return UpdateService.CurrentVersion.ToString();
             case "notices.check":
@@ -1199,6 +1499,7 @@ internal sealed class MainForm : Form
             case "update.check":
             {
                 // The page decides when to ask (at start, then every 15 minutes, or from the menu).
+                if (Remote != null) return new { current = UpdateService.CurrentVersion.ToString(), available = false };
                 update = await UpdateService.CheckAsync();
                 return new
                 {
@@ -1208,17 +1509,34 @@ internal sealed class MainForm : Form
                     name = update?.Name,
                     pageUrl = update?.PageUrl,
                     notes = update?.Notes,
-                    canInstall = update?.Sha256 != null,
+                    canInstall = update?.CanInstall == true,
+                    // A Linux package is installed first, after the system asks for an administrator's password.
+                    asksPassword = UpdateService.Install is InstallKind.Deb or InstallKind.Rpm,
                 };
             }
             case "update.install":
             {
                 var info = update ?? throw new InvalidOperationException("Check for updates first.");
+                if (!info.CanInstall) throw new InvalidOperationException("This copy of LlamaTree can't install the update itself: get the new version from its release page.");
                 var installer = await UpdateService.DownloadAsync(info);
-                NoteConversationsForResume();
-                UpdateService.InstallAfterExit(installer);
-                // Close once this reply is on its way; setup waits for the process to end.
-                BeginInvoke(() => { closingForUpdate = true; Close(); });
+                // The update waits for both the window and this host to end: the installer can't replace files either has open.
+                int[] processes = window.ProcessId is { } w ? [Environment.ProcessId, w] : [Environment.ProcessId];
+                if (UpdateService.Install == InstallKind.Windows)
+                {
+                    NoteConversationsForResume();
+                    UpdateService.InstallAfterExit(installer, processes);
+                }
+                else
+                {
+                    // Installed (or unpacked) now, while a failure can still be shown; the app reopens once it has closed.
+                    string finish;
+                    try { finish = await LinuxUpdate.PrepareAsync(UpdateService.Install, installer); }
+                    finally { try { Directory.Delete(Path.GetDirectoryName(installer)!, true); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { } }
+                    NoteConversationsForResume();
+                    LinuxUpdate.FinishAfterExit(finish, processes);
+                }
+                // Close once this reply is on its way, and end the host: setup waits for both.
+                RunOnUi(() => { window.Close(); QuitRequested?.Invoke(); });
                 return null;
             }
             case "git.suggestMessage":
@@ -1272,7 +1590,7 @@ internal sealed class MainForm : Form
                 if (!File.Exists(full)) return null;
                 if (GitService.ExistingPathInRepo(root, path) == null)
                     throw new InvalidOperationException("That file is outside the repository (it is reached through a link).");
-                OpenFileForViewing(full);
+                await Task.Run(() => OpenFile(full));
                 return null;
             }
             case "git.openFolder":
@@ -1285,7 +1603,7 @@ internal sealed class MainForm : Form
                 while (path.Length > 0 && !Directory.Exists(Path.Combine(root, path))) path = Path.GetDirectoryName(path) ?? "";
                 var target = path.Length == 0 ? root
                     : GitService.ExistingPathInRepo(root, path) ?? throw new InvalidOperationException("That folder is outside the repository (it is reached through a link).");
-                OpenExternal(target);
+                OpenFolder(target);
                 return null;
             }
         }
@@ -1361,13 +1679,6 @@ internal sealed class MainForm : Form
     /// <summary>What the count says about use: how many projects and sessions are open. Read on the UI thread.</summary>
     private CountUsage CountUsage() => new(projects.Count, sessions.Count);
 
-    /// <summary>This hour's request for the count, a little after the page is up so it never competes with the start.</summary>
-    private async Task CountSoonAsync()
-    {
-        await Task.Delay(TimeSpan.FromSeconds(20));   // back on the UI thread, where the counts are read
-        await TelemetryService.PingIfDueAsync(CountUsage());
-    }
-
     private static string Str(JsonElement e, string name) =>
         e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : "";
 
@@ -1386,105 +1697,5 @@ internal sealed class MainForm : Form
         if (string.IsNullOrWhiteSpace(text)) return null;
         text = string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
         return text.Length <= max ? text : text[..max] + "…";
-    }
-
-    // Script and interpreter types that Windows' own unsafe-type list (AssocIsDangerous) may not cover.
-    private static readonly HashSet<string> ScriptExtensions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ".ps1", ".psm1", ".py", ".pyw", ".pyz", ".sh", ".bash", ".rb", ".pl", ".jar",
-        ".appinstaller", ".appx", ".appxbundle", ".msix", ".msixbundle", ".application", ".appref-ms",
-    };
-
-    // Programs that run the file they are handed rather than display it.
-    private static readonly HashSet<string> ScriptHosts = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "cmd", "powershell", "pwsh", "wscript", "cscript", "mshta", "py", "pyw", "node", "deno", "bun", "bash", "sh", "git-bash",
-        "wsl", "java", "javaw", "perl", "ruby", "rubyw", "php", "lua", "tclsh", "wish", "rundll32", "regsvr32", "msiexec",
-        "regedit", "dotnet", "autohotkey", "autohotkey32", "autohotkey64", "autohotkeyu32", "autohotkeyu64",
-    };
-
-    /// <summary>True if the shell's default action for this file type runs it rather than showing it.</summary>
-    internal static bool IsRunnable(string path)
-    {
-        var ext = Path.GetExtension(path);
-        if (ext.Length <= 1) return false;
-        var pathExt = Environment.GetEnvironmentVariable("PATHEXT") ?? ".COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC";
-        return ScriptExtensions.Contains(ext)
-            || pathExt.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Contains(ext, StringComparer.OrdinalIgnoreCase)
-            || Native.AssocIsDangerous(ext)
-            || DefaultActionRuns(Native.AssocQuery(Native.ASSOCSTR_COMMAND, ext), Native.AssocQuery(Native.ASSOCSTR_EXECUTABLE, ext));
-    }
-
-    /// <summary>
-    /// Catches script types this machine has associated with an interpreter (or with the file itself, as for .exe)
-    /// even when the extension is on none of the lists above.
-    /// </summary>
-    /// <param name="command">The default verb's command line, e.g. <c>"%1" %*</c>.</param>
-    /// <param name="program">The program that command runs.</param>
-    internal static bool DefaultActionRuns(string? command, string? program)
-    {
-        var cmd = command?.TrimStart() ?? "";
-        if (cmd.StartsWith("\"%1\"", StringComparison.Ordinal) || cmd.StartsWith("%1", StringComparison.Ordinal)) return true;
-        if (string.IsNullOrEmpty(program)) return false;
-        var name = Path.GetFileNameWithoutExtension(program);
-        return ScriptHosts.Contains(name) || name.StartsWith("python", StringComparison.OrdinalIgnoreCase);
-    }
-
-    /// <summary>
-    /// Opens a changed file the way Explorer would, except that anything Windows would run (scripts, executables)
-    /// is opened for editing instead: "Open" must never execute a file Claude just wrote.
-    /// </summary>
-    private static void OpenFileForViewing(string path)
-    {
-        if (!IsRunnable(path))
-        {
-            OpenExternal(path);
-            return;
-        }
-        try
-        {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true, Verb = "edit" });
-        }
-        catch (System.ComponentModel.Win32Exception)
-        {
-            // No "edit" verb for this type (e.g. .exe, .py).
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "notepad.exe")) { ArgumentList = { path } });
-        }
-    }
-
-    private static readonly string PastedImageFolder = Path.Combine(Path.GetTempPath(), "LlamaTree", "pasted-images");
-
-    /// <summary>
-    /// What a paste without text puts in a terminal: the files copied in Explorer, or the image on the clipboard (a
-    /// screenshot, a copied picture) saved as a PNG in the temp folder. Saved images go after a week.
-    /// </summary>
-    private static string[] ClipboardFiles()
-    {
-        if (Clipboard.ContainsFileDropList()) return Clipboard.GetFileDropList().Cast<string>().ToArray();
-        if (!Clipboard.ContainsImage()) return [];
-
-        Directory.CreateDirectory(PastedImageFolder);
-        foreach (var old in new DirectoryInfo(PastedImageFolder).EnumerateFiles("*.png").Where(f => f.LastWriteTimeUtc < DateTime.UtcNow.AddDays(-7)))
-        {
-            try { old.Delete(); } catch (IOException) { } catch (UnauthorizedAccessException) { }
-        }
-        var path = Path.Combine(PastedImageFolder, $"image-{DateTime.Now:yyyyMMdd-HHmmss-fff}.png");
-        // The PNG as the app that copied it wrote it (keeping transparency), else the bitmap.
-        if (Clipboard.GetData("PNG") is MemoryStream png) File.WriteAllBytes(path, png.ToArray());
-        else if (Clipboard.GetImage() is { } image) using (image) image.Save(path, System.Drawing.Imaging.ImageFormat.Png);
-        else return [];
-        return [path];
-    }
-
-    private static void OpenExternal(string target)
-    {
-        try
-        {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(target) { UseShellExecute = true });
-        }
-        catch (Exception)
-        {
-            // Nothing useful to do if the shell can't open it.
-        }
     }
 }

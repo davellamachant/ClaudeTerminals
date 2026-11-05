@@ -1,3 +1,4 @@
+using LlamaTree.Platform;
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text;
@@ -39,7 +40,7 @@ internal static partial class ConversationIndex
     private static partial Regex NonAlphanumeric();
 
     /// <summary>Claude names each project folder after its cwd with every non-alphanumeric character replaced by '-'.</summary>
-    internal static string Encode(string directory) => NonAlphanumeric().Replace(Path.GetFullPath(directory).TrimEnd('\\'), "-");
+    internal static string Encode(string directory) => NonAlphanumeric().Replace(PathText.TrimEnd(Path.GetFullPath(directory)), "-");
 
     public static List<ConversationInfo> List(string? directory, int max)
     {
@@ -51,7 +52,7 @@ internal static partial class ConversationIndex
         if (!string.IsNullOrWhiteSpace(directory) && Directory.Exists(directory))
         {
             var encoded = Encode(directory);
-            normalizedDir = Path.GetFullPath(directory).TrimEnd('\\');
+            normalizedDir = PathText.TrimEnd(Path.GetFullPath(directory));
             projectDirs = projectDirs.Where(d => string.Equals(Path.GetFileName(d), encoded, StringComparison.OrdinalIgnoreCase));
         }
 
@@ -71,7 +72,7 @@ internal static partial class ConversationIndex
             if (info == null) continue;
             // Different cwds can encode to the same folder name; confirm the real path when filtering.
             if (normalizedDir != null && info.Cwd != null &&
-                !string.Equals(info.Cwd.TrimEnd('\\'), normalizedDir, StringComparison.OrdinalIgnoreCase))
+                !string.Equals(PathText.TrimEnd(info.Cwd), normalizedDir, StringComparison.OrdinalIgnoreCase))
                 continue;
             result.Add(info);
             if (result.Count >= max) break;

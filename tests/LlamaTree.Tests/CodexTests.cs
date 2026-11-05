@@ -42,7 +42,7 @@ public class CodexCommandTests
     public void A_codex_session_resumes_its_conversation(string command, bool saved, string expected) =>
         Assert.Equal(expected, CodexAgent.PrepareCommand(command, Id, _ => saved));
 
-    [Fact]
+    [WindowsFact]
     public void A_new_conversation_starts_with_the_panels_prompt() =>
         Assert.Equal("codex \"fix it\" -m o3", CodexAgent.PrepareCommand("codex -m o3", Id, _ => true, newConversation: true, firstPrompt: "fix it"));
 

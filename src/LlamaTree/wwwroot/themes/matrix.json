@@ -4,6 +4,7 @@
   "font": "Cascadia Mono",
   "glow": true,
   "rain": true,
+  "terminalBackground": 42,
   "accent": { "line": "#39ff6a", "strong": "#0b6b26" },
   "colors": {
     "chrome": "#020804", "chrome-2": "#010503", "chrome-3": "#000302",
