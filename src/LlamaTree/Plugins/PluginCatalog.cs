@@ -17,9 +17,10 @@ namespace LlamaTree.Plugins;
 /// <param name="ManifestHash">Its plugin.json's SHA-256: access you allowed is asked again when it changes (see PluginGrants).</param>
 /// <param name="Icon">Its icon, shown beside its name in menus, its tab and Permissions: "icon" in its plugin.json, else its
 /// title bar button's, as a data: URL (see <see cref="PluginButton"/>); null for the app's plugin icon.</param>
+/// <param name="Version">"version" in its plugin.json (major.minor.patch), as plugins from Get plugins have; null if it has none.</param>
 internal sealed record PluginInfo(string Id, string Title, string? Description, string Entry, string Folder, string Placement,
     IReadOnlyList<PluginMenuItem> Menu, IReadOnlyList<string> Access, PluginButton? Toolbar = null, bool Inbox = false, string ManifestHash = "",
-    string? Icon = null)
+    string? Icon = null, string? Version = null)
 {
     public string Host => PluginCatalog.HostFor(Id);
     public string Url => $"https://{Host}/{Entry}";
@@ -62,6 +63,10 @@ internal static partial class PluginCatalog
 
     /// <summary>Whether <paramref name="id"/> could be a plugin's id (its folder's name, and a host name label).</summary>
     public static bool IsValidId(string? id) => id != null && IdPattern().IsMatch(id);
+
+    /// <summary>A version as plugins and themes write it: major.minor.patch.</summary>
+    [GeneratedRegex(@"^\d{1,9}\.\d{1,9}\.\d{1,9}$")]
+    internal static partial Regex VersionPattern();
 
     /// <summary>The plugins in <paramref name="folder"/>, by title; folders that aren't valid plugins are left out, with why.</summary>
     public static (List<PluginInfo> Plugins, List<string> Problems) Load(string folder)
@@ -111,7 +116,8 @@ internal static partial class PluginCatalog
                     AccessOf(root, name, problems), button,
                     Inbox: root.TryGetProperty("inbox", out var inbox) && inbox.ValueKind == JsonValueKind.True,
                     ManifestHash: Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)),
-                    Icon: icon ?? button?.Icon));
+                    Icon: icon ?? button?.Icon,
+                    Version: Str(root, "version") is { } v && VersionPattern().IsMatch(v) ? v : null));
             }
             catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
             {

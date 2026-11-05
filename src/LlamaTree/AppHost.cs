@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using LlamaTree.Git;
 using LlamaTree.Panels;
+using LlamaTree.Gallery;
 using LlamaTree.Plugins;
 using LlamaTree.Relay;
 using LlamaTree.Sessions;
@@ -483,6 +484,9 @@ internal sealed partial class AppHost
     /// <summary>Themes of your own (see <see cref="Themes.ThemeCatalog"/>); the app's own are in wwwroot/themes.</summary>
     private static string ThemeFolder => Path.Combine(SessionStore.AppDataFolder, "themes");
     private static string BuiltInThemeFolder => Path.Combine(AppContext.BaseDirectory, "wwwroot", "themes");
+
+    /// <summary>Where Get plugins unpacks a plugin before it goes in the plugins folder (beside it, so it moves rather than copies).</summary>
+    private static string GalleryStaging => Path.Combine(SessionStore.AppDataFolder, "downloads");
     private readonly Dictionary<string, PluginInfo> plugins = [];
 
     /// <summary>
@@ -1390,6 +1394,73 @@ internal sealed partial class AppHost
             case "themes.openFolder":
                 Directory.CreateDirectory(ThemeFolder);
                 OpenFolder(ThemeFolder);
+                return null;
+
+            // ---- Get plugins and Get themes (see GalleryService): the catalogs, read only when the page asks
+            case "gallery.plugins":
+            {
+                var (offered, problems) = await GalleryService.PluginsAsync(Bool(msg, "refresh"));
+                var (here, _) = PluginCatalog.Load(PluginFolder);
+                return new
+                {
+                    repository = GalleryService.PluginsRepository, appVersion = Updates.UpdateService.CurrentVersion.ToString(), problems,
+                    plugins = offered.Select(p =>
+                    {
+                        var have = here.FirstOrDefault(h => h.Id == p.Id);
+                        var haveOne = have != null || Directory.Exists(Path.Combine(PluginFolder, p.Id));
+                        return new
+                        {
+                            id = p.Id, title = p.Title, description = p.Description, version = p.Version, minAppVersion = p.MinAppVersion, placement = p.Placement,
+                            access = p.Access, inbox = p.Inbox, icon = p.Icon, author = p.Author, installed = have?.Version,
+                            state = GalleryService.StateOf(p.Version, p.MinAppVersion, haveOne, have?.Version),
+                        };
+                    }),
+                };
+            }
+            case "gallery.themes":
+            {
+                var (offered, problems) = await GalleryService.ThemesAsync(Bool(msg, "refresh"));
+                var (here, _) = Themes.ThemeCatalog.Load(BuiltInThemeFolder, ThemeFolder);
+                return new
+                {
+                    repository = GalleryService.ThemesRepository, appVersion = Updates.UpdateService.CurrentVersion.ToString(), problems,
+                    themes = offered.Select(t =>
+                    {
+                        var have = here.FirstOrDefault(h => h.Id == t.Id);
+                        var haveOne = have != null || File.Exists(Path.Combine(ThemeFolder, t.Id + ".json"));
+                        return new
+                        {
+                            id = t.Id, version = t.Version, minAppVersion = t.MinAppVersion, description = t.Description, author = t.Author, theme = t.Theme,
+                            installed = have?.Version, state = GalleryService.StateOf(t.Version, t.MinAppVersion, haveOne, have?.Version, have?.BuiltIn == true),
+                        };
+                    }),
+                };
+            }
+            case "gallery.installPlugin":
+            {
+                var id = Str(msg, "id");
+                var (offered, _) = await GalleryService.PluginsAsync(false);
+                var p = offered.FirstOrDefault(x => x.Id == id) ?? throw new InvalidOperationException("That plugin isn't in the catalog any more.");
+                await GalleryService.InstallPluginAsync(p, PluginFolder, GalleryStaging);
+                return null;
+            }
+            case "gallery.removePlugin":
+            {
+                var id = Str(msg, "id");
+                await Task.Run(() => GalleryService.RemovePlugin(PluginFolder, id));
+                grants.Forget(id);   // installed again, it asks again
+                return null;
+            }
+            case "gallery.installTheme":
+            {
+                var id = Str(msg, "id");
+                var (offered, _) = await GalleryService.ThemesAsync(false);
+                var t = offered.FirstOrDefault(x => x.Id == id) ?? throw new InvalidOperationException("That theme isn't in the catalog any more.");
+                GalleryService.InstallTheme(t, ThemeFolder, BuiltInThemeFolder);
+                return null;
+            }
+            case "gallery.removeTheme":
+                GalleryService.RemoveTheme(ThemeFolder, Str(msg, "id"));
                 return null;
 
             // ---- git

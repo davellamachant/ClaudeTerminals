@@ -38,6 +38,7 @@ const PATHS = {
   list: 'M5.8 4h7.7M5.8 8h7.7M5.8 12h7.7M2.6 4h.1M2.6 8h.1M2.6 12h.1',
   plug: 'M6 1.5v3M10 1.5v3M4 4.5h8v2.5a4 4 0 0 1-8 0zM8 11v3.5',   // a plugin's tab   // the Project view: a list of the project's worktrees
   shield: 'M8 1.5l5.5 2v4.2c0 3.2-2.3 5.6-5.5 6.8-3.2-1.2-5.5-3.6-5.5-6.8V3.5z',   // the Permissions view
+  bag: 'M3 5.5h10l-.8 8.5H3.8zM5.5 7V4a2.5 2.5 0 0 1 5 0v3',   // Get plugins and Get themes
   link: 'M6.8 9.2l2.4-2.4M7.3 4.7l1-1a2.6 2.6 0 0 1 3.7 3.7l-1 1M8.7 11.3l-1 1a2.6 2.6 0 0 1-3.7-3.7l1-1',   // a session that may message others
   server: 'M2.5 2.5h11v4.5h-11zM2.5 9h11v4.5h-11zM5 4.75h.01M5 11.25h.01',   // a server: a session that runs on one
   mail: 'M2 4h12v8.5H2zM2 4.5l6 4.5 6-4.5',   // unread messages
@@ -740,9 +741,11 @@ const theme = { pref: store.get('theme', 'system'), windowsLight: null };
 // on the next start rather than once the host has listed the themes.
 const themes = { list: [], problems: [], folder: null, names: null, last: store.get('themeLook', null) };
 const BUILT_IN_THEMES = ['system', 'light', 'dark'];
-/** The theme file in use, or null for System, Light and Dark. */
-const currentTheme = () => BUILT_IN_THEMES.includes(theme.pref) ? null
-  : themes.list.find((t) => t.id === theme.pref) ?? (themes.last?.id === theme.pref ? themes.last : null);
+/** A theme being tried on in Get themes, shown in place of the one picked until it's installed or put away (see previewTheme). */
+let themePreview = null;
+/** The theme file in use (or being tried on), or null for System, Light and Dark. */
+const currentTheme = () => themePreview ?? (BUILT_IN_THEMES.includes(theme.pref) ? null
+  : themes.list.find((t) => t.id === theme.pref) ?? (themes.last?.id === theme.pref ? themes.last : null));
 const isLight = () => {
   const t = currentTheme();
   if (t) return t.base === 'light';
@@ -758,7 +761,7 @@ const themeName = () => (isLight() ? 'light' : 'dark');
 function themeLook() {
   const t = currentTheme();
   if (!t) return null;
-  if (!themes.list.includes(t)) return t;   // the kept look
+  if (!themes.list.includes(t) && t !== themePreview) return t;   // the kept look
   const made = t.monochrome ? monochromeLook(accentColour(), t.base === 'light') : {};
   return {
     id: t.id, name: t.name, base: t.base, font: t.font, glow: t.glow, grid: !!t.grid, rain: !!t.rain, monochrome: t.monochrome, cursor: t.cursor ?? null, terminalBackground: t.terminalBackground ?? null,
@@ -4768,7 +4771,7 @@ function tabShown(t) {
   // A Project view is shown on its own: neither a session's tabs with it, nor it with a session's.
   if (isProjectTab(t)) return state.projectViewOf === t.projectId;
   if (state.projectViewOf != null) return false;
-  if (isPluginTab(t) || isPermsTab(t)) return true;   // a plugin, or Permissions, belongs to no project
+  if (isPluginTab(t) || isPermsTab(t) || isGalleryTab(t)) return true;   // a plugin, Permissions or Get plugins belongs to no project
   const cur = currentSession();
   const s = state.byId.get(t.sessionId);
   return !cur || !s || groupOf(s) === groupOf(cur);
@@ -4822,15 +4825,17 @@ function showDocs() {
     if (isConvTab(prev)) prev.scrollTop = $('#convBody').scrollTop;
     else if (isProjectTab(prev)) prev.scrollTop = $('#projectBody').scrollTop;
     else if (isPermsTab(prev)) prev.scrollTop = $('#permsBody').scrollTop;
+    else if (isGalleryTab(prev)) prev.scrollTop = $('#galleryBody').scrollTop;
     else if (!isPluginTab(prev) && !isPermsTab(prev) && diffEditor) prev.viewState = diffEditor.saveViewState();
   }
   docs.shown = tab;
   const split = !!tab && tab === sideTab();
-  $('#diffDoc').hidden = !tab || isConvTab(tab) || isProjectTab(tab) || isPluginTab(tab) || isPermsTab(tab);
+  $('#diffDoc').hidden = !tab || isConvTab(tab) || isProjectTab(tab) || isPluginTab(tab) || isPermsTab(tab) || isGalleryTab(tab);
   $('#convDoc').hidden = !isConvTab(tab);
   $('#projectDoc').hidden = !isProjectTab(tab);
   $('#pluginDoc').hidden = !isPluginTab(tab);
   $('#permsDoc').hidden = !isPermsTab(tab);
+  $('#galleryDoc').hidden = !isGalleryTab(tab);
   $('#termPane').classList.toggle('behind', !!tab && !split);
   const area = $('#docArea');
   for (const dir in DOCK_SIDES) area.classList.toggle('split-' + dir, split && docs.dir === dir);
@@ -4842,6 +4847,7 @@ function showDocs() {
     else if (isProjectTab(tab)) showProjectView(tab);
     else if (isPluginTab(tab)) showPlugin(tab);
     else if (isPermsTab(tab)) showPermissions(tab);
+    else if (isGalleryTab(tab)) showGallery(tab);
     else loadDiff(tab);
   } else if (!tab) {
     diffState.seq++;
@@ -4873,6 +4879,7 @@ function closeDoc(key) {
   const wasActive = docs.active === key;
   const wasSide = docs.side === key;
   if (isPluginTab(docs.tabs[i])) { closePluginFrame(docs.tabs[i].pluginId); seatPanelPlugins(); }   // one opened wide goes back to the side panel
+  if (isGalleryTab(docs.tabs[i]) && themePreview) { themePreview = null; applyTheme(); }   // a theme tried on goes with it
   docs.tabs.splice(i, 1);
   // The nearest shown tab after it, else before it, that `ok` accepts.
   const near = (ok) => docs.tabs.slice(i).find((t) => tabShown(t) && ok(t)) || docs.tabs.slice(0, i).reverse().find((t) => tabShown(t) && ok(t));
@@ -4886,7 +4893,7 @@ function closeDoc(key) {
   } else {
     renderDocTabs();
   }
-  if (!docs.tabs.some((t) => !isConvTab(t) && !isProjectTab(t) && !isPluginTab(t) && !isPermsTab(t))) disposeDiffModels();
+  if (!docs.tabs.some((t) => !isConvTab(t) && !isProjectTab(t) && !isPluginTab(t) && !isPermsTab(t) && !isGalleryTab(t))) disposeDiffModels();
 }
 
 function cycleDoc(delta) {
@@ -4943,6 +4950,17 @@ function renderDocTabs() {
         onmousedown: (e) => { if (e.button === 1) e.preventDefault(); },
         onauxclick: (e) => { if (e.button === 1) closeDoc(t.key); },
       }, iconEl('shield'), h('span', { class: 'doc-title' }, 'Permissions'),
+      h('button', { class: 'icon-btn small', title: 'Close (Ctrl+W)', onclick: () => closeDoc(t.key) }, iconEl('close')));
+    }
+    if (isGalleryTab(t)) {
+      return h('div', {
+        class: 'doc-tab' + (docs.active === t.key ? ' active' : ''),
+        'data-id': t.key,
+        title: 'Get plugins and themes: from the LlamaTree-Plugins and LlamaTree-Themes repositories',
+        onclick: (e) => { if (!e.target.closest('button')) activateDoc(t.key); },
+        onmousedown: (e) => { if (e.button === 1) e.preventDefault(); },
+        onauxclick: (e) => { if (e.button === 1) closeDoc(t.key); },
+      }, iconEl('bag'), h('span', { class: 'doc-title' }, gallery.by === 'themes' ? 'Get themes' : 'Get plugins'),
       h('button', { class: 'icon-btn small', title: 'Close (Ctrl+W)', onclick: () => closeDoc(t.key) }, iconEl('close')));
     }
     if (isConvTab(t)) {
@@ -6084,6 +6102,7 @@ function offerClaudeRestart() {
 
 function setThemePref(pref) {
   const before = themeName();
+  themePreview = null;
   theme.pref = pref;
   store.set('theme', pref);
   applyTheme(before);
@@ -6623,6 +6642,7 @@ function themeMenu(x, y) {
     themes.problems.length > 0 && { icon: 'warn', label: `${themes.problems.length} theme${themes.problems.length === 1 ? '' : 's'} not loaded`, kbd: 'Why?', action: () => toast(themes.problems.join('\n'), true) },
     '~',
     { icon: 'save', label: 'Save as a new theme…', action: showSaveThemeDialog },
+    { icon: 'bag', label: 'Get themes…', action: () => openGallery('themes') },
     { icon: 'folder', label: 'Open the themes folder', action: () => request('themes.openFolder') },
     '-',
     { header: 'Accent colour' },
@@ -6650,7 +6670,8 @@ function themeMenu(x, y) {
       ? { icon: 'shield', label: 'Permissions', kbd: `${relayWaiting()} waiting for your answer`, action: () => openPermissions('session') }
       : { icon: 'shield', label: 'Permissions', kbd: 'Plugins and sessions', action: () => openPermissions() },
     plugins.problems.length > 0 && { icon: 'warn', label: `${plugins.problems.length} couldn't be loaded`, kbd: 'Why?', action: () => toast(plugins.problems.join('\n'), true) },
-    { icon: 'folder', label: plugins.list.length ? 'Open the plugins folder' : 'Add a plugin: open the plugins folder', action: () => request('plugins.openFolder') },
+    { icon: 'bag', label: 'Get plugins…', action: () => openGallery('plugins') },
+    { icon: 'folder', label: 'Open the plugins folder', action: () => request('plugins.openFolder') },
   ]);
 }
 
@@ -7547,6 +7568,256 @@ function askPluginAccess(p, kind) {
 
 // ---- the Permissions view: what each plugin may do, by plugin or by session
 
+// ------------------------------------------------------------------ Get plugins and Get themes
+// The plugins and themes the LlamaTree-Plugins and LlamaTree-Themes repositories publish, in a tab like Permissions. The
+// host reads their catalogs only when this tab asks (see GalleryService), and installing puts a plugin in the plugins
+// folder, or a theme in the themes folder, as if you'd put it there yourself: a plugin still asks before it sees anything.
+
+const GALLERY_KEY = 'gallery';
+function isGalleryTab(t) { return t?.kind === 'gallery'; }   // a declaration: tab code above may run first
+/** by: 'plugins' or 'themes'; each catalog as the host last answered, those being read, why one couldn't be, and the ids being installed or removed. */
+const gallery = { by: store.get('galleryBy', 'plugins'), plugins: null, themes: null, loading: new Set(), error: {}, busy: new Set() };
+
+/** Opens Get plugins (by 'plugins') or Get themes ('themes'). */
+function openGallery(by = null) {
+  if (by) { gallery.by = by; store.set('galleryBy', by); }
+  if (!docs.tabs.some((t) => t.key === GALLERY_KEY)) docs.tabs.push({ key: GALLERY_KEY, kind: 'gallery', preview: false, scrollTop: null });
+  activateDoc(GALLERY_KEY);
+  if (!gallery[gallery.by]) loadGallery(gallery.by);
+  else galleryChanged();
+}
+
+function showGallery(tab) {
+  renderGallery();
+  if (tab.scrollTop != null) $('#galleryBody').scrollTop = tab.scrollTop;
+}
+
+const galleryChanged = () => { if (isGalleryTab(shownDoc())) renderGallery(); };
+
+function setGalleryBy(by) {
+  gallery.by = by;
+  store.set('galleryBy', by);
+  if (!gallery[by]) loadGallery(by);
+  galleryChanged();
+  renderDocTabs();   // its tab says which
+}
+
+/** Asks the host for a catalog and where each of its entries stands here; `refresh` reads it from GitHub again. */
+async function loadGallery(by, refresh = false) {
+  if (gallery.loading.has(by)) return;
+  gallery.loading.add(by);
+  delete gallery.error[by];
+  galleryChanged();
+  try { gallery[by] = await request(by === 'plugins' ? 'gallery.plugins' : 'gallery.themes', { refresh }); }
+  catch (e) { gallery.error[by] = e.message; }
+  finally { gallery.loading.delete(by); galleryChanged(); }
+}
+
+/** Runs an install or removal for `id`, with its card's buttons off meanwhile, then reads where everything stands again. */
+async function galleryDo(by, id, work) {
+  if (gallery.busy.has(id)) return;
+  gallery.busy.add(id);
+  galleryChanged();
+  try { await work(); }
+  catch (e) { toast(e.message, true); }
+  finally {
+    gallery.busy.delete(id);
+    await loadGallery(by);
+  }
+}
+
+/** A plugin's page closes before its folder is replaced or removed (its files can't be swapped under it); says whether it had a tab open. */
+function closePluginEverywhere(id) {
+  const hadTab = docs.tabs.some((t) => t.key === pluginKey(id));
+  if (hadTab) closeDoc(pluginKey(id));
+  if (groupOfTab('plugin:' + id)) closeDockPlugin('plugin:' + id, false);
+  closePluginFrame(id);
+  return hadTab;
+}
+
+function installPlugin(e) {
+  const updating = e.state === 'update';
+  galleryDo('plugins', e.id, async () => {
+    const reopen = updating && closePluginEverywhere(e.id);
+    await request('gallery.installPlugin', { id: e.id });
+    closedPanelPlugins.delete(e.id);   // a side panel plugin takes its place there, even if you'd closed an older copy
+    rememberClosedPanelPlugins();
+    await loadPlugins();
+    if (reopen) openPlugin(e.id);
+    toast(updating ? `${e.title} is updated to ${e.version}.`
+      : `${e.title} is installed: it's under Plugins in the palette menu${e.placement === 'panel' ? ', and in the side panel' : ''}.${e.access.length ? ' It asks you before it sees anything.' : ''}`);
+  });
+}
+
+function removePlugin(e) {
+  confirmDialog(`Remove ${e.title}?`, 'Its folder is deleted from your plugins folder, and what you allowed it is forgotten. You can install it again from here.', 'Remove', true,
+    () => galleryDo('plugins', e.id, async () => {
+      closePluginEverywhere(e.id);
+      await request('gallery.removePlugin', { id: e.id });
+      await loadPlugins();
+      toast(`${e.title} is removed.`);
+    }));
+}
+
+/** Tries on a theme from Get themes before it's installed: it's on screen until you install it, stop, pick a theme or close the tab. */
+function previewTheme(e) {
+  themePreview = { ...e.theme, previewOf: e.id };
+  applyTheme();
+  galleryChanged();
+}
+
+function stopThemePreview() {
+  if (!themePreview) return;
+  themePreview = null;
+  applyTheme();
+  galleryChanged();
+}
+
+function installTheme(e) {
+  const updating = e.state === 'update';
+  galleryDo('themes', e.id, async () => {
+    await request('gallery.installTheme', { id: e.id });
+    themePreview = null;
+    await loadThemes();
+    if (!updating || theme.pref === e.id) setThemePref(e.id);
+    toast(updating ? `${e.theme.name} is updated to ${e.version}.` : `${e.theme.name} is installed and on. Switch back any time from the palette menu.`);
+  });
+}
+
+function removeTheme(e) {
+  confirmDialog(`Remove ${e.theme.name}?`, `${e.id}.json is deleted from your themes folder.${theme.pref === e.id ? ' The app goes back to System.' : ''} You can install it again from here.`, 'Remove', true,
+    () => galleryDo('themes', e.id, async () => {
+      await request('gallery.removeTheme', { id: e.id });
+      await loadThemes();
+      toast(`${e.theme.name} is removed.`);
+    }));
+}
+
+function renderGallery() {
+  const by = gallery.by;
+  fill($('#galleryBy'), [['plugins', 'Plugins'], ['themes', 'Themes']].map(([b, label]) =>
+    h('button', { class: 'seg-btn' + (by === b ? ' active' : ''), role: 'tab', 'aria-selected': String(by === b), onclick: () => setGalleryBy(b) }, label)));
+  const previewing = themePreview && gallery.themes?.themes.find((e) => e.id === themePreview.previewOf);
+  fill($('#galleryTools'),
+    previewing && h('span', { class: 'gallery-previewing' }, iconEl('theme'), `Trying on ${previewing.theme.name}`),
+    previewing && h('button', { class: 'tb-btn text', onclick: stopThemePreview }, 'Stop'),
+    h('button', { class: 'tb-btn text', title: `Open your ${by} folder`, onclick: () => request(by === 'plugins' ? 'plugins.openFolder' : 'themes.openFolder') }, 'Open the folder'),
+    h('button', { class: 'icon-btn', title: 'Read the catalog from GitHub again', disabled: gallery.loading.has(by), onclick: () => loadGallery(by, true) }, iconEl('refresh')));
+
+  const data = gallery[by];
+  const repo = data?.repository ?? `https://github.com/LlamachantTechnology/LlamaTree-${by === 'plugins' ? 'Plugins' : 'Themes'}`;
+  const intro = h('p', { class: 'gallery-intro dim' },
+    by === 'plugins'
+      ? 'Plugins add tabs, side panels, menu items and buttons. Each runs sandboxed on an address of its own, and asks you before it sees anything beyond its own page. '
+      : 'A theme is colours and effects, only data: it can’t run anything. Try one on before you install it. ',
+    h('button', { class: 'link-btn', onclick: () => request('openUrl', { uri: repo }) }, by === 'plugins' ? 'LlamaTree-Plugins' : 'LlamaTree-Themes'),
+    ' on GitHub has their source, and how to add your own.');
+
+  let body;
+  if (gallery.error[by] && !gallery.loading.has(by)) {
+    body = h('div', { class: 'perms-empty' }, h('p', {}, `The catalog couldn't be read: ${gallery.error[by]}`),
+      h('button', { class: 'btn', onclick: () => loadGallery(by, true) }, 'Try again'));
+  } else if (!data) {
+    body = h('p', { class: 'perms-empty' }, 'Reading the catalog…');
+  } else {
+    const list = by === 'plugins' ? data.plugins : data.themes;
+    body = !list.length ? h('p', { class: 'perms-empty' }, 'Nothing has been published yet.')
+      : h('div', { class: 'gallery-grid' }, list.map(by === 'plugins' ? galleryPluginCard : galleryThemeCard));
+  }
+  fill($('#galleryBody'), intro, body,
+    data?.problems?.length > 0 && h('p', { class: 'gallery-problems dim' }, `${data.problems.length} left out: ${data.problems.join(' ')}`));
+}
+
+/** The words on a card for what can't be done with it, or null when its buttons say it. */
+function galleryNote(e, what) {
+  if (e.state === 'needs-app') return `Needs LlamaTree ${e.minAppVersion} or later: update LlamaTree first.`;
+  if (e.state === 'yours') return `A ${what} of your own is called ${e.id}${what === 'theme' ? '.json' : ''}, so this one can't be installed beside it.`;
+  return null;
+}
+
+function galleryPluginCard(e) {
+  const busy = gallery.busy.has(e.id);
+  const have = e.state === 'installed' || e.state === 'update';
+  const asks = e.access.map((k) => PLUGIN_ACCESS[k]?.title ?? k);
+  const note = galleryNote(e, 'plugin');
+  return h('section', { class: 'gallery-card' + (have ? ' have' : '') },
+    h('header', {},
+      e.icon ? h('img', { class: 'gallery-icon', src: e.icon, alt: '', draggable: 'false' }) : h('span', { class: 'gallery-icon' }, iconEl('plug')),
+      h('div', { class: 'gallery-name' }, h('b', {}, e.title),
+        h('span', { class: 'dim' }, [e.version, e.author && `by ${e.author}`].filter(Boolean).join(' · '))),
+      have && h('span', { class: 'chip gallery-have', title: `Version ${e.installed} is in your plugins folder` }, iconEl('markAllow'), e.state === 'update' ? `${e.installed} installed` : 'Installed')),
+    h('p', { class: 'gallery-about' }, e.description || 'No description.'),
+    h('ul', { class: 'gallery-facts dim' },
+      h('li', {}, e.placement === 'panel' ? 'Shows in the side panel' : 'Shows in a tab'),
+      h('li', { title: asks.length ? 'It asks you before it’s given any of these' : '' },
+        asks.length ? `Asks to ${asks.map((a) => a.toLowerCase()).join(', ')}` : 'Asks for nothing beyond its own page')),
+    note && h('p', { class: 'gallery-note' }, note),
+    h('footer', {},
+      (e.state === 'install' || e.state === 'update') && h('button', { class: 'btn primary', disabled: busy, onclick: () => installPlugin(e) },
+        busy ? 'Installing…' : e.state === 'update' ? `Update to ${e.version}` : 'Install'),
+      have && pluginById(e.id) && h('button', { class: 'btn', disabled: busy, onclick: () => openPlugin(e.id) }, 'Open'),
+      have && h('button', { class: 'btn', disabled: busy, onclick: () => removePlugin(e) }, 'Remove'),
+      h('span', { class: 'spacer' }),
+      h('button', { class: 'link-btn', onclick: () => request('openUrl', { uri: `${gallery.plugins.repository}/tree/main/plugins/${e.id}` }) }, 'Source')));
+}
+
+/**
+ * A small picture of a theme: its tabs, its status dots and a terminal in some of its colours. A monochrome theme is
+ * drawn in your accent colour, as it would be.
+ */
+function themeThumb(t) {
+  const made = t.monochrome ? monochromeLook(accentColour(), t.base === 'light') : {};
+  const c = { ...made.colors, ...t.colors }, term = { ...made.terminal, ...t.terminal };
+  const dark = t.base !== 'light';
+  const accentLine = (t.accent ?? made.accent)?.line ?? accentColour();
+  const chrome = c.chrome ?? (dark ? '#1f1f1f' : '#f3f3f3');
+  const text = c.text ?? (dark ? '#cccccc' : '#1e1e1e');
+  const bg = term.background ?? c['terminal-bg'] ?? (dark ? '#181818' : '#ffffff');
+  const fg = term.foreground ?? text;
+  const DOTS = { ok: '#3fb950', working: '#2f81f7', attention: '#d29922', asking: '#a371f7' };
+  const line = (...parts) => h('div', {}, parts.map(([s, color]) => h('span', { style: `color:${color}` }, s)));
+  return h('div', { class: 'theme-thumb', style: `background:${chrome};color:${text}` + (t.font ? `;font-family:'${t.font}'` : '') },
+    h('div', { class: 'tt-bar' },
+      h('span', { class: 'tt-tab', style: `border-color:${accentLine};color:${c['text-strong'] ?? text}` }, 'All sessions'),
+      h('span', { class: 'tt-tab', style: `color:${c['text-dim'] ?? text}` }, 'Git Changes'),
+      h('span', { class: 'spacer' }),
+      Object.keys(DOTS).map((s) => h('i', { class: 'tt-dot', style: `background:${c[s] ?? DOTS[s]}` }))),
+    h('div', { class: 'tt-term', style: `background:${bg};color:${fg}` },
+      line(['❯ ', term.green ?? DOTS.ok], ['git status', fg]),
+      line(['  modified: ', term.yellow ?? DOTS.attention], ['app.js', term.red ?? '#f85149']),
+      line(['● ', accentLine], ['Claude ', fg], ['is working…', term.cyan ?? '#39c5cf']),
+      line(['▍', term.cursor ?? fg])));
+}
+
+function galleryThemeCard(e) {
+  const busy = gallery.busy.has(e.id);
+  const t = e.theme;
+  const have = e.state === 'installed' || e.state === 'update' || e.state === 'built-in';
+  const on = theme.pref === e.id && !themePreview;
+  const trying = themePreview?.previewOf === e.id;
+  const note = galleryNote(e, 'theme');
+  const effects = [t.glow && 'a glow', t.grid && 'the Grid', t.rain && 'digital rain', t.cursor === 'light-cycle' && 'a light cycle', t.monochrome && 'your accent colour throughout'].filter(Boolean);
+  return h('section', { class: 'gallery-card' + (have ? ' have' : '') + (trying ? ' trying' : '') },
+    themeThumb(t),
+    h('header', {},
+      h('div', { class: 'gallery-name' }, h('b', {}, t.name),
+        h('span', { class: 'dim' }, [e.version, t.base === 'light' ? 'light' : 'dark', e.author && `by ${e.author}`].filter(Boolean).join(' · '))),
+      on ? h('span', { class: 'chip gallery-have' }, iconEl('markAllow'), 'On')
+        : e.state === 'built-in' ? h('span', { class: 'chip' }, 'Comes with LlamaTree')
+        : have && h('span', { class: 'chip gallery-have', title: `Version ${e.installed} is in your themes folder` }, iconEl('markAllow'), e.state === 'update' ? `${e.installed} installed` : 'Installed')),
+    e.description && h('p', { class: 'gallery-about' }, e.description),
+    effects.length > 0 && h('ul', { class: 'gallery-facts dim' }, h('li', {}, 'With ' + effects.join(', '))),
+    note && h('p', { class: 'gallery-note' }, note),
+    h('footer', {},
+      (e.state === 'install' || e.state === 'update') && h('button', { class: 'btn primary', disabled: busy, onclick: () => installTheme(e) },
+        busy ? 'Installing…' : e.state === 'update' ? `Update to ${e.version}` : 'Install and use'),
+      e.state === 'install' && h('button', { class: 'btn', disabled: busy, onclick: () => trying ? stopThemePreview() : previewTheme(e) }, trying ? 'Stop trying' : 'Try it on'),
+      have && !on && h('button', { class: 'btn', disabled: busy, onclick: () => { themePreview = null; setThemePref(e.id); galleryChanged(); } }, 'Use'),
+      (e.state === 'installed' || e.state === 'update') && h('button', { class: 'btn', disabled: busy, onclick: () => removeTheme(e) }, 'Remove'),
+      h('span', { class: 'spacer' }),
+      h('button', { class: 'link-btn', onclick: () => request('openUrl', { uri: `${gallery.themes.repository}/blob/main/themes/${e.id}.json` }) }, 'Source')));
+}
+
 const PERMS_KEY = 'permissions';
 function isPermsTab(t) { return t?.kind === 'permissions'; }   // a declaration: tab code above may run first
 /**
@@ -7719,6 +7990,7 @@ function permsByPlugin() {
     return h('div', { class: 'perms-empty' },
       h('p', {}, plugins.list.length ? 'None of your plugins asks for anything beyond its own page.' : 'You have no plugins.'),
       h('p', { class: 'dim' }, 'A plugin names what it wants in its plugin.json’s "access"; it shows here, and asks you the first time it needs it.'),
+      h('button', { class: 'btn primary', onclick: () => openGallery('plugins') }, 'Get plugins…'), ' ',
       h('button', { class: 'btn', onclick: () => request('plugins.openFolder') }, 'Open the plugins folder'));
   }
   return [
@@ -8614,7 +8886,7 @@ $('#docTabs').addEventListener('contextmenu', (e) => {
 });
 
 // While split, the side you click or tab into has your attention (see attend).
-for (const id of ['#diffDoc', '#convDoc', '#pluginDoc', '#permsDoc']) {
+for (const id of ['#diffDoc', '#convDoc', '#pluginDoc', '#permsDoc', '#galleryDoc']) {
   for (const type of ['pointerdown', 'focusin']) $(id).addEventListener(type, () => attend(docs.side), true);
 }
 for (const type of ['pointerdown', 'focusin']) $('#termPane').addEventListener(type, () => attend('terminal'), true);

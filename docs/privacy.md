@@ -11,6 +11,7 @@ LlamaTree runs on your machine and has no account. Your code, prompts and conver
 | Tips, offers and news, at start and every 30 minutes | `downloads.llamachant.com` (always that address) | An anonymous request. Only notices signed with our code-signing certificate are shown. Tips and offers can be turned off. |
 | The count of users, once an hour while it's open, **only if you've said yes** | `api.llamatree.dev` (always that address) | Six things: a random id, the app's version, the operating system's name and version, and how many projects and sessions are open. Only the numbers. See [Counting users](#counting-users). |
 | Sessions on a server, when you connect to one | The server you name, through your own `ssh` | Whatever the server's sessions need: their output, your typing, files you open or paste. Nothing goes through Llamachant. |
+| Get plugins and Get themes, only while you have them open | GitHub releases of LlamaTree-Plugins and LlamaTree-Themes | Anonymous downloads of their catalogs, and of a plugin you install (checked against the catalog's SHA-256). Nothing is checked in the background. |
 | Pull request chip | GitHub or Azure DevOps, for a branch's own remote | The credential Git Credential Manager already holds for that remote, over HTTPS, to that service only. It never opens a sign-in window. Cached for 3 minutes. |
 
 Fetch, pull and push are ordinary Git commands you run. **Suggest** runs your own Claude Code or Codex with the diff, as described in [Git and diffs](git.md#suggest).

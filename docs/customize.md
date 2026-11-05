@@ -21,6 +21,10 @@ A theme is a JSON file of colours. The app comes with three:
 - **Tron**: the Grid, near-black ruled with light-lines in your accent colour (cyan for the original, red for Ares), with amber for what needs you, mint for what went well and red for what went wrong, in Bahnschrift with a glow and a light cycle riding beside the cursor; the terminals and diffs dress to match. Like Nerds it's built from the accent colour, but keeps those signal colours, Git's change colours and the terminal's own sixteen.
 - **Matrix**: green phosphor on black in a monospaced face, with glyphs raining down the window's floor and, dimmed, behind the terminals' text; red for a question.
 
+### More themes
+
+*Get themes…* under the palette button lists the themes in [LlamaTree-Themes](https://github.com/LlamachantTechnology/LlamaTree-Themes), each with a small picture of it. **Try it on** puts it on the whole app until you install it, stop, or close the tab; **Install and use** writes it to your themes folder and switches to it. When a newer version is published its card offers **Update**, and **Remove** takes it out again. A theme of your own with the same file name is never replaced.
+
 ### Your own theme
 
 The quickest start is *Save as a new theme…* under the palette button: it writes the theme you're looking at (Light, Dark, Nerds in your accent, or one of yours) to your themes folder as a file with every colour written out, for you to change. Or choose *Open the themes folder* and put a `<name>.json` there (letters, digits and hyphens; not `light`, `dark` or `system`). The folder is read each time the menu opens, so a theme shows without restarting. For example:
@@ -58,6 +62,8 @@ A theme is only data: the app takes the names above and checks each value, so it
 ## Plugins
 
 A plugin is a web page of your own, shown in a document tab (like a diff or the Project view) or in the side panel (beside Git Changes). The palette button lists your plugins under **Plugins**, each with the menu items it adds there; pick one to open it. Plugins can add items to a project's or a session's menu too, and a button to the title bar.
+
+**Get plugins…**, in the palette menu, lists the plugins in [LlamaTree-Plugins](https://github.com/LlamachantTechnology/LlamaTree-Plugins): what each does, where it shows and what it asks to see. **Install** downloads its release, checks it against the SHA-256 in the catalog and puts it in your plugins folder; it still asks you before it sees anything (see [Permissions](#permissions)). A card offers **Update** when a newer version is published, and **Remove** deletes its folder and forgets what you allowed it. A plugin of your own with the same folder name is never replaced.
 
 **Open the plugins folder**, in the palette menu, opens the folder they live in: `plugins` in the app's data folder (`%APPDATA%\LlamaTree\plugins` on Windows). The folder is read each time the menu opens, so a plugin you add shows without restarting.
 
