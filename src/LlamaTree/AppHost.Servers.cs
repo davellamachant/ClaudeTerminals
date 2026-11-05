@@ -316,11 +316,13 @@ internal sealed partial class AppHost
     /// </summary>
     private void SyncServerSessions(ServerConnection c, JsonArray list)
     {
+        var known = serverSessions.Values.Where(x => string.Equals(x.Info.Server, c.Target, StringComparison.OrdinalIgnoreCase)).Select(x => x.Info.RemoteId!).ToHashSet(StringComparer.Ordinal);
+        var shown = ServerSessionsShown(list, known);
         var seen = new HashSet<string>();
         var save = false;
         foreach (var item in list.OfType<JsonObject>())
         {
-            if (item["id"]?.GetValue<string>() is not { Length: > 0 } rid) continue;
+            if (ListedId(item) is not { } rid || !shown.Contains(rid)) continue;
             seen.Add(rid);
             var ss = FindServerSession(c.Target, rid);
             if (ss == null)
@@ -348,4 +350,29 @@ internal sealed partial class AppHost
         if (save) SaveSessions();
         Post(SessionList());
     }
+
+    /// <summary>
+    /// The most sessions a server may have here. Each is saved, shown and offered to sessions here (list_sessions), so
+    /// a server can't make this computer keep endless numbers of them: past this, more it lists aren't shown.
+    /// </summary>
+    internal const int MaxServerSessions = 100;
+
+    /// <summary>
+    /// Which of the sessions a server lists are shown here: those already here (<paramref name="known"/>, by their ids
+    /// there), then new ones, in its order, up to <see cref="MaxServerSessions"/> in all.
+    /// </summary>
+    internal static HashSet<string> ServerSessionsShown(JsonArray list, IReadOnlySet<string> known)
+    {
+        var listed = list.OfType<JsonObject>().Select(ListedId).OfType<string>().Distinct(StringComparer.Ordinal).ToList();
+        var shown = listed.Where(known.Contains).ToHashSet(StringComparer.Ordinal);
+        foreach (var rid in listed)
+        {
+            if (shown.Count >= MaxServerSessions) break;
+            shown.Add(rid);
+        }
+        return shown;
+    }
+
+    /// <summary>A listed session's id on its server, or null for one without (or with one that isn't text).</summary>
+    private static string? ListedId(JsonObject item) => item["id"] is JsonValue v && v.TryGetValue<string>(out var id) && id.Length > 0 ? id : null;
 }

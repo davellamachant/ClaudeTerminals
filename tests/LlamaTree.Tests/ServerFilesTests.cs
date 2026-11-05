@@ -324,6 +324,85 @@ public class ServerFilesTests : IDisposable
     }
 
     [Fact]
+    public void A_plugin_file_where_a_folder_is_or_a_folder_where_a_file_is_is_refused()
+    {
+        var copies = new ServerCopies(root);
+        copies.PluginBegin("tasks");
+        copies.PluginPart("tasks", "lib", Part("a file"), 0, true);
+        copies.PluginPart("tasks", "lib/app.js", Part("go()"), 0, true);   // lib is a file: no folder can go there
+        copies.PluginPart("tasks", "web/app.js", Part("go()"), 0, true);
+        copies.PluginPart("tasks", "web", Part("a file"), 0, true);         // web is a folder: no file can go there
+        var folder = copies.PluginFolder("tasks");
+        Assert.Equal("a file", File.ReadAllText(Path.Combine(folder, "lib")));
+        Assert.Equal("go()", File.ReadAllText(Path.Combine(folder, "web", "app.js")));
+        // The rest of the plugin still comes.
+        copies.PluginPart("tasks", "index.html", Part("<p>hi</p>"), 0, true);
+        Assert.True(File.Exists(Path.Combine(folder, "index.html")));
+    }
+
+    [Fact]
+    public void Copies_of_a_servers_plugins_from_before_are_cleared_but_the_ones_it_still_serves()
+    {
+        // An earlier run's copies, never counted by this one.
+        Directory.CreateDirectory(Path.Combine(root, "plugins", "old", "lib"));
+        File.WriteAllText(Path.Combine(root, "plugins", "old", "lib", "app.js"), "old");
+        var copies = new ServerCopies(root);
+        copies.PluginBegin("kept");
+        copies.PluginPart("kept", "index.html", Part("kept"), 0, true);
+        copies.PluginBegin("half");
+        copies.PluginPart("half", "index.html", Part("half"), 0, false);
+        copies.DropAll();   // the connection dropped part-way
+        copies.ClearPluginsExcept(new HashSet<string> { "kept" });
+        Assert.Equal(["kept"], Directory.GetDirectories(Path.Combine(root, "plugins")).Select(Path.GetFileName));
+        Assert.True(File.Exists(Path.Combine(copies.PluginFolder("kept"), "index.html")));
+        // What's cleared isn't counted any more: there's room for as many plugins as ever, the one kept among them.
+        for (var i = 0; i < ServerCopies.MaxPlugins + 5; i++)
+        {
+            copies.PluginBegin($"p{i}");
+            copies.PluginPart($"p{i}", "index.html", Part("<p>x</p>"), 0, true);
+        }
+        Assert.Equal(ServerCopies.MaxPlugins, Directory.GetDirectories(Path.Combine(root, "plugins")).Length);
+    }
+
+    [Fact]
+    public void A_server_has_at_most_so_many_sessions_here_and_keeps_those_it_has()
+    {
+        static System.Text.Json.Nodes.JsonArray List(IEnumerable<object?> ids) =>
+            new(ids.Select(id => (System.Text.Json.Nodes.JsonNode?)new System.Text.Json.Nodes.JsonObject { ["id"] = System.Text.Json.Nodes.JsonValue.Create(id) }).ToArray());
+        var many = Enumerable.Range(0, AppHost.MaxServerSessions + 50).Select(i => (object?)$"r{i}").ToList();
+        var shown = AppHost.ServerSessionsShown(List(many), new HashSet<string>());
+        Assert.Equal(AppHost.MaxServerSessions, shown.Count);
+        Assert.Contains("r0", shown);
+        Assert.DoesNotContain($"r{AppHost.MaxServerSessions}", shown);
+        // Those already here stay, wherever the list has them; new ones fill what room is left.
+        var known = new HashSet<string> { "r120", "r140" };
+        shown = AppHost.ServerSessionsShown(List(many), known);
+        Assert.Equal(AppHost.MaxServerSessions, shown.Count);
+        Assert.Contains("r120", shown);
+        Assert.Contains("r140", shown);
+        Assert.DoesNotContain($"r{AppHost.MaxServerSessions - 1}", shown);
+        // An id that isn't text, or is listed twice, is no session of its own.
+        Assert.Equal(["a"], AppHost.ServerSessionsShown(List(["a", "a", 5, null, ""]), new HashSet<string>()));
+    }
+
+    [Fact]
+    public void A_servers_message_that_fails_fails_alone()
+    {
+        var c = new ServerConnection("dev@box", a => a(), root);
+        using var link = new LlamaTree.Hosting.Link.LinkChannel(new MemoryStream());
+        var changes = 0;
+        c.PluginsChanged += _ => { changes++; throw new InvalidOperationException("a handler that fails"); };
+        Assert.Equal("", c.WindowOp(link, """{"op":"serve","id":"tasks"}"""));   // failed: no exception gets out
+        Assert.Equal(1, changes);
+        Assert.Equal("", c.WindowOp(link, "not json"));
+        Assert.Equal("", c.WindowOp(link, "[1]"));   // JSON, but not an object: reading it throws
+        // Messages after it are handled as ever.
+        Assert.Equal("plugin.begin", c.WindowOp(link, """{"op":"plugin.begin","id":"tasks"}"""));
+        Assert.True(link.IsOpen);
+        c.Dispose();
+    }
+
+    [Fact]
     public void A_pasted_file_arrives_under_its_own_name_and_a_half_sent_one_is_deleted()
     {
         var uploads = new ServerFiles.Uploads(root);

@@ -123,7 +123,12 @@ internal sealed class SessionHost : IHostWindow
                 continue;
             }
             var channel = new LinkChannel(server);
-            channel.Received += (kind, json) => RunOnUi(() => OnMessage(channel, kind, json));
+            channel.Received += (kind, json) =>
+            {
+                // Handled in turn on the app thread: a window sending faster than that waits, rather than this host filling up.
+                var done = channel.Hold(json.Length);
+                RunOnUi(() => { try { OnMessage(channel, kind, json); } finally { done(); } });
+            };
             channel.Closed += () => RunOnUi(() => OnClosed(channel));
             channel.Start();
         }
@@ -303,7 +308,7 @@ internal sealed class SessionHost : IHostWindow
                 var rel = Path.GetRelativePath(plugin.Folder, f.FullName).Replace('\\', '/');
                 if (rel.Split('/').Any(part => part.StartsWith('.'))) continue;   // .git and the like
                 if ((total += f.Length) > ServerCopies.MaxPluginBytes) break;
-                SendInParts(w, f.FullName, (data, index, last) => new { op = "plugin.file", id = plugin.Id, path = rel, data, index, last });
+                w.SendParts(LinkKind.Window, Parts(f.FullName, (data, index, last) => new { op = "plugin.file", id = plugin.Id, path = rel, data, index, last }));
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
@@ -328,7 +333,7 @@ internal sealed class SessionHost : IHostWindow
             if (m.TryGetProperty("id", out var i) && i.TryGetInt32(out var id) && toolReplies.TryRemove(id, out var reply))
                 reply.TrySetResult(m.TryGetProperty("reply", out var r) && r.ValueKind == JsonValueKind.Object ? System.Text.Json.Nodes.JsonNode.Parse(r.GetRawText())!.AsObject() : null);
         }
-        catch (JsonException) { }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException) { }   // an id that isn't a number
     }
 
     public void SendFile(string path)
@@ -339,11 +344,14 @@ internal sealed class SessionHost : IHostWindow
             throw new InvalidOperationException($"{Path.GetFileName(path)} is too big to open from here ({size >> 20} MB).");
         var token = Guid.NewGuid().ToString("N");
         var name = Path.GetFileName(path);
-        SendInParts(w, path, (data, index, last) => new { op = "file", token, name, data, index, last });
+        w.SendParts(LinkKind.Window, Parts(path, (data, index, last) => new { op = "file", token, name, data, index, last }));
     }
 
-    /// <summary>Sends a file as messages of <see cref="ServerFiles.PartSize"/> bytes each (at least one, for an empty file).</summary>
-    private static void SendInParts(LinkChannel w, string path, Func<string, int, bool, object> message)
+    /// <summary>
+    /// A file as messages of <see cref="ServerFiles.PartSize"/> bytes each (at least one, for an empty file), read a
+    /// part at a time as they're sent (see <see cref="LinkChannel.SendParts"/>): a big file is never all waiting in memory.
+    /// </summary>
+    private static IEnumerable<string> Parts(string path, Func<string, int, bool, object> message)
     {
         using var f = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         var buffer = new byte[ServerFiles.PartSize];
@@ -352,8 +360,8 @@ internal sealed class SessionHost : IHostWindow
         {
             var n = f.ReadAtLeast(buffer, buffer.Length, throwOnEndOfStream: false);
             var last = n < buffer.Length || f.Position >= f.Length;
-            w.Send(LinkKind.Window, JsonSerializer.Serialize(message(Convert.ToBase64String(buffer, 0, n), index++, last)));
-            if (last) return;
+            yield return JsonSerializer.Serialize(message(Convert.ToBase64String(buffer, 0, n), index++, last));
+            if (last) yield break;
         }
     }
 

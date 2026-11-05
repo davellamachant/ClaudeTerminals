@@ -137,6 +137,32 @@ internal sealed class ServerCopies(string folder)
         try { Directory.Delete(PluginFolder(id), true); } catch (DirectoryNotFoundException) { } catch (IOException) { } catch (UnauthorizedAccessException) { }
     }
 
+    /// <summary>
+    /// Every plugin's copy but <paramref name="keep"/>'s is dropped, on the disk too: those from an earlier run (whose
+    /// sizes this one never counted) and any half sent. Done as the server's host says who it is, before it sends its
+    /// plugins again, so the disk only ever holds what's counted against the limits above.
+    /// </summary>
+    public void ClearPluginsExcept(IReadOnlySet<string> keep)
+    {
+        foreach (var id in pluginBytes.Keys.Where(id => !keep.Contains(id)).ToList()) PluginGone(id);
+        var plugins = new DirectoryInfo(Path.Combine(folder, "plugins"));
+        if (!plugins.Exists) return;
+        try
+        {
+            foreach (var entry in plugins.GetFileSystemInfos())
+            {
+                if (keep.Contains(entry.Name)) continue;
+                try
+                {
+                    if (entry is DirectoryInfo d) d.Delete(true);
+                    else entry.Delete();
+                }
+                catch (IOException) { } catch (UnauthorizedAccessException) { }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+    }
+
     /// <summary>A part of one of a plugin's files, at <paramref name="relative"/> in its folder ('/' between folders).</summary>
     public void PluginPart(string id, string relative, string data, int index, bool last)
     {
@@ -159,8 +185,15 @@ internal sealed class ServerCopies(string folder)
                 PluginGone(id);
                 return;
             }
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            files[key] = new Incoming(new FileStream(path, FileMode.Create, FileAccess.Write), path);
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                files[key] = new Incoming(new FileStream(path, FileMode.Create, FileAccess.Write), path);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return;   // a file where it needs a folder, or a folder where it needs a file: that file isn't taken
+            }
         }
         Append(key, data, index, last, MaxPluginBytes, out var written);
         pluginBytes[id] += written;
