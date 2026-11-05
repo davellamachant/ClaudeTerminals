@@ -776,6 +776,12 @@ internal sealed partial class AppHost
         behind = st.Behind,
         staged = st.Staged,
         unstaged = st.Unstaged,
+        // The repository's own settings that can run programs, for the question above Git Changes; null when there are none.
+        trust = st.Trust == null ? null : new
+        {
+            repo = st.Trust.Repo, hash = st.Trust.Hash, trusted = st.Trust.Trusted,
+            keys = st.Trust.Keys.Select(k => new { key = k.Key, value = k.Value, where = k.Where }),
+        },
     };
 
     private void FlushOutput()
@@ -820,7 +826,8 @@ internal sealed partial class AppHost
         }
         catch (Exception ex)
         {
-            if (reqId != null) Post(new { type = "reply", reqId, ok = false, error = ex.Message });
+            // A code lets the page tell a refusal it can do something about (trust the repository) from a failure.
+            if (reqId != null) Post(new { type = "reply", reqId, ok = false, error = ex.Message, code = ex is RepoTrustRequiredException ? "needsTrust" : null });
         }
     }
 
@@ -1210,7 +1217,7 @@ internal sealed partial class AppHost
                 // A new worktree of the session's repository, on a new branch; the page then adds a session there.
                 var root = GitDir(msg);
                 var path = Str(msg, "path").Trim();
-                var result = await GitService.AddWorktreeAsync(root, path, Str(msg, "branch").Trim(), OptStr(msg, "base")?.Trim());
+                var result = NeedsTrust(await GitService.AddWorktreeAsync(root, path, Str(msg, "branch").Trim(), OptStr(msg, "base")?.Trim()));
                 if (!result.Ok) throw new InvalidOperationException(string.IsNullOrWhiteSpace(result.Error) ? "git couldn't create the worktree." : result.Error.Trim());
                 return Path.GetFullPath(path);
             }
@@ -1501,6 +1508,16 @@ internal sealed partial class AppHost
                 SaveSessions();
                 return null;
             }
+            case "git.trust":
+            {
+                // Trust (or stop trusting) the repository's own settings, as the page showed them: if they've changed
+                // since (hash), nothing is trusted and the page asks again with the new ones.
+                if (!await RepoTrust.SetAsync(GitDir(msg), Bool(msg, "trusted"), OptStr(msg, "hash")))
+                    throw new InvalidOperationException("The repository's settings changed after they were shown. Look at them again before trusting it.");
+                // Every worktree of the repository shares the answer, so every session's Git Changes follows.
+                foreach (var x in sessions.Values) _ = x.RefreshStatusAsync();
+                return null;
+            }
             case "git.diff":
                 return await GitService.GetDiffAsync(GitDir(msg), Str(msg, "mode"), Str(msg, "path"),
                     OptStr(msg, "origPath"), OptStr(msg, "commit"), OptStr(msg, "parent"));
@@ -1519,6 +1536,7 @@ internal sealed partial class AppHost
                 var result = type == "git.stage"
                     ? await GitService.StageAsync(GitDir(msg), paths)
                     : await GitService.UnstageAsync(GitDir(msg), paths);
+                NeedsTrust(result);
                 await s.RefreshStatusAsync();
                 if (!result.Ok) throw new InvalidOperationException(result.Error);
                 return null;
@@ -1547,7 +1565,7 @@ internal sealed partial class AppHost
             case "git.commit":
             {
                 var s = Get(msg);
-                var result = await GitService.CommitAsync(GitDir(msg), Str(msg, "message"), msg.GetProperty("all").GetBoolean());
+                var result = NeedsTrust(await GitService.CommitAsync(GitDir(msg), Str(msg, "message"), msg.GetProperty("all").GetBoolean()));
                 await s.RefreshStatusAsync();
                 if (!result.Ok) throw new InvalidOperationException(string.IsNullOrEmpty(result.Error) ? result.Text : result.Error);
                 return result.Text.Trim();
@@ -1562,6 +1580,7 @@ internal sealed partial class AppHost
                 // The branch picker: switch to a local branch, or to a remote one's local branch (made if needed).
                 var s = Get(msg);
                 var result = await GitService.CheckoutBranchAsync(GitDir(msg), Str(msg, "branch"), Bool(msg, "remote"), Bool(msg, "stash"));
+                if (result.NeedsTrust) throw new RepoTrustRequiredException(result.Message);
                 await s.RefreshStatusAsync();
                 if (!result.Ok) throw new InvalidOperationException(result.Message);
                 return result.Message;
@@ -1573,6 +1592,7 @@ internal sealed partial class AppHost
                 var s = Get(msg);
                 var result = await GitService.CreateBranchAsync(GitDir(msg), Str(msg, "branch").Trim(), OptStr(msg, "base"),
                     Bool(msg, "checkout"), Bool(msg, "stash"));
+                if (result.NeedsTrust) throw new RepoTrustRequiredException(result.Message);
                 await s.RefreshStatusAsync();
                 if (!result.Ok) throw new InvalidOperationException(result.Message);
                 return result.Message;
@@ -1670,6 +1690,7 @@ internal sealed partial class AppHost
                     "git.pull" => await GitService.PullAsync(dir),
                     _ => await GitService.PushAsync(dir),
                 };
+                NeedsTrust(result);
                 await s.RefreshStatusAsync();   // ahead/behind and history follow
                 // git reports progress and results on stderr; stdout carries the rest (e.g. pull's file summary).
                 var text = string.Join('\n', new[] { result.Error, result.Text.Trim() }.Where(t => !string.IsNullOrWhiteSpace(t)));
@@ -1760,6 +1781,9 @@ internal sealed partial class AppHost
         var conv = agent == null ? null : (s.IsRunning ? agent.ReadConversation(s, s.ProcessIds()) : null) ?? agent.ReadSavedConversation(s);
         return new SessionBrief(s.Id, name.Length > 0 ? name : s.Id, project, s.Info.Directory, status, agent, conv);
     }
+
+    /// <summary>A command refused until the repository is trusted becomes the error the page asks about.</summary>
+    private static GitResult NeedsTrust(GitResult result) => result.NeedsTrust ? throw new RepoTrustRequiredException(result.Error) : result;
 
     private string GitDir(JsonElement msg)
     {

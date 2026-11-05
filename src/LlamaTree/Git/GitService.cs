@@ -12,6 +12,9 @@ internal sealed record GitResult(int ExitCode, byte[] Output, string Error)
 
     /// <summary>Output went past the requested limit, so reading stopped and git was ended; <see cref="Output"/> is incomplete.</summary>
     public bool Truncated { get; init; }
+
+    /// <summary>Not run: the repository's own settings can run programs and the person hasn't trusted it (see <see cref="RepoTrust"/>).</summary>
+    public bool NeedsTrust { get; init; }
 }
 
 /// <param name="Untracked">Not known to git at all ("?" in status); undoing it means deleting the file.</param>
@@ -30,6 +33,9 @@ internal sealed record GitStatus(
 {
     /// <summary>What the page shows and sends back for the last commit: its id, "(initial)" on an unborn branch, or null when unknown.</summary>
     public string? HeadId => HeadOid ?? (Unborn ? "(initial)" : null);
+
+    /// <summary>The repository's settings that can run programs, and whether they're trusted; null when it has none.</summary>
+    public RepoTrustInfo? Trust { get; init; }
 }
 
 internal sealed record CommitInfo(string Sha, string ShortSha, string Author, string Date, string Subject, string Refs, bool Outgoing);
@@ -69,7 +75,11 @@ internal sealed record RepoOverview(string Root, string? BaseBranch, List<Worktr
 internal sealed record BranchInfo(string Name, bool Remote, string? Upstream, int Ahead, int Behind, bool Gone, string? Worktree);
 
 /// <summary>What <see cref="GitService.CreateBranchAsync"/> or <see cref="GitService.CheckoutBranchAsync"/> did; <paramref name="Stash"/> is the commit id of the stash it made, if it made one.</summary>
-internal sealed record BranchResult(bool Ok, string Message, string? Stash = null);
+internal sealed record BranchResult(bool Ok, string Message, string? Stash = null)
+{
+    /// <summary>See <see cref="GitResult.NeedsTrust"/>.</summary>
+    public bool NeedsTrust { get; init; }
+}
 
 internal sealed record DiffContent(string Original, string Modified, string OriginalLabel, string ModifiedLabel, string? Notice);
 
@@ -81,7 +91,40 @@ internal static class GitService
     /// <param name="maxOutputBytes">Stop reading (and end git) once stdout exceeds this; the result is then <see cref="GitResult.Truncated"/>.</param>
     /// <param name="environment">Extra environment variables for git (e.g. to forbid credential prompts); a null value removes one.</param>
     /// <param name="timeout">Ends git and returns a failed result if it runs longer than this.</param>
+    /// <remarks>
+    /// In a repository whose own settings can run programs and that the person hasn't trusted, git also gets
+    /// <see cref="RepoTrust.OverridesForAsync"/>: its filter drivers turned off.
+    /// </remarks>
     public static async Task<GitResult> RunAsync(string dir, IEnumerable<string> args, string? stdin = null, CancellationToken ct = default,
+        int? maxOutputBytes = null, IReadOnlyDictionary<string, string?>? environment = null, TimeSpan? timeout = null)
+    {
+        var overrides = await RepoTrust.OverridesForAsync(dir, ct);
+        return await RunUnguardedAsync(dir, args, stdin, ct, maxOutputBytes, WithOverrides(environment, overrides), timeout);
+    }
+
+    /// <summary>
+    /// The environment that adds <paramref name="overrides"/> to git's config, after any the environment already adds.
+    /// Given as GIT_CONFIG_KEY_n/VALUE_n rather than -c, because a driver's name may hold an "=", which -c would split
+    /// at; like -c they outrank the repository's config and reach the git processes git starts (submodules included).
+    /// </summary>
+    internal static IReadOnlyDictionary<string, string?>? WithOverrides(IReadOnlyDictionary<string, string?>? environment,
+        IReadOnlyList<(string Key, string Value)> overrides)
+    {
+        if (overrides.Count == 0) return environment;
+        var env = new Dictionary<string, string?>(environment ?? new Dictionary<string, string?>(), StringComparer.Ordinal);
+        var existing = env.TryGetValue("GIT_CONFIG_COUNT", out var given) ? given : Environment.GetEnvironmentVariable("GIT_CONFIG_COUNT");
+        var start = int.TryParse(existing, out var n) && n > 0 ? n : 0;
+        for (var i = 0; i < overrides.Count; i++)
+        {
+            env[$"GIT_CONFIG_KEY_{start + i}"] = overrides[i].Key;
+            env[$"GIT_CONFIG_VALUE_{start + i}"] = overrides[i].Value;
+        }
+        env["GIT_CONFIG_COUNT"] = (start + overrides.Count).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        return env;
+    }
+
+    /// <summary><see cref="RunAsync"/> without the repository's trust looked up: for reading the settings themselves, and outside any repository.</summary>
+    internal static async Task<GitResult> RunUnguardedAsync(string dir, IEnumerable<string> args, string? stdin = null, CancellationToken ct = default,
         int? maxOutputBytes = null, IReadOnlyDictionary<string, string?>? environment = null, TimeSpan? timeout = null)
     {
         if (timeout is { } limit)
@@ -90,7 +133,7 @@ internal static class GitService
             timer.CancelAfter(limit);
             try
             {
-                return await RunAsync(dir, args, stdin, timer.Token, maxOutputBytes, environment);
+                return await RunUnguardedAsync(dir, args, stdin, timer.Token, maxOutputBytes, environment);
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
@@ -216,7 +259,7 @@ internal static class GitService
         var neutral = Directory.CreateTempSubdirectory("llamatree-git-").FullName;
         try
         {
-            return await RunAsync(neutral, args, stdin, ct, environment: OutsideRepositoryEnvironment(neutral, environment), timeout: timeout);
+            return await RunUnguardedAsync(neutral, args, stdin, ct, environment: OutsideRepositoryEnvironment(neutral, environment), timeout: timeout);
         }
         finally
         {
@@ -259,7 +302,7 @@ internal static class GitService
             var notRepo = r.Error.Contains("not a git repository", StringComparison.OrdinalIgnoreCase);
             return new GitStatus(false, notRepo ? null : r.Error, null, null, 0, 0, [], []);
         }
-        return ParseStatus(r.Text);
+        return ParseStatus(r.Text) with { Trust = await RepoTrust.DescribeAsync(dir) };   // read for this call already: cached
     }
 
     /// <summary>Parses <c>git status --porcelain=v2 --branch -z</c> output.</summary>
@@ -564,6 +607,7 @@ internal static class GitService
     public static async Task<GitResult> AddWorktreeAsync(string repoDir, string path, string branch, string? startPoint)
     {
         static GitResult Fail(string message) => new(1, [], message);
+        if (await TrustGateAsync(repoDir, "create the worktree") is { } refused) return refused;   // its checkout runs filters and hooks
         if (await CheckNewBranchAsync(repoDir, branch, startPoint) is { } problem) return Fail(problem);
         if (!Path.IsPathFullyQualified(path)) return Fail("The folder must be a full path, such as D:\\Source\\repo-feature.");
         if (Directory.Exists(path) && Directory.EnumerateFileSystemEntries(path).Any()) return Fail($"{path} already exists and isn't empty.");
@@ -628,6 +672,7 @@ internal static class GitService
         startPoint = string.IsNullOrWhiteSpace(startPoint) ? null : startPoint.Trim();
         if (await CheckNewBranchAsync(dir, branch, startPoint) is { } problem) return new(false, problem);
         string[] from = startPoint is null ? [] : [startPoint];
+        if (checkout && await RefusalAsync(dir, "switch branches") is { } why) return new(false, why) { NeedsTrust = true };
         if (!checkout)
         {
             var made = await RunAsync(dir, ["branch", "--no-track", "--end-of-options", branch, .. from]);
@@ -644,6 +689,8 @@ internal static class GitService
     public static async Task<BranchResult> CheckoutBranchAsync(string dir, string branch, bool remote, bool stashChanges)
     {
         if (branch.StartsWith('-')) return new(false, $"\"{branch}\" isn't a branch.");
+        // A checkout runs the repository's smudge filters and post-checkout hook.
+        if (await RefusalAsync(dir, "switch branches") is { } why) return new(false, why) { NeedsTrust = true };
         var exists = async (string reference) => (await RunAsync(dir, ["rev-parse", "--verify", "--quiet", reference])).Ok;
         if (!remote)
             return await exists("refs/heads/" + branch)
@@ -838,8 +885,9 @@ internal static class GitService
     internal static Func<string, IEnumerable<string>, IReadOnlyCollection<string>, Task<GitResult>> RunWithPaths = (dir, args, paths) =>
         RunAsync(dir, ["--literal-pathspecs", .. args, .. PathsFromStdin], NulList(paths));
 
-    public static Task<GitResult> StageAsync(string dir, IEnumerable<string> paths) =>
-        RunWithPathsAsync(dir, ["add", "-A"], paths.ToList());
+    /// <summary>Runs the repository's clean filters, so it waits for trust like a commit (with them off, LFS files would be stored whole).</summary>
+    public static async Task<GitResult> StageAsync(string dir, IEnumerable<string> paths) =>
+        await TrustGateAsync(dir, "stage the files") ?? await RunWithPathsAsync(dir, ["add", "-A"], paths.ToList());
 
     public static async Task<GitResult> UnstageAsync(string dir, IEnumerable<string> paths)
     {
@@ -877,8 +925,12 @@ internal static class GitService
     /// <param name="confirmedAlsoUnstaged">Selected files the dialog said also had unstaged edits.</param>
     /// <returns>The number of files undone.</returns>
     public static async Task<int> UndoConfirmedAsync(string root, bool staged, IReadOnlyList<FileChange> confirmed,
-        string? confirmedHead = null, IReadOnlyCollection<string>? confirmedAlsoUnstaged = null) =>
-        await UndoAgainstAsync(root, await GetStatusAsync(root), staged, confirmed, confirmedHead, confirmedAlsoUnstaged);
+        string? confirmedHead = null, IReadOnlyCollection<string>? confirmedAlsoUnstaged = null)
+    {
+        // Restoring files runs the repository's smudge filters.
+        if (await RefusalAsync(root, "undo the changes") is { } why) throw new RepoTrustRequiredException(why);
+        return await UndoAgainstAsync(root, await GetStatusAsync(root), staged, confirmed, confirmedHead, confirmedAlsoUnstaged);
+    }
 
     /// <summary><see cref="UndoConfirmedAsync"/> against a status already read (tests supply malformed ones).</summary>
     internal static async Task<int> UndoAgainstAsync(string root, GitStatus status, bool staged, IReadOnlyList<FileChange> confirmed,
@@ -1100,17 +1152,41 @@ internal static class GitService
     /// <summary>Long enough to sign in through Git Credential Manager's window; short enough that nothing hangs forever.</summary>
     private static readonly TimeSpan RemoteTimeout = TimeSpan.FromMinutes(5);
 
-    public static Task<GitResult> FetchAsync(string dir) => RunRemoteAsync(dir, ["fetch", "--prune"]);
+    public static async Task<GitResult> FetchAsync(string dir) =>
+        await TrustGateAsync(dir, "fetch") ?? await RunRemoteAsync(dir, ["fetch", "--prune"]);
 
     /// <summary>
     /// Fast-forward only: never creates a merge commit or leaves conflicts in a worktree a Claude session may be editing.
     /// A diverged branch fails with git's explanation instead.
     /// </summary>
-    public static Task<GitResult> PullAsync(string dir) => RunRemoteAsync(dir, ["pull", "--ff-only"]);
+    public static async Task<GitResult> PullAsync(string dir) =>
+        await TrustGateAsync(dir, "pull") ?? await RunRemoteAsync(dir, ["pull", "--ff-only"]);
+
+    /// <summary>
+    /// A refusal for a command the person started, when the repository's own settings could make it run a program (an
+    /// ssh command, a credential helper, a hook, a filter) and they haven't trusted it; null when it may run. These
+    /// commands aren't run with the settings turned off instead: a filter turned off would store or check out the wrong
+    /// content, and the rest would make them fail in ways that don't say why.
+    /// </summary>
+    private static async Task<GitResult?> TrustGateAsync(string dir, string action) =>
+        await RefusalAsync(dir, action) is { } why ? new GitResult(1, [], why) { NeedsTrust = true } : null;
+
+    private static async Task<string?> RefusalAsync(string dir, string action)
+    {
+        try
+        {
+            return await RepoTrust.RefusalAsync(dir, action);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        {
+            return null;   // git can't be started at all: the command fails on its own, saying so
+        }
+    }
 
     /// <summary>Never forces. A branch with no upstream is published to the default remote, which then becomes its upstream.</summary>
     public static async Task<GitResult> PushAsync(string dir)
     {
+        if (await TrustGateAsync(dir, "push") is { } refused) return refused;
         var status = await GetStatusAsync(dir);
         if (!status.IsRepo) return Failed("This folder isn't a Git repository.");
         if (status.Branch is null || status.Branch.StartsWith('('))
@@ -1135,6 +1211,7 @@ internal static class GitService
 
     public static async Task<GitResult> CommitAsync(string dir, string message, bool all)
     {
+        if (await TrustGateAsync(dir, "commit") is { } refused) return refused;
         if (all)
         {
             var add = await RunAsync(dir, ["add", "-A"]);

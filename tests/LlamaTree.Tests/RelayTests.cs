@@ -285,7 +285,8 @@ public class RelayTests
     [Fact]
     public void RulesAreKeptBetweenRuns()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"relay-{Guid.NewGuid():N}.json");
+        using var temp = new TempFolder();
+        var path = temp.File("relay.json");
         try
         {
             var policy = new RelayPolicy(path);
@@ -304,7 +305,8 @@ public class RelayTests
     [Fact]
     public void UnreadAndWaitingMessagesAndTheLogAreKeptBetweenRuns()
     {
-        var file = Path.Combine(Path.GetTempPath(), $"relay-messages-{Guid.NewGuid():N}.json");
+        using var temp = new TempFolder();
+        var file = temp.File("relay-messages.json");
         try
         {
             var policy = new RelayPolicy(null);
@@ -329,7 +331,8 @@ public class RelayTests
     [Fact]
     public void ADamagedFileMeansAskingAgain()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"relay-{Guid.NewGuid():N}.json");
+        using var temp = new TempFolder();
+        var path = temp.File("relay.json");
         try
         {
             File.WriteAllText(path, "{ not json");
@@ -352,7 +355,8 @@ public class RelayTests
     public void AgentsSeeTheToolsAndMessageThroughThem()
     {
         var hub = Hub(out var policy);
-        var mcp = new PanelMcp(new PanelStore(Path.Combine(Path.GetTempPath(), $"panels-{Guid.NewGuid():N}.json")), hub);
+        using var temp = new TempFolder();
+        var mcp = new PanelMcp(new PanelStore(temp.File("panels.json")), hub);
         using (var list = JsonDocument.Parse("""{ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }"""))
         {
             var names = mcp.Handle("a", list.RootElement)!["result"]!["tools"]!.AsArray().Select(t => t!["name"]!.GetValue<string>()).ToList();
@@ -378,7 +382,8 @@ public class RelayTests
     [Fact]
     public void WithoutARelayThereAreNoMessageTools()
     {
-        var mcp = new PanelMcp(new PanelStore(Path.Combine(Path.GetTempPath(), $"panels-{Guid.NewGuid():N}.json")));
+        using var temp = new TempFolder();
+        var mcp = new PanelMcp(new PanelStore(temp.File("panels.json")));
         using var list = JsonDocument.Parse("""{ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }""");
         var names = mcp.Handle("a", list.RootElement)!["result"]!["tools"]!.AsArray().Select(t => t!["name"]!.GetValue<string>());
         Assert.DoesNotContain("send_message", names);

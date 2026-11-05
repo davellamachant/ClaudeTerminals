@@ -59,7 +59,8 @@ internal sealed class PhotinoHost : HostLink.IWindow
             Resizable = true,
             ContextMenuEnabled = false,
             // On, so copying keeps working in WKWebView and WebKitGTK. It's for the whole web view, plugins' frames too:
-            // there they rely on the frame's sandbox (an opaque origin) to keep them from the clipboard.
+            // there they rely on the frame's sandbox (an opaque origin) to keep them from the clipboard, and on the
+            // Permissions-Policy the local site serves them with (see LocalSite.PluginPermissions).
             JavascriptClipboardAccessEnabled = true,
             // The page sits on its own loopback address; it never needs other browser permissions without asking.
             GrantBrowserPermissions = false,
