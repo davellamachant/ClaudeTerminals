@@ -166,7 +166,7 @@ internal sealed partial class AppHost
     private static async Task<object?> ForwardAsync(ServerConnection c, JsonElement msg, string? remoteId)
     {
         if (c.State == "connecting") await c.WhenSettledAsync(TimeSpan.FromSeconds(30));
-        if (msg.TryGetProperty("type", out var t) && t.ValueKind == JsonValueKind.String && ServerConnection.OpensFile(t.GetString()!)) c.ExpectFile();
+        if (msg.TryGetProperty("type", out var t) && t.ValueKind == JsonValueKind.String && ServerConnection.OpensFile(t.GetString()!)) c.ExpectFile(OptStr(msg, "path"));
         var obj = JsonNode.Parse(msg.GetRawText())!.AsObject();
         var wantsReply = obj.Remove("reqId");
         obj.Remove("server");

@@ -212,7 +212,7 @@ internal sealed class ServerConnection : IDisposable
                 case "file":
                     if (copies.FilePart(Str(op, "token"), Str(op, "name"), Str(op, "data"), Int(op, "index"), op.TryGetProperty("last", out var l) && l.ValueKind == JsonValueKind.True) is { } opened)
                     {
-                        _ = Task.Run(() => Desktop.OpenFileForViewing(opened));
+                        _ = Task.Run(() => Desktop.OpenFileForViewing(opened, fromServer: true));
                         FileOpened?.Invoke(this, Path.GetFileName(opened));
                     }
                     break;
@@ -270,8 +270,8 @@ internal sealed class ServerConnection : IDisposable
         while (State == "connecting" && DateTime.UtcNow < until) await Task.Delay(150);
     }
 
-    /// <summary>This computer asks the server to open something: a file it sends for that is taken (see ServerCopies.ExpectFile).</summary>
-    public void ExpectFile() => copies.ExpectFile();
+    /// <summary>This computer asks the server to open something, at <paramref name="path"/>: a file of its name sent for that is taken (see ServerCopies.ExpectFile).</summary>
+    public void ExpectFile(string? path) => copies.ExpectFile(path);
 
     /// <summary>Requests that can send a file here to open: anything else sent unasked is refused.</summary>
     public static bool OpensFile(string type) => type is "fs.open" or "openFile" or "terminal.openPath";

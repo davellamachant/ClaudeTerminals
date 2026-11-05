@@ -54,14 +54,37 @@ internal static class ServerFiles
         return Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Combine(home, path));
     }
 
-    /// <summary>A name from the other computer, made safe to use as a file name here: no folders, nothing the file system refuses.</summary>
+    /// <summary>
+    /// A name from the other computer, made safe to use as a file name here: no folders, nothing the file system refuses,
+    /// and the same rule on every system. Windows drops dots and spaces from the end of a name as it makes the file, so
+    /// "run.cmd ." would be created as run.cmd while the name kept still read ".cmd ": they're stripped here, all of them
+    /// in any order, so the name kept is the file made. Invisible characters that reorder text (a right-to-left override
+    /// can show "evil‮txt.exe" as "evilexe.txt") are replaced, and a device name (CON, NUL, COM1...) gets a _ in front.
+    /// </summary>
     public static string SafeName(string? name)
     {
-        var leaf = Path.GetFileName((name ?? "").Replace('\\', '/').Split('/')[^1]);
+        var leaf = (name ?? "").Replace('\\', '/').Split('/')[^1];
         var invalid = Path.GetInvalidFileNameChars();
-        leaf = new string(leaf.Select(c => invalid.Contains(c) || char.IsControl(c) ? '_' : c).ToArray()).Trim().TrimEnd('.');
+        leaf = new string(leaf.Select(c => invalid.Contains(c) || c == ':' || char.IsControl(c) ||
+            char.GetUnicodeCategory(c) == System.Globalization.UnicodeCategory.Format ? '_' : c).ToArray());
         if (leaf.Length > 120) leaf = leaf[..80] + leaf[^40..];
-        return leaf is "" or "." or ".." ? "file" : leaf;
+        leaf = leaf.TrimStart();
+        var end = leaf.Length;
+        while (end > 0 && (leaf[end - 1] == '.' || char.IsWhiteSpace(leaf[end - 1]))) end--;
+        leaf = leaf[..end];
+        if (leaf.Length == 0) return "file";
+        return IsDeviceName(leaf) ? "_" + leaf : leaf;
+    }
+
+    /// <summary>
+    /// Whether Windows takes the name for a device rather than a file (CON, PRN, AUX, NUL, COM1-9, LPT1-9, with any
+    /// extension, as Windows reads them; superscript digits count too).
+    /// </summary>
+    private static bool IsDeviceName(string leaf)
+    {
+        var stem = leaf.Split('.')[0].TrimEnd();
+        if (stem.Length == 3) return stem.ToUpperInvariant() is "CON" or "PRN" or "AUX" or "NUL";
+        return stem.Length == 4 && stem[..3].ToUpperInvariant() is "COM" or "LPT" && stem[3] is >= '0' and <= '9' or '¹' or '²' or '³';
     }
 
     /// <summary>

@@ -28,8 +28,76 @@ public class ServerFilesTests : IDisposable
     [InlineData("..", "file")]
     [InlineData("", "file")]
     [InlineData("a\u0001b.png", "a_b.png")]
+    // Windows drops dots and spaces from the end of a name as it makes the file: the name kept is the file made (C1).
+    [InlineData("README.cmd .", "README.cmd")]
+    [InlineData("x.exe  .", "x.exe")]
+    [InlineData("x.cmd . .", "x.cmd")]
+    [InlineData("x.bat.\t", "x.bat._")]                                      // a tab is a control character
+    [InlineData("  setup.msi \u00a0", "setup.msi")]
+    [InlineData("link.lnk...", "link.lnk")]
+    [InlineData(" . . ", "file")]
+    [InlineData("...", "file")]
+    [InlineData("notes.txt:Zone.Identifier", "notes.txt_Zone.Identifier")]   // no alternate data streams
+    [InlineData("evil\u202etxt.exe", "evil_txt.exe")]                       // no right-to-left override hiding .exe
+    [InlineData("CON", "_CON")]
+    [InlineData("nul.txt", "_nul.txt")]
+    [InlineData("com1.log", "_com1.log")]
+    [InlineData("LPT9", "_LPT9")]
+    [InlineData("AUX .", "_AUX")]
+    [InlineData("console.txt", "console.txt")]
+    [InlineData("com10.txt", "com10.txt")]
     public void A_name_from_the_other_computer_is_only_ever_a_file_name(string name, string expected) =>
         Assert.Equal(expected, ServerFiles.SafeName(name));
+
+    [Fact]
+    public void A_name_made_safe_stays_as_it_is_when_made_safe_again()
+    {
+        foreach (var name in new[] { "README.cmd .", "x.exe  .", "x.cmd . .", "CON", " a . b . ", "a.txt" })
+            Assert.Equal(ServerFiles.SafeName(name), ServerFiles.SafeName(ServerFiles.SafeName(name)));
+    }
+
+    [Fact]
+    public void A_file_named_to_hide_its_type_is_kept_under_the_name_it_really_has()
+    {
+        var copies = new ServerCopies(root);
+        copies.ExpectFile("/srv/work/README.cmd .");
+        var path = copies.FilePart("tok1", "README.cmd .", Part("@echo off"), 0, true);
+        Assert.Equal("README.cmd", Path.GetFileName(path));
+        Assert.True(File.Exists(path));
+        Assert.False(LlamaTree.Platform.Desktop.IsViewable(path!));   // so it isn't handed to the desktop to open
+    }
+
+    [Fact]
+    public void A_file_that_comes_must_be_the_one_asked_for()
+    {
+        var copies = new ServerCopies(root);
+        copies.ExpectFile("/home/me/work/notes.txt");
+        // Another name than asked: refused, and the request still waits for its own file.
+        Assert.Null(copies.FilePart("t1", "notes.cmd", Part("x"), 0, true));
+        Assert.False(Directory.Exists(Path.Combine(root, "opened", "t1")));
+        var path = copies.FilePart("t3", "notes.txt", Part("x"), 0, true);
+        Assert.Equal(Path.Combine(root, "opened", "t3", "notes.txt"), path);
+        // That request is answered: another file of its name is unasked.
+        Assert.Null(copies.FilePart("t4", "notes.txt", Part("x"), 0, true));
+
+        // A Windows server's path, and two requests answered in either order.
+        copies.ExpectFile(@"C:\work\a.md");
+        copies.ExpectFile("src/b.cs");
+        Assert.Equal("b.cs", Path.GetFileName(copies.FilePart("t5", "b.cs", Part("x"), 0, true)));
+        Assert.Equal("a.md", Path.GetFileName(copies.FilePart("t6", "a.md", Part("x"), 0, true)));
+    }
+
+    [WindowsFact]
+    public void A_servers_file_is_marked_as_from_the_internet()
+    {
+        var copies = new ServerCopies(root);
+        copies.ExpectFile("report.pdf");
+        var path = copies.FilePart("motw", "report.pdf", Part("%PDF"), 0, true)!;
+        Assert.Equal("%PDF", File.ReadAllText(path));
+        Assert.Contains("ZoneId=3", File.ReadAllText(path + ":Zone.Identifier"));
+        // Where it can't be marked, nothing fails.
+        ServerCopies.MarkFromInternet(Path.Combine(root, "missing", "x.txt"));
+    }
 
     [Fact]
     public void A_typed_path_starts_from_the_home_folder()
