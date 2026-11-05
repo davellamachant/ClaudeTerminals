@@ -57,6 +57,9 @@ internal sealed class LinkChannel : IDisposable
     /// <summary>Why this side ended the connection, when it was for something the other side did (a line too long, not reading); else null.</summary>
     public string? CloseReason { get; private set; }
 
+    /// <summary>Who's at the other end, for the log: a server (user@server), "window" or "session host".</summary>
+    public string Name { get; init; } = "connection";
+
     public void Start()
     {
         _ = Task.Run(ReadLoopAsync);
@@ -212,8 +215,13 @@ internal sealed class LinkChannel : IDisposable
     private void Deliver(string line)
     {
         if (line.Length < 2 || line[1] != ' ') return;
-        try { Received?.Invoke(line[0], line[2..]); }
-        catch (Exception) { /* one bad message mustn't end the connection */ }
+        var json = line[2..];
+        try { Received?.Invoke(line[0], json); }
+        catch (Exception ex)
+        {
+            // One bad message mustn't end the connection. What it said isn't logged: only what kind it was.
+            AppLog.Warn($"{Name}: a '{line[0]}' {AppLog.MessageType(json)} message ({json.Length} characters) failed and was dropped: {AppLog.Describe(ex)}");
+        }
     }
 
     public void Close() => Close(null);
@@ -223,6 +231,7 @@ internal sealed class LinkChannel : IDisposable
     {
         if (Interlocked.Exchange(ref closed, 1) != 0) return;
         CloseReason = reason;
+        if (reason != null) AppLog.Warn($"{Name}: the connection was ended: {reason}");
         outbox.Writer.TryComplete();
         TaskCompletionSource? wake;
         lock (holdLock) (wake, room) = (room, null);

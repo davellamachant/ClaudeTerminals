@@ -223,6 +223,7 @@ host.addEventListener('message', (e) => {
     case 'host.failed': onHostFailed(m); break;
     case 'host.reconnecting': onReconnecting(m); break;
     case 'machine': onMachine(m); break;
+    case 'servers.tooMany': toast(`${m.server} has more than ${m.shown} sessions (${m.listed}). Only ${m.shown} of them are shown here.`, true); break;
     case 'files.opened': toast(`Opened a read-only copy of ${m.name} from ${m.server}. Changes to it aren’t saved on the server: edit the file there, through the session.`); break;
     case 'files.browse': browseServerFolder(m.path, m.select, m.server); break;
     case 'fileProblem': toast(m.text, true, 20000); break;   // a damaged file of the app's, set aside (JsonFile)
@@ -6748,6 +6749,8 @@ function versionMenu(x, y) {
       ({ label, checked: closeChoice() === value, action: () => store.set('closeChoice', value) })),
     { label: machine ? `Quit and stop all sessions on ${machine.remote}` : 'Quit and stop all sessions', action: () => request('app.close', { stop: true }) },
     '-',
+    // The app's log: what went wrong that nobody was told (see AppLog), for when something seems off.
+    { icon: 'folder', label: machine ? `Open the log folder on ${machine.remote}` : 'Open the log folder', action: () => request('logs.openFolder') },
     { icon: 'info', label: `LlamaTree ${updates.current ?? ''}`.trim() + ' · release notes',
       action: () => request('openUrl', { uri: 'https://github.com/LlamachantTechnology/LlamaTree/releases' }) },
   ]);

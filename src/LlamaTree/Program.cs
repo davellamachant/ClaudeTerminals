@@ -39,6 +39,7 @@ static class Program
         }
 
         AppProfile.MoveFromOldName();
+        AppLog.Start("app");
 #if WINFORMS
         ApplicationConfiguration.Initialize();
         Application.Run(new MainForm());

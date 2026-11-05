@@ -58,6 +58,7 @@ internal sealed class SessionHost : IHostWindow
             signals.Add(PosixSignalRegistration.Create(PosixSignal.SIGHUP, e => e.Cancel = true));
         }
         AppProfile.MoveFromOldName();
+        AppLog.Start("host");
         var host = new SessionHost();
         if (!OperatingSystem.IsWindows())
             signals.Add(PosixSignalRegistration.Create(PosixSignal.SIGTERM, e => { e.Cancel = true; host.RunOnUi(host.Quit); }));
@@ -76,7 +77,8 @@ internal sealed class SessionHost : IHostWindow
         foreach (var action in queue.GetConsumingEnumerable())
         {
             try { action(); }
-            catch (Exception) { /* as an exception in a window's BeginInvoke would, it mustn't stop the rest */ }
+            // As an exception in a window's BeginInvoke would, it mustn't stop the rest.
+            catch (Exception ex) { AppLog.Error("Something the host was doing failed: " + AppLog.Describe(ex)); }
         }
     }
 
@@ -122,7 +124,7 @@ internal sealed class SessionHost : IHostWindow
                 await Task.Delay(500);   // e.g. the socket's folder went away for a moment
                 continue;
             }
-            var channel = new LinkChannel(server);
+            var channel = new LinkChannel(server) { Name = "window" };
             channel.Received += (kind, json) =>
             {
                 // Handled in turn on the app thread: a window sending faster than that waits, rather than this host filling up.

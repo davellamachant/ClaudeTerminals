@@ -547,7 +547,7 @@ internal sealed partial class AppHost
         PrivateFiles.Tighten(SessionStore.AppDataFolder);
         PrivateFiles.Tighten(PanelConfigFolder, "mcp-*.json");
         try { panelServer = PanelServer.TryStart(mcp); }
-        catch (Exception) { /* sessions start without panels */ }
+        catch (Exception ex) { AppLog.Error("Panels couldn't start (sessions start without them): " + AppLog.Describe(ex)); }
         // Shown among another computer's sessions: its window answers the sessions' tool calls while it's attached.
         if (panelServer != null) panelServer.ForwardToolCall = (session, m) => Remote != null ? window.ForwardToolCall(session, m) : null;
     }
@@ -1413,6 +1413,10 @@ internal sealed partial class AppHost
             case "themes.openFolder":
                 Directory.CreateDirectory(ThemeFolder);
                 OpenFolder(ThemeFolder);
+                return null;
+            case "logs.openFolder":
+                // The app's log (see AppLog): the host's, and the window's beside it. A server's window browses the server's.
+                OpenFolder(AppLog.CreateFolder(AppLog.Current?.Folder ?? AppLog.DefaultFolder));
                 return null;
 
             // ---- Get plugins and Get themes (see GalleryService): the catalogs, read only when the page asks

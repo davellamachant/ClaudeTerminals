@@ -39,6 +39,18 @@ It shows for Claude Code and Codex. For other programs, they need to report it t
 - **The tile says *Can't reach*:** LlamaTree keeps trying; click the server's name to try now. The sessions are still running there.
 - **Sessions end when you disconnect:** the server ends your processes when you log out (systemd's `KillUserProcesses`). Run `loginctl enable-linger` on the server once.
 
+## Only 100 of a server's sessions show
+
+LlamaTree shows at most 100 sessions from each server, so a server can't fill this computer with them. When a server has more, a message says so once each time LlamaTree connects to it. Close sessions you no longer need there.
+
+## The log
+
+When something goes wrong that LlamaTree doesn't show you (a message from a server it couldn't handle, a file from a server it refused, a connection it ended because the other side misbehaved), it notes it in its log. Click the version number at the top right and choose **Open the log folder**. In a window showing a server's sessions, that opens the server's log folder.
+
+The log folder is `logs` in LlamaTree's local data: `%LOCALAPPDATA%\LlamaTree\logs` on Windows, `~/.local/share/LlamaTree/logs` on Linux and `~/Library/Application Support/LlamaTree/logs` on macOS (or `logs` in your `LLAMATREE_DATA` folder). Each process writes its own file: `llamatree-app.log` (the window), `llamatree-host.log` (the session host, which runs the sessions and the connections to servers) and `llamatree-bridge.log` (on a server, the connection to a window elsewhere). Each line is one entry: the time in UTC, the process, a level (`INFO`, `WARN` or `ERROR`) and what happened. A file is kept to 1 MB, then moved to `.1`, so the log never holds more than about 2 MB per process.
+
+The log never holds what a message said, only what kind it was, its size and which server sent it. Read it before you attach it to an issue or an email to [support@llamachant.com](mailto:support@llamachant.com) all the same: it names your servers and plugins. On macOS and Linux the folder and its files can be read only by you.
+
 ## No pull request chip
 
 The chip needs a credential for the remote in Git Credential Manager. Looking up the pull request never opens a sign-in window, so without a stored credential there's simply no chip. Run `git fetch` in that repository from a terminal once, sign in when asked, and the chip appears within a few minutes.

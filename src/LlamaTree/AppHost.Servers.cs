@@ -318,6 +318,12 @@ internal sealed partial class AppHost
     {
         var known = serverSessions.Values.Where(x => string.Equals(x.Info.Server, c.Target, StringComparison.OrdinalIgnoreCase)).Select(x => x.Info.RemoteId!).ToHashSet(StringComparer.Ordinal);
         var shown = ServerSessionsShown(list, known);
+        if (webReady && OverCap(c, list, shown) is { } listed)
+        {
+            // Said once a connection (not each time it lists them), here and to the person: once there's a page to say it on.
+            AppLog.Warn($"{c.Target}: it has {listed} sessions; only {MaxServerSessions} are shown here.");
+            Post(new { type = "servers.tooMany", server = c.Machine is { Length: > 0 } m ? m : c.Target, listed, shown = MaxServerSessions });
+        }
         var seen = new HashSet<string>();
         var save = false;
         foreach (var item in list.OfType<JsonObject>())
@@ -371,6 +377,17 @@ internal sealed partial class AppHost
             shown.Add(rid);
         }
         return shown;
+    }
+
+    /// <summary>
+    /// How many sessions the server lists, when that's more than are <paramref name="shown"/> here and it hasn't been
+    /// said yet on this connection (see <see cref="ServerConnection.NoteOverCap"/>); else null.
+    /// </summary>
+    internal static int? OverCap(ServerConnection c, JsonArray list, IReadOnlySet<string> shown)
+    {
+        if (shown.Count < MaxServerSessions) return null;
+        var listed = list.OfType<JsonObject>().Select(ListedId).OfType<string>().Distinct(StringComparer.Ordinal).Count();
+        return listed > shown.Count && c.NoteOverCap() ? listed : null;
     }
 
     /// <summary>A listed session's id on its server, or null for one without (or with one that isn't text).</summary>
