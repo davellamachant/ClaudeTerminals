@@ -119,10 +119,10 @@ function relTime(iso) {
   return d.toLocaleDateString();
 }
 
-function toast(message, isError = false) {
+function toast(message, isError = false, ms = isError ? 7000 : 3500) {
   const el = h('div', { class: 'toast' + (isError ? ' error' : '') }, message);
   $('#toastHost').append(el);
-  setTimeout(() => el.remove(), isError ? 7000 : 3500);
+  setTimeout(() => el.remove(), ms);
 }
 
 // ------------------------------------------------------------------ host bridge
@@ -225,6 +225,7 @@ host.addEventListener('message', (e) => {
     case 'machine': onMachine(m); break;
     case 'files.opened': toast(`Opened a read-only copy of ${m.name} from ${m.server}. Changes to it aren’t saved on the server: edit the file there, through the session.`); break;
     case 'files.browse': browseServerFolder(m.path, m.select, m.server); break;
+    case 'fileProblem': toast(m.text, true, 20000); break;   // a damaged file of the app's, set aside (JsonFile)
     case 'exited': onExited(m.id, m.code); break;
     case 'git.status': onGitStatus(m); break;
     case 'panels': onPanels(m); break;

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using LlamaTree.Platform;
 
 namespace LlamaTree.Relay;
 
@@ -110,16 +111,11 @@ internal sealed class RelayPolicy
 
     private static (List<RelayRule>, bool) Load(string path)
     {
-        try
-        {
-            if (File.Exists(path) && JsonSerializer.Deserialize<Saved>(File.ReadAllText(path), Options) is { } s)
-                return (s.Rules.Where(r => Valid(r.From, r.To) && r.Decision != RelayDecision.Ask)
-                    .DistinctBy(r => (r.From, r.To)).ToList(), s.Paused);
-        }
-        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException or NotSupportedException)
-        {
-            // A damaged file loses the rules: every session asks again, which is the safe way round.
-        }
+        // A damaged file is set aside and loses the rules: every session asks again, which is the safe way round (so not
+        // the older copy, which could hold a rule since taken back). Null rules are dropped.
+        if (JsonFile.Read<Saved>(path, Options, useBackup: false) is { } s)
+            return ((s.Rules ?? []).Where(r => r != null && Valid(r.From, r.To) && r.Decision != RelayDecision.Ask)
+                .DistinctBy(r => (r.From, r.To)).ToList(), s.Paused);
         return ([], false);
     }
 

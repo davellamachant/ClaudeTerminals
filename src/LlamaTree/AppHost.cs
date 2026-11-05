@@ -843,6 +843,8 @@ internal sealed partial class AppHost
                     Post(new { type = "newConversations", ids = newConversations });
                     newConversations.Clear();
                 }
+                // A damaged sessions.json (or another of the app's files) that was set aside, told once.
+                foreach (var text in Platform.JsonFile.TakeProblems()) Post(new { type = "fileProblem", text });
                 foreach (var s in sessions.Values) _ = s.RefreshStatusAsync();
                 if (!countStarted)
                 {
