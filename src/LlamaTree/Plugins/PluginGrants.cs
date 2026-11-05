@@ -215,7 +215,7 @@ internal sealed class PluginGrants
         if (path == null) return;
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            Platform.PrivateFiles.CreateDirectory(Path.GetDirectoryName(path)!);
             var temp = path + ".tmp";
             File.WriteAllText(temp, JsonSerializer.Serialize(grants, Options));
             File.Move(temp, path, true);

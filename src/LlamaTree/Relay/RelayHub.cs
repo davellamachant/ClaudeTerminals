@@ -128,7 +128,7 @@ internal sealed class RelayHub
         }
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            Platform.PrivateFiles.CreateDirectory(Path.GetDirectoryName(path)!);
             var temp = path + ".tmp";
             File.WriteAllText(temp, json);
             File.Move(temp, path, true);

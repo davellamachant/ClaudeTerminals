@@ -116,7 +116,7 @@ internal sealed class ControlPolicy
         if (path == null) return;
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            Platform.PrivateFiles.CreateDirectory(Path.GetDirectoryName(path)!);
             var temp = path + ".tmp";
             File.WriteAllText(temp, JsonSerializer.Serialize(rules, Options));
             File.Move(temp, path, true);

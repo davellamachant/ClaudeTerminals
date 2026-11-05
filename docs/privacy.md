@@ -35,9 +35,9 @@ Everything it sends is anonymous: nothing in it says who you are, and nothing ca
 
 ## On your machine
 
-- **The MCP server** for panels and messages listens on `127.0.0.1` only, at a port picked when the app starts. Every session has its own token, which keeps other programs out.
+- **The MCP server** for panels and messages listens on `127.0.0.1` only, at a port picked when the app starts. Every session has its own token, which keeps other programs out. For Claude Code the token is in a file, `panels/mcp-<session>.json` in your data folder; on macOS and Linux the folder is readable only by you (0700, the file 0600), so other users of the computer can't read it. Anything running as you can, though, any agent included: a session could read another session's file and call the server as that session. That's a limit of everything running as one user, not something the app can close.
 - **The conversation rail** reads the agents' own saved transcripts from disk. Nothing is sent anywhere.
-- **Your data** (sessions, panels, message rules, themes, plugins) is in `%APPDATA%\LlamaTree` on Windows, `~/.config/LlamaTree` on Linux and `~/Library/Application Support/LlamaTree` on macOS.
+- **Your data** (sessions, panels, message rules, themes, plugins) is in `%APPDATA%\LlamaTree` on Windows, `~/.config/LlamaTree` on Linux and `~/Library/Application Support/LlamaTree` on macOS. On macOS and Linux only you can open it.
 
 ## This website
 

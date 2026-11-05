@@ -14,7 +14,7 @@ LlamaTree has no code for any tracker or service. Agents fill panels with whatev
 
 ### How agents reach the app
 
-Each session is started pointing at the `llamatree` MCP server inside the app, on `127.0.0.1` at a port picked when the app starts: Claude Code with `--mcp-config`, Codex with the server's settings on its command line. Its panel tools (`show_panel`, `update_panel`, `close_panel`, `list_panels`, `get_panel`) are allowed without asking. Every session has its own token, which ties each panel to the session that made it and keeps other programs out. Your own MCP servers still load as usual; a command that passes its own `--mcp-config` is left alone.
+Each session is started pointing at the `llamatree` MCP server inside the app, on `127.0.0.1` at a port picked when the app starts: Claude Code with `--mcp-config`, Codex with the server's settings on its command line. Its panel tools (`show_panel`, `update_panel`, `close_panel`, `list_panels`, `get_panel`) are allowed without asking. Every session has its own token, which ties each panel to the session that made it and keeps other programs out (on macOS and Linux, Claude's `--mcp-config` file with the token is readable only by you; anything running as you, another agent included, can still read it: see [Privacy](privacy.md#on-your-machine)). Your own MCP servers still load as usual; a command that passes its own `--mcp-config` is left alone.
 
 ### What a panel can hold
 

@@ -78,7 +78,7 @@ internal static class TelemetryService
     public static void Save(CountState state, string? folder = null)
     {
         var dir = folder ?? SessionStore.AppDataFolder;
-        Directory.CreateDirectory(dir);
+        Platform.PrivateFiles.CreateDirectory(dir);
         var path = FilePath(folder);
         var temp = path + ".tmp";
         File.WriteAllText(temp, JsonSerializer.Serialize(new
