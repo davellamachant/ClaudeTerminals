@@ -913,7 +913,8 @@ body[data-nav="left"] #titlebar > .tab-scroller { display: none; }
 .nav-sessions { display: flex; flex-direction: column; gap: 1px; margin-left: 13px; padding-left: 6px; border-left: 2px solid color-mix(in srgb, var(--proj) 45%, transparent); }
 .nav-sessions.unnamed { margin-left: 0; padding-left: 0; border-left: 0; }
 #navList .session-tab { display: flex; width: 100%; height: 28px; padding-left: 8px; }
-#navList .session-tab:has(.tab-branch:not(:empty)) { height: 38px; }   /* room for the branch beneath the name */
+body:not(.no-nav-branches) #navList .session-tab:has(.tab-branch:not(:empty)) { height: 38px; }   /* room for the branch beneath the name */
+body.no-nav-branches #navList .tab-branch { display: none; }   /* Layout ▸ Show branches, off */
 #navList .session-tab .tab-label { flex: 1; min-width: 0; }
 #navList .session-tab .tab-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* A session's name with the branch it's on beneath it (tabBranch in app.js). */

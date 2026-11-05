@@ -277,6 +277,7 @@ const state = {
   // Where projects and sessions go (see NAV_LAYOUTS): 'top', 'hybrid' (projects on the left) or 'left' (both, as a tree).
   navLayout: ['hybrid', 'left'].includes(store.get('navLayout')) ? store.get('navLayout') : 'top',
   navWidth: store.get('navWidth', 230),
+  navBranches: store.get('navBranches', true),   // each session's branch beneath its name, down the left
 };
 
 // ------------------------------------------------------------------ projects: which sessions are visible
@@ -8123,6 +8124,7 @@ const NAV_LAYOUTS = [
 function applyNavLayout(render = true) {
   const top = state.navLayout === 'top';
   document.body.dataset.nav = state.navLayout;
+  document.body.classList.toggle('no-nav-branches', !state.navBranches);
   const row = top ? $('#projectBar') : $('#titlebar');
   row.prepend($('#btnGrid'));
   row.append($('#appVersion'), $('#btnTheme'));
@@ -8139,7 +8141,16 @@ function setNavLayout(id) {
 const navLayoutItems = () => [
   { header: 'Layout' },
   ...NAV_LAYOUTS.map((l) => ({ label: l.label, checked: state.navLayout === l.id, action: () => setNavLayout(l.id) })),
-];
+  // With the sessions down the left, their branches can go (a row each, rather than two).
+  state.navLayout === 'left' && '-',
+  state.navLayout === 'left' && { label: 'Show branches', checked: state.navBranches, action: () => setNavBranches(!state.navBranches) },
+].filter(Boolean);
+
+function setNavBranches(on) {
+  state.navBranches = on;
+  store.set('navBranches', on);
+  document.body.classList.toggle('no-nav-branches', !on);
+}
 
 applyNavLayout(false);   // the bars are filled once the sessions arrive
 
