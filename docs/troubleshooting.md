@@ -32,7 +32,8 @@ It shows for Claude Code and Codex. For other programs, they need to report it t
 
 ## Can't connect to a server
 
-- **It asks for a password, or fails at once:** LlamaTree signs in with your key or ssh-agent only. Check that `ssh user@server` works from a terminal without a password prompt.
+- **It asks for a password, or fails at once:** LlamaTree signs in with your key or ssh-agent only. Check that `ssh user@server` works from a terminal without a password prompt; [Setting up SSH](servers.md#setting-up-ssh) shows how.
+- **It asks for a key's passphrase:** LlamaTree can't type it. Have ssh-agent hold the key (see [Setting up SSH](servers.md#setting-up-ssh)); on Windows the agent is turned off until you start it.
 - **Host key not known:** connect once from a terminal and accept the server's key.
 - **LlamaTree isn't installed there:** use *Install LlamaTree on &lt;server&gt;…* on the session's menu, or install it by hand (see [Sessions on a server](servers.md#installing-llamatree-on-the-server)).
 - **The tile says *Can't reach*:** LlamaTree keeps trying; click the server's name to try now. The sessions are still running there.
