@@ -222,7 +222,7 @@ internal static class CodexConversations
             var started = file.CreationTimeUtc;
             while (prompt == null && stream.Position < HeadBytes && reader.ReadLine() is { } line)
             {
-                if (!TryParse(line, out var e) || !e.TryGetProperty("payload", out var p)) continue;
+                if (!TryParse(line, out var e) || !ConversationReader.Obj(e, "payload", out var p)) continue;
                 switch (Str(e, "type"))
                 {
                     case "session_meta" when id == null:

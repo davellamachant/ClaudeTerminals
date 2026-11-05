@@ -282,6 +282,31 @@ public sealed class CodexConversationTests : IDisposable
     }
 
     [Fact]
+    public void A_codex_line_with_fields_of_unexpected_types_is_skipped_and_reading_again_adds_nothing_twice()
+    {
+        var id = NewId();
+        var path = Rollout(id, DateTime.UtcNow.AddMinutes(-1), work, "Fix the login bug");
+        File.AppendAllText(path,
+            """{"type":"response_item","payload":"a string where an object goes"}""" + "\n" +
+            """{"type":"response_item","payload":{"type":"local_shell_call","action":["an","array"]}}""" + "\n" +
+            """{"type":"response_item","payload":{"type":"message","role":"assistant","content":[7,null,{"type":"output_text","text":{}}]}}""" + "\n" +
+            """{"type":"response_item","payload":{"type":"function_call","name":3,"arguments":{"cmd":"an object"}}}""" + "\n" +
+            """{"type":"response_item","timestamp":12345,"payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Thanks"}]}}""" + "\n" +
+            "[1]\nnull\n" +
+            Item(Message("assistant", "You're welcome.", "output_text")));
+
+        for (var poll = 0; poll < 3; poll++)
+        {
+            var c = CodexConversations.Read(id);
+            Assert.NotNull(c);
+            Assert.Equal(["Fix the login bug", "Thanks"], c.Turns.Select(t => t.Prompt));
+            Assert.Equal([("tool", "", "shell"), ("tool", "", "tool")], c.Turns[0].Items.Select(i => (i.Kind, i.Text, i.Tool)));
+            Assert.Null(c.Turns[1].Time);   // a number isn't a time; the rest of the line still counts
+            Assert.Equal("You're welcome.", Assert.Single(c.Turns[1].Items).Text);
+        }
+    }
+
+    [Fact]
     public void A_codex_session_shows_its_own_conversation()
     {
         var id = NewId();
