@@ -1095,11 +1095,10 @@ function createSession(info) {
   });
   term.onResize(({ cols, rows }) => { if (s.running) post({ type: 'resize', id: s.id, cols, rows }); });
   term.onTitleChange((t) => { s.title = t; renderTileHeader(s); });
-  // Some agents (Codex) report what they're doing in an OSC 7501 sequence, "state=working:app=codex", with state=blocked
-  // while they wait on an answer from you. A session that reports it is taken at its word rather than read off the screen.
+  // Some agents (Codex) report what they're doing in an OSC 7501 sequence, "state=working:app=codex" (see reportState).
   term.parser.registerOscHandler(7501, (data) => {
     const reported = /(?:^|:)state=([a-z]+)/.exec(data)?.[1];
-    if (reported) { s.reportsState = true; setAsking(s, reported === 'blocked'); }
+    if (reported) reportState(s, reported);
     return true;
   });
   term.onBell(() => { if (state.expandedId !== s.id) setAttention(s, true); });
@@ -1204,7 +1203,8 @@ function onReplay(id, data) {
   const s = state.byId.get(id);
   if (!s) return;
   fitTerm(s);   // at its real size first: the output's cursor moves assume the width it was written at
-  s.term.write(data, () => { s.act.drawnAt = performance.now(); });
+  s.replaying = true;   // the states it reported back then are taken, but a turn it finished then doesn't flag it now
+  s.term.write(data, () => { s.act.drawnAt = performance.now(); s.replaying = false; });
 }
 
 function onExited(id, code) {
@@ -1221,12 +1221,32 @@ function onExited(id, code) {
   renderSessionTabs();
 }
 
+/**
+ * What an agent that reports its state (OSC 7501: Codex) says it's doing, taken at its word instead of being guessed
+ * from its output: "working" while it works; "done" when it finishes a turn, which is your turn (flagged as waiting for
+ * you unless you're looking at it); "idle" when it's ready without having worked (it has just started); "blocked" while
+ * it waits on your answer to a question or approval.
+ */
+function reportState(s, reported) {
+  s.reportsState = true;
+  const a = s.act, was = a.state;
+  a.starting = false;
+  if (reported === 'working') {
+    if (was !== 'working') { a.state = 'working'; a.workingSince = performance.now(); }
+  } else a.state = 'idle';
+  setAsking(s, reported === 'blocked');
+  if (reported === 'working' && s.attention) setAttention(s, false);
+  else if (reported === 'done' && was === 'working' && !s.replaying && state.expandedId !== s.id) setAttention(s, true);
+  else if (a.state !== was) renderTileState(s);
+}
+
 // Activity: Claude's spinner redraws continuously while it works and goes quiet when it is waiting on
-// you, so a sustained burst of output followed by silence means "your turn" → flag the tile.
+// you, so a sustained burst of output followed by silence means "your turn" → flag the tile. Not for an agent that
+// reports its state (see reportState).
 function noteActivity(s) {
   const now = performance.now();
   const a = s.act;
-  if (now - a.lastIn < 400) { a.lastOut = now; return; }   // echo of our own typing
+  if (now - a.lastIn < 400 || s.reportsState) { a.lastOut = now; return; }   // echo of our own typing
   if (a.state !== 'working') {
     if (now - a.lastOut > 1500) a.burstStart = now;
     if (now - a.burstStart > 1200) {
@@ -1248,7 +1268,7 @@ setInterval(() => {
   const now = performance.now();
   for (const s of state.sessions) {
     const a = s.act;
-    if (a.state === 'working' && now - a.lastOut > 2500) {
+    if (a.state === 'working' && !s.reportsState && now - a.lastOut > 2500) {
       a.state = 'idle';
       // The output a program writes as it starts (Claude's start-up, a dev server's build) isn't a turn finished: it's
       // ready, not waiting for you. Once it's been given something to do (see term.onData), quiet means your turn.
