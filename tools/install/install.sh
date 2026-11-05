@@ -170,7 +170,7 @@ main() {
         Linux) ;;
         Darwin)
             warn "There's no LlamaTree package for macOS yet: it's coming once the app can be signed for Apple."
-            warn "Until then, build it from source; see $RELEASES and the README's \"macOS and Linux\" section."
+            warn "Until then, build it from source: see https://github.com/$REPO/blob/main/docs/building.md#macos-and-linux"
             exit 1 ;;
         *) die "This installs LlamaTree on Linux. On Windows, run in PowerShell:  irm $RELEASES/latest/download/install.ps1 | iex" ;;
     esac
