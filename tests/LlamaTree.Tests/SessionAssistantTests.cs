@@ -83,13 +83,41 @@ public sealed class SessionAssistantTests
         Assert.DoesNotContain("question 2", prompt);
     }
 
-    [Theory]
-    [InlineData("codex", "codex", "codex")]      // both Codex: Codex answers
-    [InlineData("claude", "codex", "claude")]    // mixed: Claude
-    [InlineData("pwsh", "pwsh", "claude")]       // no agent: Claude
-    [InlineData("claude", "pwsh", "claude")]
-    public void The_sessions_own_agent_answers_when_they_share_one(string a, string b, string writer) =>
-        Assert.Equal(writer, SessionAssistant.WriterFor([Brief("A", null, agent: Agents.For(a)), Brief("B", null, agent: Agents.For(b))]).Id);
+    [Fact]
+    public void Claude_answers_when_installed_even_with_Codex_installed() =>
+        Assert.Same(Agents.Claude, SessionAssistant.WriterFor(_ => true));
+
+    [Fact]
+    public void Codex_answers_only_when_Claude_is_not_installed() =>
+        Assert.Same(Agents.Codex, SessionAssistant.WriterFor(a => a != Agents.Claude));
+
+    [Fact]
+    public void With_no_agent_installed_asking_fails()
+    {
+        var error = Assert.Throws<InvalidOperationException>(() => SessionAssistant.WriterFor(_ => false));
+        Assert.Contains("claude", error.Message);
+        Assert.Contains("codex", error.Message);
+    }
+
+    [Fact]
+    public void Tool_less_agents_come_first()
+    {
+        Assert.Equal([Agents.Claude, Agents.Codex], SessionAssistant.Writers);
+        Assert.True(Agents.Claude.HeadlessHasNoTools);
+        Assert.False(Agents.Codex.HeadlessHasNoTools);   // codex exec -s read-only still reads files
+    }
+
+    [Fact]
+    public void The_agent_that_answers_first_has_no_tools()
+    {
+        var writer = SessionAssistant.WriterFor(_ => true);
+        var command = writer.HeadlessCommand!;
+        Assert.StartsWith("claude -p ", command);
+        Assert.Contains("--tools \"\"", command);            // no built-in tools: no Read, Bash, …
+        Assert.Contains("--strict-mcp-config", command);     // and no MCP servers (none are given)
+        Assert.DoesNotContain("--mcp-config", command);
+        Assert.DoesNotContain("codex", command);
+    }
 
     [Fact]
     public void Each_sessions_agent_is_named_as_it_is_even_a_shell()

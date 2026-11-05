@@ -7344,13 +7344,15 @@ const PLUGIN_ACCESS = {
   },
   ask: {
     verb: 'ask Claude about your sessions', title: 'Ask Claude about your sessions',
-    about: 'Put questions about the sessions it sees to Claude, run once each time with your own sign-in, over their conversations. Claude runs with no tools, so it can’t change anything; the plugin sees the answers. Needs “See your sessions” too.',
+    about: 'Put questions about the sessions it sees to Claude, run once each time with your own sign-in, over their conversations. Claude runs with no tools, so it can’t read files, run commands or change anything. Without Claude Code installed, Codex answers instead, and Codex can read your files. The plugin sees the answers. Needs “See your sessions” too.',
     dialog: (p) => [
       h('p', {}, `${p.title} is a plugin, from ${plugins.folder}\\${p.id}. It asks to put questions about your sessions to Claude:`),
       h('ul', {},
-        h('li', {}, 'each question runs Claude (or a session’s own agent) once, headless, with your own sign-in, the way Suggest a commit message does, and counts against your usage;'),
+        h('li', {}, 'each question runs Claude Code once (Codex sessions too), headless, with your own sign-in, the way Suggest a commit message does, and counts against your usage;'),
         h('li', {}, 'the question goes with the sessions’ conversations: your prompts, what the agent answered and the tools it used;'),
-        h('li', {}, 'the agent runs with no tools and saves no conversation, so it can’t change anything.')),
+        h('li', {}, 'Claude runs with no tools or MCP servers and saves no conversation: it sees only what is sent to it, and can’t read a file, run a command or change anything;'),
+        h('li', {}, h('strong', {}, 'without Claude Code installed, Codex answers instead. '),
+          'It runs read-only, so it can’t change anything, but it can read any file you can (your SSH keys, say), and a plugin could ask it to and see what it read.')),
       h('p', {}, 'The plugin sees the answers. Allow only a plugin you trust. You can change your answer any time in Permissions, on the palette menu.'),
     ],
   },
@@ -8582,8 +8584,8 @@ const pluginSessionInfo = (s) => ({
  *                          `index`, its number among the prompts, is the fallback): Claude's full-screen mode keeps no
  *                          terminal scrollback, so the conversation is where a prompt can be jumped to. { index }
  * With "ask" access (and "sessions"):
- *   ask { question, ids, history } → { answer, writer, sessions }: an agent run headless (the sessions' own, or Claude)
- *                          answers the question from the conversations of the sessions named; history is earlier
+ *   ask { question, ids, history } → { answer, writer, sessions }: Claude run headless with no tools (or Codex read-only
+ *                          when Claude isn't installed; writer names it) answers the question from the conversations of the sessions named; history is earlier
  *                          [{ question, answer }] of the same chat, so a follow-up makes sense
  * Nothing lets a plugin type into a session: what it has to say reaches an agent as a message from it ("message").
  */

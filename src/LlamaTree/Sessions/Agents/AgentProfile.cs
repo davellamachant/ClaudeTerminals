@@ -119,6 +119,12 @@ internal abstract class AgentProfile
     /// </summary>
     public virtual string? HeadlessCommand => null;
 
+    /// <summary>
+    /// Whether <see cref="HeadlessCommand"/> runs with no tools at all, so it sees only the prompt it's given and can't read
+    /// a file (claude -p --tools ""). A read-only sandbox isn't enough: codex exec -s read-only still reads any file.
+    /// </summary>
+    public virtual bool HeadlessHasNoTools => false;
+
     // ---------------------------------------------------------------- for the page
 
     /// <summary>How the session follows it to another conversation, in words: "through /clear and /resume".</summary>
