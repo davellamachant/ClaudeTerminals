@@ -128,14 +128,19 @@ install_tar() {   # file
     app="$data/LlamaTree"
     bin="$HOME/.local/bin"
     mkdir -p "$data" "$bin"
+    # Unpacked beside $app, on the same filesystem, so the swap is two renames. The old copy waits in staging until
+    # the new one is in place, and until then cleanup puts it back (restore_previous).
     staging=$(mktemp -d "$data/.llamatree-install-XXXXXX")
-    tar -xzf "$1" -C "$staging"
+    previous="$staging/previous"
+    mkdir "$staging/new"
+    tar -xzf "$1" -C "$staging/new"
     unpacked=""
-    for d in "$staging"/LlamaTree-*; do [ -x "$d/LlamaTree" ] && unpacked="$d"; done
+    for d in "$staging"/new/LlamaTree-*; do [ -x "$d/LlamaTree" ] && unpacked="$d"; done
     [ -n "$unpacked" ] || die "The download isn't laid out as expected, so it wasn't installed."
-    if [ -e "$app" ]; then mv "$app" "$staging/previous"; fi
+    if [ -e "$app" ] || [ -L "$app" ]; then mv "$app" "$previous"; fi
     mv "$unpacked" "$app"
-    rm -rf "$staging"; staging=""
+    # The new copy is in place: from here the old one is only removed.
+    rm -rf "$staging"; staging=""; previous=""
 
     # A script rather than a link, as in the packages, so the app always starts from its own folder.
     printf '#!/bin/sh\nexec %s "$@"\n' "$(quote "$app/LlamaTree")" >"$bin/llamatree"
@@ -159,9 +164,29 @@ install_tar() {   # file
     fi
 }
 
+# After a failure or a signal mid-swap: when the old copy was moved aside and the new one never took its place, puts
+# the old one back. Fails only when that can't be done, and then staging must be kept.
+restore_previous() {
+    [ -n "${previous-}" ] || return 0
+    [ -e "$previous" ] || [ -L "$previous" ] || return 0
+    [ -e "$app" ] || [ -L "$app" ] && return 0   # the new copy got in: the old one can go
+    if mv "$previous" "$app"; then
+        warn "The previous installation was put back in $app."
+        return 0
+    fi
+    warn "Couldn't put the previous installation back. It's in $previous: move it to $app to use it again."
+    return 1
+}
+
+# Runs on any exit, and does its work once: a second Ctrl-C or TERM meanwhile can't cut the restore short.
 cleanup() {
+    trap '' HUP INT TERM
+    if [ -n "${staging-}" ]; then
+        restore_previous && rm -rf "$staging"
+        staging=""; previous=""
+    fi
     [ -n "${tmp-}" ] && rm -rf "$tmp"
-    [ -n "${staging-}" ] && rm -rf "$staging"
+    tmp=""
     return 0
 }
 
@@ -183,7 +208,9 @@ main() {
 
     tmp=$(mktemp -d "${TMPDIR:-/tmp}/llamatree-install.XXXXXX")
     staging=""
+    previous=""
     trap cleanup EXIT
+    trap 'exit 129' HUP
     trap 'exit 130' INT
     trap 'exit 143' TERM
 
