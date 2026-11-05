@@ -1217,17 +1217,27 @@ internal sealed partial class AppHost
                 // The Project view's rows for the session's repository: every worktree, how far each is from the base
                 // branch, and what's changed in it.
                 return await GitService.GetWorktreeOverviewAsync(GitDir(msg));
+            case "worktree.contents":
+            {
+                // For Remove worktree's confirmation: what is changed in it, and the ignored files git would delete with it.
+                var root = Str(msg, "root").Trim();
+                if (!Directory.Exists(root)) throw new InvalidOperationException("The repository folder is gone.");
+                return await GitService.GetWorktreeContentsAsync(root, Str(msg, "path").Trim())
+                    ?? throw new InvalidOperationException("Couldn't read what is in the worktree.");
+            }
             case "worktree.remove":
             {
                 // The repository is named rather than a session: the page has already removed the sessions in the
                 // worktree (a process with its folder as working directory would keep it), and it may have been the
-                // only one. Their processes can take a moment to let go of the folder, hence the retries.
+                // only one. Their processes can take a moment to let go of the folder, hence the retries. Ignored files
+                // are deleted only when the page says the person was shown them and agreed (deleteIgnored).
                 var root = Str(msg, "root").Trim();
                 if (!Directory.Exists(root)) throw new InvalidOperationException("The repository folder is gone.");
+                var deleteIgnored = Bool(msg, "deleteIgnored");
                 GitResult result = null!;
                 for (var attempt = 0; attempt < 6; attempt++)
                 {
-                    result = await GitService.RemoveWorktreeAsync(root, Str(msg, "path").Trim());
+                    result = await GitService.RemoveWorktreeAsync(root, Str(msg, "path").Trim(), deleteIgnored);
                     if (result.Ok || !result.Error.Contains("failed to delete", StringComparison.OrdinalIgnoreCase) && !result.Error.Contains("Permission denied", StringComparison.OrdinalIgnoreCase)) break;
                     await Task.Delay(500);
                 }

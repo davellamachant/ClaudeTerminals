@@ -5790,28 +5790,63 @@ function startSessionIn(row) {
 
 /**
  * Removing a worktree: its sessions go first (a process with the folder as its working directory would keep it), then
- * git removes it, never forced, so one with uncommitted changes is refused and left as it is. The branch stays.
+ * git removes it, never forced, so one with uncommitted changes is refused and left as it is. Git deletes the ignored
+ * files in it all the same (a .env, local settings, build output), so those are listed, and Remove waits for a tick
+ * saying they may go. The branch stays.
  */
 function confirmRemoveWorktree(row) {
   const tab = activeTab();
   const projectId = tab.projectId;
   const repo = row.repo;
-  const busy = row.changes > 0;
+  let busy = row.changes > 0;
+  let ignored = [];
   const error = h('div', { class: 'form-error', hidden: true });
-  const remove = h('button', { class: 'btn danger primary', disabled: busy }, 'Remove worktree');
+  const remove = h('button', { class: 'btn danger primary', disabled: true }, 'Remove worktree');
+  const agree = h('input', { type: 'checkbox' });
+  const ignoredBox = h('div', { hidden: true });
+  const busyNote = h('div', { class: 'form-error', hidden: !busy });
+  const checking = h('div', { class: 'dim', hidden: row.missing }, 'Checking the folder for ignored files…');
+  const ready = () => { remove.disabled = busy || (ignored.length > 0 && !agree.checked); };
+  agree.addEventListener('change', ready);
+  const showBusy = (n) => {
+    busy = n > 0;
+    busyNote.hidden = !busy;
+    busyNote.textContent = `${n} file${n === 1 ? ' is' : 's are'} changed or new in this worktree and would be lost. Commit or undo ${n === 1 ? 'it' : 'them'} first.`;
+  };
+  if (busy) showBusy(row.changes);
+  if (row.missing) ready();
+  else {
+    request('worktree.contents', { root: repo.root, path: row.path, ...onServer(repo.server) }).then((c) => {
+      showBusy(c.changes);
+      ignored = c.ignored ?? [];
+      if (ignored.length) {
+        const shown = 8;
+        ignoredBox.replaceChildren(
+          h('div', { class: 'form-error' }, `${ignored.length} ignored file${ignored.length === 1 ? ' or folder' : 's or folders'} in it will be deleted too. Git doesn't keep them, so they can't be got back:`),
+          h('ul', { class: 'pv-files' }, ignored.slice(0, shown).map((f) => h('li', {}, f)),
+            ignored.length > shown && h('li', { class: 'dim' }, `and ${ignored.length - shown} more`)),
+          h('label', { class: 'check-field' }, agree, 'Delete these ignored files with the worktree'));
+        ignoredBox.hidden = false;
+      }
+    }, () => {
+      // An older server doesn't answer this; its removal deletes ignored files without asking, as it always did.
+      ignoredBox.replaceChildren(h('div', { class: 'dim' }, 'Couldn\'t check the folder for ignored files; any there are deleted with it.'));
+      ignoredBox.hidden = false;
+    }).finally(() => { checking.hidden = true; ready(); });
+  }
   remove.addEventListener('click', async () => {
     remove.disabled = true;
     remove.textContent = 'Removing…';
     try {
       for (const s of row.sessions) await request('removeSession', { id: s.id });
-      await request('worktree.remove', { root: repo.root, path: row.path, ...onServer(repo.server) });
+      await request('worktree.remove', { root: repo.root, path: row.path, deleteIgnored: ignored.length > 0 && agree.checked, ...onServer(repo.server) });
       closeModal();
       toast(`Removed the worktree at ${row.path}. The branch ${row.branch ?? ''} stays.`);
     } catch (e) {
       error.hidden = false;
       error.textContent = e.message;
-      remove.disabled = false;
       remove.textContent = 'Remove worktree';
+      ready();
     }
     projectView.open.delete(normPath(row.path));
     const t = activeTab();
@@ -5821,7 +5856,9 @@ function confirmRemoveWorktree(row) {
     h('div', {}, `Remove the worktree at ${row.path}?`),
     h('div', { class: 'dim' }, `The branch ${row.branch ?? ''} stays in the repository; only the folder goes.`),
     row.sessions.length > 0 && h('div', {}, `${row.sessions.length === 1 ? 'This session is' : 'These sessions are'} in it and will be removed first: ${row.sessions.map((s) => `"${s.name}"`).join(', ')}.`),
-    busy && h('div', { class: 'form-error' }, `${row.changes} file${row.changes === 1 ? ' is' : 's are'} changed or new in this worktree and would be lost. Commit or undo ${row.changes === 1 ? 'it' : 'them'} first.`),
+    busyNote,
+    checking,
+    ignoredBox,
     error,
   ], [h('button', { class: 'btn', onclick: closeModal, 'data-autofocus': true }, 'Cancel'), remove]);
 }

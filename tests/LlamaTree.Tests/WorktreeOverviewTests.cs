@@ -131,6 +131,61 @@ public class WorktreeOverviewTests : IDisposable
     }
 
     [Fact]
+    public async Task Removing_a_worktree_whose_folder_is_gone_leaves_other_prunable_worktrees_listed()
+    {
+        var gone = await AddWorktree("feature/gone");
+        var alsoGone = await AddWorktree("feature/also-gone");
+        Directory.Delete(gone, true);
+        Directory.Delete(alsoGone, true);
+        var r = await GitService.RemoveWorktreeAsync(repo.Root, gone);
+        Assert.True(r.Ok, r.Error);
+        var left = await GitService.GetWorktreesAsync(repo.Root);
+        Assert.DoesNotContain(left, w => w.Branch == "feature/gone");
+        Assert.Contains(left, w => w.Branch == "feature/also-gone" && w.Prunable);   // not pruned along with it
+    }
+
+    [Fact]
+    public async Task Ignored_files_are_listed_and_only_deleted_once_agreed()
+    {
+        repo.Commit((".gitignore", ".env\nbin/\n"));
+        var path = await AddWorktree("feature/ignored");
+        File.WriteAllText(Path.Combine(path, ".env"), "SECRET=1");
+        Directory.CreateDirectory(Path.Combine(path, "bin", "Debug"));
+        File.WriteAllText(Path.Combine(path, "bin", "Debug", "app.dll"), "x");
+
+        var contents = await GitService.GetWorktreeContentsAsync(repo.Root, path);
+        Assert.NotNull(contents);
+        Assert.Equal(0, contents.Changes);
+        Assert.Equal([".env", "bin/"], contents.Ignored.Order());   // a folder counts once
+
+        // Unagreed, git's remove (which deletes ignored files even unforced) isn't run.
+        var refused = await GitService.RemoveWorktreeAsync(repo.Root, path);
+        Assert.False(refused.Ok);
+        Assert.Contains("2 ignored files or folders", refused.Error);
+        Assert.Contains(".env", refused.Error);
+        Assert.Equal("SECRET=1", File.ReadAllText(Path.Combine(path, ".env")));
+
+        var r = await GitService.RemoveWorktreeAsync(repo.Root, path, deleteIgnored: true);
+        Assert.True(r.Ok, r.Error);
+        Assert.False(Directory.Exists(path));
+    }
+
+    [Fact]
+    public async Task Contents_count_changes_beside_ignored_files_and_only_for_removable_worktrees()
+    {
+        repo.Commit((".gitignore", "*.log\n"));
+        var path = await AddWorktree("feature/mixed");
+        File.WriteAllText(Path.Combine(path, "a.txt"), "edited");
+        File.WriteAllText(Path.Combine(path, "run.log"), "log");
+        var contents = await GitService.GetWorktreeContentsAsync(repo.Root, path);
+        Assert.NotNull(contents);
+        Assert.Equal(1, contents.Changes);
+        Assert.Equal(["run.log"], contents.Ignored);
+        Assert.Null(await GitService.GetWorktreeContentsAsync(repo.Root, repo.Root));   // the main worktree
+        Assert.Null(await GitService.GetWorktreeContentsAsync(repo.Root, Path.GetTempPath()));
+    }
+
+    [Fact]
     public async Task Remove_refuses_the_main_worktree_and_folders_that_are_not_worktrees()
     {
         Assert.Contains("main worktree", (await GitService.RemoveWorktreeAsync(repo.Root, repo.Root)).Error);

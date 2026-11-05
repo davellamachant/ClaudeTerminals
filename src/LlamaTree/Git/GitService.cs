@@ -53,6 +53,11 @@ internal sealed record TopFolders(string Root, IReadOnlyList<FolderCount> Folder
 /// <param name="Merged">Everything on its branch is already on the base branch, so once it's clean it can go.</param>
 internal sealed record WorktreeOverview(string Path, string? Branch, bool Main, bool Bare, bool Missing, int Ahead, int Behind, int Changes, bool Merged);
 
+/// <summary>What removing a worktree would delete beyond its commits (see <see cref="GitService.GetWorktreeContentsAsync"/>).</summary>
+/// <param name="Changes">Files git status lists in it (staged, unstaged and untracked); Remove worktree refuses while there are any.</param>
+/// <param name="Ignored">Its ignored files and folders (a folder once, as "bin/"), in git's order; git deletes these with it.</param>
+internal sealed record WorktreeContents(int Changes, IReadOnlyList<string> Ignored);
+
 /// <param name="BaseBranch">What the worktrees are compared with (origin/main, say), or null if the repository has none.</param>
 internal sealed record RepoOverview(string Root, string? BaseBranch, List<WorktreeOverview> Worktrees);
 
@@ -475,25 +480,79 @@ internal static class GitService
     }
 
     /// <summary>
+    /// What removing the worktree at <paramref name="path"/> would delete beyond its committed files, for Remove
+    /// worktree's confirmation: the files git status lists (staged, unstaged and untracked), and the ignored files and
+    /// folders (an ignored folder counts once, as "bin/"). Null if <paramref name="path"/> isn't a removable worktree of
+    /// the repository at <paramref name="repoDir"/>, its folder is gone, or git couldn't say. Read-only.
+    /// </summary>
+    public static async Task<WorktreeContents?> GetWorktreeContentsAsync(string repoDir, string path) =>
+        await FindRemovableWorktreeAsync(repoDir, path) is { Worktree: { } w } && Directory.Exists(w.Path) ? await ReadWorktreeContentsAsync(w.Path) : null;
+
+    private static async Task<WorktreeContents?> ReadWorktreeContentsAsync(string worktree)
+    {
+        // "matching" lists an ignored folder once rather than every file in it (a node_modules stays one line).
+        var r = await RunAsync(worktree, ["status", "--porcelain", "-z", "--untracked-files=normal", "--ignored=matching"], maxOutputBytes: 4 << 20);
+        if (!r.Ok || r.Truncated) return null;
+        var entries = r.Text.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        var changes = 0;
+        var ignored = new List<string>();
+        for (var k = 0; k < entries.Length; k++)
+        {
+            var e = entries[k];
+            if (e.Length < 4) continue;
+            if (e.StartsWith("!! ")) ignored.Add(e[3..]);
+            else
+            {
+                changes++;
+                if (e[0] is 'R' or 'C') k++;   // a rename or copy is followed by the path it came from
+            }
+        }
+        return new WorktreeContents(changes, ignored);
+    }
+
+    /// <summary>The listed worktree at <paramref name="path"/> if it may be removed, else why not.</summary>
+    private static async Task<(WorktreeInfo? Worktree, string? Problem)> FindRemovableWorktreeAsync(string repoDir, string path)
+    {
+        if (!Path.IsPathFullyQualified(path)) return (null, "The worktree must be given as a full path.");
+        var list = await GetWorktreesAsync(repoDir);
+        var i = list.FindIndex(w => PathText.SamePlace(w.Path, path));
+        if (i < 0) return (null, $"{path} isn't a worktree of this repository.");
+        if (i == 0) return (null, "This is the repository's main worktree; it can't be removed.");
+        return (list[i], null);
+    }
+
+    /// <summary>
     /// Removes the worktree at <paramref name="path"/> from the repository at <paramref name="repoDir"/> (the Project
     /// view's Remove worktree). Only a listed worktree other than the main one, and only when nothing in it is
     /// uncommitted: git's own check stays (never forced), and ours runs first so the refusal says what's in the way.
-    /// A worktree whose folder is already gone is pruned from the list instead. The branch stays either way.
+    /// Git deletes ignored files with the folder even unforced (a .env, local settings, build output), so a worktree
+    /// that has any is only removed when <paramref name="deleteIgnored"/> says the person has seen that and agreed.
+    /// A worktree whose folder is already gone has only its own entry removed; other worktrees git could prune are left
+    /// listed. The branch stays either way.
     /// </summary>
-    public static async Task<GitResult> RemoveWorktreeAsync(string repoDir, string path)
+    public static async Task<GitResult> RemoveWorktreeAsync(string repoDir, string path, bool deleteIgnored = false)
     {
-        if (!Path.IsPathFullyQualified(path)) return Failed("The worktree must be given as a full path.");
-        var list = await GetWorktreesAsync(repoDir);
-        var i = list.FindIndex(w => PathText.SamePlace(w.Path, path));
-        if (i < 0) return Failed($"{path} isn't a worktree of this repository.");
-        if (i == 0) return Failed("This is the repository's main worktree; it can't be removed.");
-        if (!Directory.Exists(list[i].Path)) return await RunAsync(repoDir, ["worktree", "prune"]);
-        var changes = await CountChangesAsync(list[i].Path);
+        var (w, problem) = await FindRemovableWorktreeAsync(repoDir, path);
+        if (w == null) return Failed(problem!);
+        // Not "git worktree prune", which drops every worktree whose folder is gone; remove (git 2.19 and later) takes
+        // just this one's entry when its folder is missing.
+        if (!Directory.Exists(w.Path)) return await RunAsync(repoDir, ["worktree", "remove", w.Path]);
+        var contents = await ReadWorktreeContentsAsync(w.Path);
+        if (contents == null) return Failed("Couldn't check the worktree for uncommitted changes, so it was left alone.");
+        var changes = contents.Changes;
         if (changes != 0)
-            return Failed(changes < 0
-                ? "Couldn't check the worktree for uncommitted changes, so it was left alone."
-                : $"{changes} file{(changes == 1 ? " is" : "s are")} changed or new in this worktree and would be lost. Commit or undo {(changes == 1 ? "it" : "them")} first.");
-        return await RunAsync(repoDir, ["worktree", "remove", list[i].Path], timeout: TimeSpan.FromMinutes(2));
+            return Failed($"{changes} file{(changes == 1 ? " is" : "s are")} changed or new in this worktree and would be lost. Commit or undo {(changes == 1 ? "it" : "them")} first.");
+        if (contents.Ignored.Count > 0 && !deleteIgnored)
+            return Failed($"{IgnoredText(contents.Ignored)} would be deleted with the worktree, so it was left alone.");
+        return await RunAsync(repoDir, ["worktree", "remove", w.Path], timeout: TimeSpan.FromMinutes(2));
+    }
+
+    /// <summary>"2 ignored files or folders (.env, bin/)": how many, and the first few by name.</summary>
+    private static string IgnoredText(IReadOnlyList<string> ignored)
+    {
+        const int Shown = 5;
+        var names = string.Join(", ", ignored.Take(Shown)) + (ignored.Count > Shown ? $" and {ignored.Count - Shown} more" : "");
+        return $"{ignored.Count} ignored file{(ignored.Count == 1 ? " or folder" : "s or folders")} ({names})";
     }
 
     /// <summary>
