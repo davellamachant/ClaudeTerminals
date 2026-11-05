@@ -1222,7 +1222,12 @@ function syncSessions(list, projects) {
     // LlamaTree restarting on a new version stops them as the connection closes, and so does the server restarting.
     // Taken as exited, the terminal says so, and Enter starts it again there, rather than typing into nothing.
     if (info.server && s.running && !info.running) stopped.push(s.id);
-    else s.running = info.running || s.running;
+    else if (info.running && !s.running) {
+      // Ran on without this window: its console has whatever size it had, so it's given this terminal's.
+      s.running = true;
+      s.ptySize = null;
+      refit();   // once it's fitted
+    }
   }
   for (const id of stopped) onExited(id, null);
   for (const s of [...state.byId.values()]) {
@@ -1322,7 +1327,7 @@ function createSession(info) {
     if (data.includes('\r')) s.act.starting = false;
     post({ type: 'input', id: s.id, data });
   });
-  term.onResize(({ cols, rows }) => { if (s.running) post({ type: 'resize', id: s.id, cols, rows }); });
+  term.onResize(() => syncPtySize(s));
   term.onTitleChange((t) => { s.title = t; renderTileHeader(s); });
   // Some agents (Codex) report what they're doing in an OSC 7501 sequence, "state=working:app=codex" (see reportState).
   term.parser.registerOscHandler(7501, (data) => {
@@ -1374,6 +1379,27 @@ function fitTerm(s) {
   try { s.fit.fit(); } catch { /* not attached yet */ }
 }
 
+/**
+ * Gives the session's console the terminal's size, when it isn't that size already (s.ptySize is the size it was last
+ * given). Not only on xterm's resize: one that comes while a start is on its way can't be sent, and xterm, at that size
+ * already, never reports it again, so the agent stayed laid out for the size the terminal had when it started.
+ */
+function syncPtySize(s) {
+  if (!s.running) return;
+  const { cols, rows } = s.term;
+  if (s.ptySize?.cols === cols && s.ptySize?.rows === rows) return;
+  s.ptySize = { cols, rows };
+  post({ type: 'resize', id: s.id, cols, rows });
+}
+
+/** Starts (or restarts) the session's console at the terminal's size, and gives it any size the terminal took meanwhile. */
+function requestStart(s, type, extra) {
+  const { cols, rows } = s.term;
+  s.ptySize = { cols, rows };
+  return request(type, { id: s.id, cols, rows, theme: s.startedTheme, ...extra })
+    .then((r) => { if (r?.prompted) s.act.starting = false; s.running = true; s.exitCode = null; syncPtySize(s); renderTileHeader(s); renderSessionTabs(); });
+}
+
 /** The coding agent a command runs (one of state.agents, as the host's Agents.For), or null for any other command. */
 const agentOf = (command) => {
   const program = (command || '').trim().split(' ')[0].toLowerCase();
@@ -1390,8 +1416,7 @@ function startSession(s) {
   fitTerm(s);
   s.startedTheme = themeName();
   s.act.starting = true;
-  request('start', { id: s.id, cols: s.term.cols, rows: s.term.rows, theme: s.startedTheme })
-    .then((r) => { if (r?.prompted) s.act.starting = false; s.running = true; s.exitCode = null; renderTileHeader(s); renderSessionTabs(); })
+  requestStart(s, 'start')
     .catch((err) => {
       s.running = false;
       s.term.writeln(`\x1b[31mFailed to start "${s.command}" in ${s.directory}\x1b[0m`);
@@ -1410,8 +1435,7 @@ function restartSession(s, { resume = false } = {}) {
   setAsking(s, false);   // the question went with the old screen (and a failed restart writes no output to clear it)
   s.startedTheme = themeName();
   s.act.starting = true;
-  request('restart', { id: s.id, cols: s.term.cols, rows: s.term.rows, theme: s.startedTheme, resume })
-    .then((r) => { if (r?.prompted) s.act.starting = false; s.running = true; s.exitCode = null; renderTileHeader(s); renderSessionTabs(); })
+  requestStart(s, 'restart', { resume })
     .catch((err) => { s.term.writeln(`\x1b[31m${err.message}\x1b[0m`); });
 }
 
@@ -1847,7 +1871,7 @@ function surfaceSize() {
 }
 
 const refit = debounce(() => {
-  for (const s of state.sessions) fitTerm(s);
+  for (const s of state.sessions) { fitTerm(s); syncPtySize(s); }
 }, 60);
 
 function layout(instant = false) {
