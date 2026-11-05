@@ -8129,6 +8129,10 @@ function applyNavLayout(render = true) {
   const top = state.navLayout === 'top', left = state.navLayout === 'left';
   document.body.dataset.nav = state.navLayout;
   document.body.classList.toggle('no-nav-branches', !state.navBranches);
+  // In Left the tab row runs across the side panel too (a grid row of #main), so these stay put as it opens and closes.
+  const docRow = $('#docTools').parentElement;
+  if (left) $('#main').prepend(docRow);
+  else $('#stage').prepend(docRow);
   if (left) $('#docTools').append($('#btnUpdate'), $('#pluginButtons'), $('#btnGit').parentElement, $('#appVersion'), $('#btnTheme'));
   else {
     $('#titlebar').append($('#btnUpdate'), $('#btnAdd'), $('#btnGit').parentElement, $('#pluginButtons'));   // as index.html has them
