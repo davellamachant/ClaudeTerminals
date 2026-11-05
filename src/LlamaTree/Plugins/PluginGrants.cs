@@ -30,6 +30,9 @@ internal sealed class PluginGrants
     private readonly Lock gate = new();
     private readonly Dictionary<string, PluginGrant> grants;
 
+    /// <summary>Each plugin's plugin.json hash at the last <see cref="Reconcile"/>: null until the plugins are first read.</summary>
+    private Dictionary<string, string>? catalog;
+
     /// <param name="path">Where they're kept; null keeps them in memory only (tests).</param>
     public PluginGrants(string? path)
     {
@@ -50,15 +53,28 @@ internal sealed class PluginGrants
         get { lock (gate) return grants.Count == 0; }
     }
 
-    /// <summary>"allow", "deny" or "ask".</summary>
+    /// <summary>
+    /// "allow", "deny" or "ask". Allowed only by an answer that remembers a plugin.json, and (once the plugins have been read)
+    /// the one the plugin has now, so a grant <see cref="Reconcile"/> hasn't yet checked is never taken as allowed.
+    /// </summary>
     public string State(string id, string kind)
     {
         lock (gate)
         {
             var g = grants.GetValueOrDefault(id);
-            return g == null ? "ask" : g.Allowed.Contains(kind) ? "allow" : g.Denied.Contains(kind) ? "deny" : "ask";
+            return g == null ? "ask" : g.Allowed.Contains(kind) && Matches(id, g) ? "allow" : g.Denied.Contains(kind) ? "deny" : "ask";
         }
     }
+
+    /// <summary>The kinds it's allowed, as <see cref="State"/> goes by them.</summary>
+    public List<string> Allowed(string id)
+    {
+        lock (gate)
+            return grants.GetValueOrDefault(id) is { } g && Matches(id, g) ? [.. g.Allowed] : [];
+    }
+
+    private bool Matches(string id, PluginGrant g) =>
+        g.Manifest != null && (catalog == null || (catalog.TryGetValue(id, out var hash) && hash == g.Manifest));
 
     /// <summary>Sets what plugin <paramref name="id"/> may do with <paramref name="kind"/>; allowing it records <paramref name="manifest"/>.</summary>
     public void Set(string id, string kind, string state, string? manifest)
@@ -130,14 +146,17 @@ internal sealed class PluginGrants
     /// taken back (asked again, marked <see cref="PluginGrant.Changed"/>). So does one allowed before plugin.json hashes were
     /// kept (no <see cref="PluginGrant.Manifest"/>): its files may have been swapped since, so it isn't trusted with the
     /// plugin.json there now. What it was refused, its projects and hidden sessions stay. Returns the ids of those it took back.
+    /// <paramref name="plugins"/> is every plugin there is: one not among them is allowed nothing until it is.
     /// </summary>
     public List<string> Reconcile(IEnumerable<PluginInfo> plugins)
     {
         var changed = new List<string>();
         lock (gate)
         {
+            catalog = [];
             foreach (var p in plugins)
             {
+                catalog[p.Id] = p.ManifestHash;
                 if (!grants.TryGetValue(p.Id, out var g) || g.Allowed.Count == 0 || g.Manifest == p.ManifestHash) continue;
                 // Changed, or allowed before hashes were kept: either way it's asked again, and allowing it records the hash.
                 grants[p.Id] = g with { Allowed = [], Changed = true };

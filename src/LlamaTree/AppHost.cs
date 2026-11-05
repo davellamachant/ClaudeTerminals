@@ -452,7 +452,7 @@ internal sealed partial class AppHost
         type = "plugins.grants",
         grants = grants.Snapshot().ToDictionary(x => x.Key, x => new
         {
-            allowed = x.Value.Allowed, denied = x.Value.Denied, projects = x.Value.Projects, hidden = x.Value.Hidden, changed = x.Value.Changed,
+            allowed = grants.Allowed(x.Key), denied = x.Value.Denied, projects = x.Value.Projects, hidden = x.Value.Hidden, changed = x.Value.Changed,
         }),
     };
 
@@ -512,6 +512,9 @@ internal sealed partial class AppHost
         panelStore.KeepOwners(order);
         panelStore.Changed += change => RunOnUi(() => Post(PanelsMessage(change)));
         relay.Policy.KeepSessions(order);
+        // Check the answers against the plugins folder before anything goes by them; servers' plugins join at the first
+        // plugins.list, and until then are allowed nothing (PluginGrants.State).
+        grants.Reconcile(PluginCatalog.Load(PluginFolder).Plugins);
         relay.Gate = grants.RelayGate;
         relay.SetPeers(RelayPeers());
         // Answers about plugins change which plugins take part in messages, so the peers are read again too.
