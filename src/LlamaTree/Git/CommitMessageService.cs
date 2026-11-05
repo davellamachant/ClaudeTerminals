@@ -49,8 +49,8 @@ internal static partial class CommitMessageService
         // With nothing staged the index matches HEAD, so the working tree diff is everything Commit All would take
         // (and works before the first commit, unlike diff HEAD). New files aren't in it; a few lines of each are added.
         var diffArgs = staged
-            ? new[] { "diff", "--cached", "--no-ext-diff", "--no-color", "-U3" }
-            : ["diff", "--no-ext-diff", "--no-color", "-U3"];
+            ? new[] { "diff", "--cached", "--no-ext-diff", "--no-textconv", "--no-color", "-U3" }
+            : ["diff", "--no-ext-diff", "--no-textconv", "--no-color", "-U3"];
         var diff = (await GitService.RunAsync(dir, diffArgs, maxOutputBytes: MaxDiffChars * 4)).Text;
         var sb = new StringBuilder(Math.Min(diff.Length, MaxDiffChars));
         Append(sb, diff);
@@ -60,7 +60,7 @@ internal static partial class CommitMessageService
             {
                 if (sb.Length >= MaxDiffChars) break;
                 sb.Append("\n--- new file: ").Append(f.Path).Append('\n');
-                Append(sb, ReadStart(Path.Combine(dir, f.Path)));
+                Append(sb, ReadStart(dir, f.Path));
             }
         }
         var truncated = sb.Length >= MaxDiffChars;
@@ -104,10 +104,15 @@ internal static partial class CommitMessageService
         sb.Append(text.Length <= room ? text : text[..room]);
     }
 
-    private static string ReadStart(string path)
+    /// <summary>
+    /// The start of a new file, for the agent. Only a plain file inside the repository is read: an untracked link
+    /// (notes.txt -> ~/.ssh/id_rsa, say), or a file reached through a linked folder, would send whatever it leads to.
+    /// </summary>
+    internal static string ReadStart(string root, string relativePath)
     {
         try
         {
+            if (!IsPlainFileInside(root, relativePath, out var path)) return "";   // a link, or gone already
             using var reader = new StreamReader(path, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
             var buffer = new char[MaxNewFileChars];
             var read = reader.ReadBlock(buffer, 0, buffer.Length);
@@ -119,6 +124,24 @@ internal static partial class CommitMessageService
         {
             return "";   // a folder (submodule), or gone already
         }
+    }
+
+    /// <summary>
+    /// The path is below <paramref name="root"/> once resolved, and neither the file nor any folder between it and the
+    /// root is a link (a symbolic link, junction or other reparse point).
+    /// </summary>
+    private static bool IsPlainFileInside(string root, string relativePath, out string fullPath)
+    {
+        var rootFull = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+        fullPath = Path.GetFullPath(Path.Combine(rootFull, relativePath));
+        var comparison = OperatingSystem.IsWindows() || OperatingSystem.IsMacOS() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        if (!fullPath.StartsWith(rootFull + Path.DirectorySeparatorChar, comparison)) return false;
+        for (var p = fullPath; p.Length > rootFull.Length; p = Path.GetDirectoryName(p)!)
+        {
+            FileSystemInfo info = p == fullPath ? new FileInfo(p) : new DirectoryInfo(p);
+            if (info.Attributes is var a && ((int)a == -1 || a.HasFlag(FileAttributes.ReparsePoint)) || info.LinkTarget != null) return false;
+        }
+        return true;
     }
 
     /// <summary>Drops code fences or quotes the model sometimes wraps the message in.</summary>

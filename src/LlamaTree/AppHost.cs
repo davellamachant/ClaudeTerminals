@@ -1623,7 +1623,7 @@ internal sealed partial class AppHost
                 var host = await PullRequestService.GetHostAsync(root, branch);
                 if (host == null) return null;
                 PullRequestInfo? pr = null;
-                try { pr = await PullRequestService.FindAsync(root, host, branch); }
+                try { pr = await PullRequestService.FindAsync(host, branch); }
                 catch (Exception) { /* offline, timed out or refused: just no chip */ }
                 return new
                 {
