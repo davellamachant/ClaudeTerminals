@@ -121,7 +121,7 @@ public sealed class TelemetryServiceTests : IDisposable
         Assert.True(await TelemetryService.PingIfDueAsync(Usage, folder, server.Url, Now));
         var request = Assert.Single(server.Requests);
         var os = Environment.OSVersion.Version;
-        Assert.Equal($"id={yes.Id}&v={UpdateService.CurrentVersion}&os=windows&osv={os.Major}.{os.Minor}.{os.Build}&projects=3&sessions=7", request.Query.TrimStart('?'));
+        Assert.Equal($"id={yes.Id}&v={UpdateService.CurrentVersion}&os={TelemetryService.OsName()}&osv={os.Major}.{Math.Max(os.Minor, 0)}.{Math.Max(os.Build, 0)}&projects=3&sessions=7", request.Query.TrimStart('?'));
         Assert.StartsWith("LlamaTree/", request.UserAgent);
         Assert.Equal(TelemetryService.HourOf(Now), TelemetryService.Load(folder).LastSent);
 
