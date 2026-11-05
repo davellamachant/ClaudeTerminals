@@ -1,4 +1,5 @@
 using System.Text.Json;
+using LlamaTree.Platform;
 
 namespace LlamaTree.Sessions;
 
@@ -65,24 +66,16 @@ internal static class ProjectStore
 
     internal static List<ProjectInfo> Load(string path)
     {
-        try
-        {
-            if (File.Exists(path))
-            {
-                var projects = (JsonSerializer.Deserialize<List<ProjectInfo>>(File.ReadAllText(path)) ?? [])
-                    .Where(p => !string.IsNullOrWhiteSpace(p.Id) && !string.IsNullOrWhiteSpace(p.Name))
-                    .DistinctBy(p => p.Id)
-                    .ToList();
-                // The page puts the colour straight into a style, so only a plain #rrggbb ever reaches it.
-                foreach (var p in projects) p.Color = ProjectInfo.NormalizeColor(p.Color);
-                return projects;
-            }
-        }
-        catch (Exception)
-        {
-            // A corrupt file loses the grouping, never the sessions themselves.
-        }
-        return [];
+        // A corrupt file is set aside and the copy before it used (see JsonFile); at worst it loses the grouping, never
+        // the sessions themselves.
+        var projects = (JsonFile.Read<List<ProjectInfo?>>(path) ?? [])
+            .OfType<ProjectInfo>()
+            .Where(p => !string.IsNullOrWhiteSpace(p.Id) && !string.IsNullOrWhiteSpace(p.Name))
+            .DistinctBy(p => p.Id)
+            .ToList();
+        // The page puts the colour straight into a style, so only a plain #rrggbb ever reaches it.
+        foreach (var p in projects) p.Color = ProjectInfo.NormalizeColor(p.Color);
+        return projects;
     }
 
     public static void Save(IEnumerable<ProjectInfo> projects) => Save(FilePath, projects);
@@ -90,9 +83,7 @@ internal static class ProjectStore
     internal static void Save(string path, IEnumerable<ProjectInfo> projects)
     {
         Platform.PrivateFiles.CreateDirectory(Path.GetDirectoryName(path)!);
-        var temp = path + ".tmp";
-        File.WriteAllText(temp, JsonSerializer.Serialize(projects, Options));
-        File.Move(temp, path, true);
+        JsonFile.Write(path, JsonSerializer.Serialize(projects, Options));
     }
 }
 
@@ -108,25 +99,31 @@ internal static class SessionStore
 
     private static string FilePath => Path.Combine(AppDataFolder, "sessions.json");
 
-    public static List<SessionInfo> Load()
+    public static List<SessionInfo> Load() => Load(FilePath);
+
+    /// <summary>
+    /// The saved sessions. A corrupt file doesn't stop the app from starting, and isn't saved over: it's set aside and
+    /// the copy before it (sessions.json.bak) used, if there is one (see JsonFile). Entries that are null or have no
+    /// id, folder or command are dropped, as is a second one with the same id.
+    /// </summary>
+    internal static List<SessionInfo> Load(string path)
     {
-        try
-        {
-            if (File.Exists(FilePath))
-                return JsonSerializer.Deserialize<List<SessionInfo>>(File.ReadAllText(FilePath)) ?? [];
-        }
-        catch (Exception)
-        {
-            // A corrupt file should not prevent the app from starting.
-        }
-        return [];
+        var sessions = (JsonFile.Read<List<SessionInfo?>>(path, Options) ?? [])
+            .OfType<SessionInfo>()
+            .Where(s => !string.IsNullOrWhiteSpace(s.Id) && s.Directory != null && s.Command != null)
+            .DistinctBy(s => s.Id)
+            .ToList();
+        foreach (var s in sessions) s.Name ??= "";
+        return sessions;
     }
 
     public static void Save(IEnumerable<SessionInfo> sessions)
     {
         Platform.PrivateFiles.CreateDirectory(AppDataFolder);
-        var temp = FilePath + ".tmp";
-        File.WriteAllText(temp, JsonSerializer.Serialize(sessions, Options));
-        File.Move(temp, FilePath, true);
+        Save(FilePath, sessions);
     }
+
+    /// <summary>Writes the sessions in one step, keeping the file they replace as sessions.json.bak.</summary>
+    internal static void Save(string path, IEnumerable<SessionInfo> sessions) =>
+        JsonFile.Write(path, JsonSerializer.Serialize(sessions, Options));
 }

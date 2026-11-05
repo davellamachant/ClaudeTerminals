@@ -1,4 +1,5 @@
 using System.Text.Json;
+using LlamaTree.Platform;
 
 namespace LlamaTree.Panels;
 
@@ -206,9 +207,7 @@ internal sealed class PanelStore
         try
         {
             Platform.PrivateFiles.CreateDirectory(Path.GetDirectoryName(path)!);
-            var temp = path + ".tmp";
-            File.WriteAllText(temp, JsonSerializer.Serialize(panels, Options));
-            File.Move(temp, path, true);
+            JsonFile.Write(path, JsonSerializer.Serialize(panels, Options));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -216,20 +215,11 @@ internal sealed class PanelStore
         }
     }
 
-    private static List<Panel> Load(string path)
-    {
-        try
-        {
-            if (File.Exists(path))
-                return (JsonSerializer.Deserialize<List<Panel>>(File.ReadAllText(path), Options) ?? [])
-                    .Where(p => !string.IsNullOrEmpty(p.Owner) && !string.IsNullOrEmpty(p.Id) && (p.Markdown != null || p.Items != null || p.Groups != null))
-                    .Select(PanelSpec.Loaded)
-                    .ToList();
-        }
-        catch (Exception)
-        {
-            // A corrupt file loses the panels, nothing else.
-        }
-        return [];
-    }
+    /// <summary>The kept panels. A corrupt file is set aside and the copy before it used (see JsonFile); null entries are dropped.</summary>
+    private static List<Panel> Load(string path) =>
+        (JsonFile.Read<List<Panel?>>(path, Options) ?? [])
+            .OfType<Panel>()
+            .Where(p => !string.IsNullOrEmpty(p.Owner) && !string.IsNullOrEmpty(p.Id) && (p.Markdown != null || p.Items != null || p.Groups != null))
+            .Select(PanelSpec.Loaded)
+            .ToList();
 }

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using LlamaTree.Platform;
 using LlamaTree.Relay;
 
 namespace LlamaTree.Plugins;
@@ -197,16 +198,11 @@ internal sealed class PluginGrants
 
     private static Dictionary<string, PluginGrant> Load(string path)
     {
-        try
-        {
-            if (File.Exists(path) && JsonSerializer.Deserialize<Dictionary<string, PluginGrant>>(File.ReadAllText(path), Options) is { } read)
-                return read.Where(x => !string.IsNullOrEmpty(x.Key) && x.Value != null)
-                    .ToDictionary(x => x.Key, x => x.Value with { Allowed = x.Value.Allowed ?? [], Denied = x.Value.Denied ?? [], Hidden = x.Value.Hidden ?? [] });
-        }
-        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException or NotSupportedException)
-        {
-            // A damaged file loses the answers: every plugin asks again, which is the safe way round.
-        }
+        // A damaged file is set aside and loses the answers: every plugin asks again, which is the safe way round (so not
+        // the older copy, which could hold an answer since taken back).
+        if (JsonFile.Read<Dictionary<string, PluginGrant>>(path, Options, useBackup: false) is { } read)
+            return read.Where(x => !string.IsNullOrEmpty(x.Key) && x.Value != null)
+                .ToDictionary(x => x.Key, x => x.Value with { Allowed = x.Value.Allowed ?? [], Denied = x.Value.Denied ?? [], Hidden = x.Value.Hidden ?? [] });
         return [];
     }
 

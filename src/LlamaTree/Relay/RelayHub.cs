@@ -1,4 +1,5 @@
 using System.Text.Json;
+using LlamaTree.Platform;
 
 namespace LlamaTree.Relay;
 
@@ -90,18 +91,18 @@ internal sealed class RelayHub
 
     private void Load(string file)
     {
-        try
-        {
-            if (!File.Exists(file) || JsonSerializer.Deserialize<Kept>(File.ReadAllText(file), FileOptions) is not { } kept) return;
-            foreach (var (id, list) in kept.Inboxes ?? []) if (list?.Count > 0) inboxes[id] = list;
-            foreach (var w in kept.Waiting ?? []) if (w.Messages?.Count > 0) waiting[(w.From, w.To)] = w.Messages;
-            log.AddRange((kept.Log ?? []).TakeLast(MaxLog));
-        }
-        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException or NotSupportedException)
-        {
-            // A damaged file loses the messages kept, not the app.
-        }
+        // A damaged file is set aside and loses the messages kept, not the app (and not the older copy, which would hand
+        // over again messages already read). Null entries, and messages without an id, sender or recipient, are dropped.
+        if (JsonFile.Read<Kept>(file, FileOptions, useBackup: false) is not { } kept) return;
+        foreach (var (id, list) in kept.Inboxes ?? [])
+            if (Whole(list) is { Count: > 0 } messages) inboxes[id] = messages;
+        foreach (var w in kept.Waiting ?? [])
+            if (w is { From: not null, To: not null } && Whole(w.Messages) is { Count: > 0 } messages) waiting[(w.From, w.To)] = messages;
+        log.AddRange((kept.Log ?? []).Where(e => e?.Message is { Id: not null, From: not null, To: not null }).TakeLast(MaxLog));
     }
+
+    private static List<RelayMessage> Whole(List<RelayMessage>? messages) =>
+        (messages ?? []).Where(m => m is { Id: not null, From: not null, To: not null }).ToList();
 
     /// <summary>Writes what's kept a moment after the last change, so a burst of messages is written once.</summary>
     private void ScheduleSave()

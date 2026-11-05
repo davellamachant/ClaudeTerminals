@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using LlamaTree.Platform;
 
 namespace LlamaTree.Relay;
 
@@ -98,17 +99,11 @@ internal sealed class ControlPolicy
 
     private static List<ControlRule> Load(string path)
     {
-        try
-        {
-            if (File.Exists(path) && JsonSerializer.Deserialize<List<ControlRule>>(File.ReadAllText(path), Options) is { } list)
-                return list.Where(r => !string.IsNullOrWhiteSpace(r.Scope) && r.Decision != RelayDecision.Ask)
-                    .DistinctBy(r => (r.Ability, r.Scope)).ToList();
-        }
-        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException or NotSupportedException)
-        {
-            // A damaged file loses the rules: starting sessions asks again, which is the safe way round.
-        }
-        return [];
+        // A damaged file is set aside and loses the rules: starting sessions asks again, which is the safe way round (so
+        // not the older copy, which could hold a rule since taken back). Null rules are dropped.
+        return (JsonFile.Read<List<ControlRule>>(path, Options, useBackup: false) ?? [])
+            .Where(r => r != null && !string.IsNullOrWhiteSpace(r.Scope) && r.Decision != RelayDecision.Ask)
+            .DistinctBy(r => (r.Ability, r.Scope)).ToList();
     }
 
     private void Save()
