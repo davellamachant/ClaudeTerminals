@@ -76,7 +76,7 @@ internal static partial class PullRequestService
     {
         var remote = branch != null ? (await GitService.RunAsync(root, ["config", "--get", $"branch.{branch}.remote"])).Text.Trim() : "";
         if (remote.Length == 0 || remote == ".") remote = "origin";
-        var url = await GitService.RunAsync(root, ["remote", "get-url", remote]);
+        var url = await GitService.RunAsync(root, ["remote", "get-url", "--end-of-options", remote]);
         return url.Ok ? ParseRemote(url.Text) : null;
     }
 
