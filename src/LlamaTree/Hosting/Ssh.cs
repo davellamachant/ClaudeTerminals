@@ -39,12 +39,14 @@ internal sealed class Ssh
 
     /// <summary>
     /// The same on a Windows server, for cmd (the shell Windows' OpenSSH Server runs commands with): LlamaTree where
-    /// its setup puts it, for this user (the default) or for everyone. Its own process is the bridge, as with exec in sh.
+    /// its setup puts it, for this user (the default) or for everyone, under its name or (an install updated since the
+    /// rename keeps its folder) Claude Terminals. Its exit code is the bridge command's.
     /// </summary>
     internal const string WindowsRemoteCommand =
-        "if exist \"%LOCALAPPDATA%\\Programs\\LlamaTree\\LlamaTree.exe\" (\"%LOCALAPPDATA%\\Programs\\LlamaTree\\LlamaTree.exe\" --attach) " +
-        "else if exist \"%ProgramFiles%\\LlamaTree\\LlamaTree.exe\" (\"%ProgramFiles%\\LlamaTree\\LlamaTree.exe\" --attach) " +
-        "else (echo " + NotInstalledMessage + " 1>&2& exit /b 127)";
+        "(for %d in (\"%LOCALAPPDATA%\\Programs\\LlamaTree\" \"%LOCALAPPDATA%\\Programs\\Claude Terminals\" " +
+        "\"%ProgramFiles%\\LlamaTree\" \"%ProgramFiles%\\Claude Terminals\") do " +
+        "@if exist \"%~d\\LlamaTree.exe\" (\"%~d\\LlamaTree.exe\" --attach & exit /b)) & " +
+        "echo " + NotInstalledMessage + " 1>&2& exit /b 127";
 
     /// <summary>Servers found to run Windows (by what the bridge command said there): they're sent its cmd form.</summary>
     private static readonly ConcurrentDictionary<string, bool> windowsServers = new(StringComparer.OrdinalIgnoreCase);

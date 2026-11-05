@@ -52,15 +52,17 @@ public sealed class WindowsServerTests
         finally { Directory.Delete(empty, true); }
     }
 
-    [Fact]
-    public void The_bridge_command_for_Windows_runs_LlamaTree_attach_on_the_connection()
+    [Theory]
+    [InlineData("LlamaTree")]
+    [InlineData("Claude Terminals")]   // installed before the rename, and updated since: setup keeps the folder
+    public void The_bridge_command_for_Windows_runs_LlamaTree_attach_on_the_connection(string installedIn)
     {
         if (!OperatingSystem.IsWindows()) return;
         var folder = Directory.CreateTempSubdirectory("lt-win-").FullName;
         try
         {
             // A stand-in for LlamaTree.exe: a copy of cmd, which runs what comes down the connection (and ignores --attach).
-            var app = Path.Combine(folder, "Programs", "LlamaTree");
+            var app = Path.Combine(folder, "Programs", installedIn);
             Directory.CreateDirectory(app);
             File.Copy(Path.Combine(Environment.SystemDirectory, "cmd.exe"), Path.Combine(app, "LlamaTree.exe"));
             var (code, output, _) = RunBridgeCommand(folder, "echo through the pipe\r\nexit 7\r\n");

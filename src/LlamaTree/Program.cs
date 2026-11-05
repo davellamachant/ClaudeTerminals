@@ -12,6 +12,8 @@ static class Program
     static int Main(string[] args)
     {
         // The session host: the sessions themselves, without a window (started by the window; see SessionHost).
+        // --data: a separate profile's, from a starter that can't pass LLAMATREE_DATA (see WindowsHostStart).
+        if (args is ["--host", "--data", { Length: > 0 } data, ..]) Environment.SetEnvironmentVariable("LLAMATREE_DATA", data);
         if (args is ["--host", ..]) return Hosting.SessionHost.Run();
         // On a server, over SSH: the connection between a window elsewhere and this machine's session host (see HostBridge).
         if (args is ["--attach", ..]) return Hosting.HostBridge.Run();

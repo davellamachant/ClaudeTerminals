@@ -69,6 +69,9 @@ That opens a window for just that server's sessions. They run on the server, in 
 
 If you work across several Windows PCs, any of them can be the server: a desktop's sessions, from your laptop. Windows has an SSH server built in, *OpenSSH Server*, which is all it needs.
 
+> [!IMPORTANT]
+> The server PC's account must be a **local account, a Microsoft account, or an on-premises domain account**. Windows' SSH server can't sign in a Microsoft Entra ID (work or school, "AzureAD\…") account with a key, and LlamaTree only signs in with one.
+
 On the PC that will be the server:
 
 1. **Turn on OpenSSH Server.** In PowerShell, as administrator:

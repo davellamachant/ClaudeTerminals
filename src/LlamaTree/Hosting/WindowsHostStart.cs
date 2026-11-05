@@ -26,19 +26,23 @@ internal static class WindowsHostStart
 
     /// <summary>
     /// Asks Task Scheduler to start the host in your desktop session. True if it took the task; whether the host then
-    /// starts shows by its answering (it doesn't when you aren't signed in there). Only for the usual profile: a task
-    /// doesn't carry LLAMATREE_DATA.
+    /// starts shows by its answering (it doesn't when you aren't signed in there). A task doesn't carry LLAMATREE_DATA,
+    /// so a separate profile's folder goes on its command line instead (--data).
     /// </summary>
     public static bool InDesktopSession()
     {
-        if (AppProfile.InstanceSuffix.Length > 0) return false;
         var exe = Environment.ProcessPath;
         var sid = System.Security.Principal.WindowsIdentity.GetCurrent().User?.Value;
         if (exe == null || sid == null) return false;
+        // LLAMATREE_HOST_START=job: never in the desktop session, for testing the start outside the job.
+        if (Environment.GetEnvironmentVariable("LLAMATREE_HOST_START") == "job") return false;
+        var data = AppProfile.CustomFolder?.TrimEnd('\\');   // a backslash before the closing quote would escape it
+        if (data != null && data.Contains('"')) return false;
+        var arguments = data is { Length: > 0 } ? $"--host --data \"{data}\"" : "--host";
         var xml = Path.Combine(Path.GetTempPath(), $"llamatree-host-task-{Guid.NewGuid():N}.xml");
         try
         {
-            File.WriteAllText(xml, TaskXml(exe, sid), Encoding.Unicode);
+            File.WriteAllText(xml, TaskXml(exe, sid, arguments), Encoding.Unicode);
             // Made again each time (/F), so it always starts this LlamaTree, wherever it's installed now.
             return Schtasks("/Create", "/TN", TaskName, "/XML", xml, "/F") && Schtasks("/Run", "/TN", TaskName);
         }
@@ -51,7 +55,7 @@ internal static class WindowsHostStart
     /// elevation), on demand only (no trigger), with no time limit and at normal priority (a task's default would end
     /// the host after three days, and run it below normal).
     /// </summary>
-    internal static string TaskXml(string exe, string sid) => $"""
+    internal static string TaskXml(string exe, string sid, string arguments = "--host") => $"""
         <?xml version="1.0" encoding="UTF-16"?>
         <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
           <RegistrationInfo>
@@ -79,7 +83,7 @@ internal static class WindowsHostStart
           <Actions Context="Author">
             <Exec>
               <Command>{SecurityElement.Escape(exe)}</Command>
-              <Arguments>--host</Arguments>
+              <Arguments>{SecurityElement.Escape(arguments)}</Arguments>
               <WorkingDirectory>{SecurityElement.Escape(Path.GetDirectoryName(exe) ?? "")}</WorkingDirectory>
             </Exec>
           </Actions>
