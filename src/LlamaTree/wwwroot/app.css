@@ -760,6 +760,7 @@ textarea.commit-msg { resize: vertical; min-height: 54px; height: 54px; user-sel
 .modal-body { padding: 10px 18px; overflow: auto; display: flex; flex-direction: column; gap: 12px; }
 .modal-footer { padding: 12px 18px 16px; display: flex; justify-content: flex-end; gap: 8px; }
 .name-list { margin: 0; padding-left: 22px; font-weight: 600; }
+.link-confirm-url { margin-top: -8px; padding: 4px 8px; border-radius: 4px; background: var(--code-bg); font-family: "Cascadia Mono", Consolas, Menlo, "DejaVu Sans Mono", monospace; word-break: break-all; user-select: text; }
 .field { display: flex; flex-direction: column; gap: 4px; }
 .check-field { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
 .field label { color: var(--text-dim); }

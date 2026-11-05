@@ -1183,8 +1183,9 @@ internal sealed partial class AppHost
                 return null;
             case "plugins.grants.import":
             {
-                // Answers the page kept itself before they were kept here; taken only into an empty store.
-                if (!msg.TryGetProperty("grants", out var g) || g.ValueKind != JsonValueKind.Object) return null;
+                // Answers the page kept itself before they were kept here; taken only into an empty store. Never from a
+                // --remote window: what its page kept is about the plugins on that computer, not this one's of the same id.
+                if (Remote != null || !msg.TryGetProperty("grants", out var g) || g.ValueKind != JsonValueKind.Object) return null;
                 List<string> List(JsonElement e, string name) => e.TryGetProperty(name, out var a) && a.ValueKind == JsonValueKind.Array
                     ? a.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!).ToList() : [];
                 grants.Import(g.EnumerateObject().Where(p => p.Value.ValueKind == JsonValueKind.Object).ToDictionary(p => p.Name, p => new PluginGrant(

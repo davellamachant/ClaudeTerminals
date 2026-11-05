@@ -123,8 +123,9 @@ internal sealed class HostLink
         link.Send(LinkKind.Hello, JsonSerializer.Serialize(new
         {
             // A window on another computer: the host can't wait for its process (and sends it its plugins' files to serve).
+            // Their addresses are made from ids of their own here (see ServedId), never a plugin of this computer's.
             pid = Remote == null ? Environment.ProcessId : (int?)null,
-            plugins = new { origin = window.Plugins.Origin, key = window.Plugins.Key },
+            plugins = new { origin = window.Plugins.Origin, key = window.Plugins.Key, namespaced = Remote != null },
             remote = Remote,
         }, JsonOptions));
         window.RunOnUi(() =>
@@ -316,7 +317,8 @@ internal sealed class HostLink
         {
             try
             {
-                if (kind == LinkKind.Page) window.PostJson(json);
+                // A server's host says what it likes: its colours are checked before the page puts them in a style.
+                if (kind == LinkKind.Page) window.PostJson(Remote != null ? ServerColors.Sanitize(json) : json);
                 else DoWindowOp(link, json);
             }
             finally { done?.Invoke(); }
@@ -348,14 +350,15 @@ internal sealed class HostLink
                     break;
                 case "serve":
                 {
-                    // A server's plugin is served from the copy of its folder it has just sent (see ServerCopies).
+                    // A server's plugin is served from the copy of its folder it has just sent (see ServerCopies), under
+                    // an id of its own (see ServedId).
                     var id = Str(op, "id");
                     if (Remote == null) window.ServePlugin(id, Str(op, "folder"));
-                    else if (Plugins.PluginCatalog.IsValidId(id) && Directory.Exists(Copies.PluginFolder(id))) window.ServePlugin(id, Copies.PluginFolder(id));
+                    else if (Plugins.PluginCatalog.IsValidId(id) && Directory.Exists(Copies.PluginFolder(id))) window.ServePlugin(ServedId(id), Copies.PluginFolder(id));
                     break;
                 }
                 case "unserve":
-                    window.StopServingPlugin(Str(op, "id"));
+                    window.StopServingPlugin(ServedId(Str(op, "id")));
                     if (Remote != null) Copies.PluginGone(Str(op, "id"));
                     break;
                 // A server's files: one to open here, or a plugin's.
@@ -470,6 +473,14 @@ internal sealed class HostLink
     /// </summary>
     public static string RemoteKey(string remote) =>
         Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(remote.ToLowerInvariant())))[..16];
+
+    /// <summary>
+    /// The id this window serves a plugin under: a server's plugin gets one of its own (see
+    /// <see cref="PluginAddressing.RemoteId"/>), so it never shares an address with this computer's plugin of the same id
+    /// (the windows share one web view profile). The server's host makes its address from the same id (the hello's
+    /// "namespaced").
+    /// </summary>
+    private static string ServedId(string pluginId) => Remote is { } r ? PluginAddressing.RemoteId(r, pluginId) : pluginId;
 
     /// <summary>This window's copies of the server's files (see <see cref="ServerCopies"/>).</summary>
     private ServerCopies Copies => copies ??= new ServerCopies(Path.Combine(AppProfile.CustomFolder ?? AppProfile.LocalFolder, "servers", RemoteKey(Remote!)));

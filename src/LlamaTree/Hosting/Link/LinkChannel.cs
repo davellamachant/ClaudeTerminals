@@ -237,7 +237,7 @@ internal sealed class LinkChannel : IDisposable
 /// <summary>What a line on a <see cref="LinkChannel"/> is.</summary>
 internal static class LinkKind
 {
-    /// <summary>Window → host, first: { pid, plugins: { origin, key } } (see <see cref="PluginAddressing"/>).</summary>
+    /// <summary>Window → host, first: { pid, plugins: { origin, key, namespaced }, remote } (see <see cref="PluginAddressing"/>).</summary>
     public const char Hello = 'H';
 
     /// <summary>Either way: a message for or from the app page, as the page sends and reads them.</summary>
