@@ -835,9 +835,10 @@ internal sealed partial class AppHost
             {
                 var s = Get(msg);
                 tails[s.Id].Clear();
+                var prompted = s.FirstPromptOnce != null;   // starts on a prompt: its first output is work, not start-up
                 s.Start(Int(msg, "cols"), Int(msg, "rows"), OptStr(msg, "theme"), PanelLinkFor(s));
                 RunningChanged?.Invoke();
-                return null;
+                return new { prompted };
             }
             case "input":
                 Get(msg).Write(Str(msg, "data"));
@@ -867,9 +868,10 @@ internal sealed partial class AppHost
                     s.ResumeOnce = live;
                 s.Stop();
                 tails[s.Id].Clear();
+                var prompted = s.FirstPromptOnce != null;
                 s.Start(Int(msg, "cols"), Int(msg, "rows"), OptStr(msg, "theme"), PanelLinkFor(s));
                 RunningChanged?.Invoke();
-                return null;
+                return new { prompted };
             }
             case "app.closeInfo":
             {

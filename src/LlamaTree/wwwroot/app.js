@@ -277,6 +277,7 @@ const state = {
   // Where projects and sessions go (see NAV_LAYOUTS): 'top', 'hybrid' (projects on the left) or 'left' (both, as a tree).
   navLayout: ['hybrid', 'left'].includes(store.get('navLayout')) ? store.get('navLayout') : 'top',
   navWidth: store.get('navWidth', 230),
+  navBranches: store.get('navBranches', true),   // each session's branch beneath its name, down the left
 };
 
 // ------------------------------------------------------------------ projects: which sessions are visible
@@ -474,9 +475,10 @@ function renderNav() {
       ? h('div', { class: 'nav-sessions unnamed' }, shown.map(tabOf), sessionPlus(shown, 'like these'))
       : h('div', { class: 'nav-hint' }, 'Projects group your sessions, so you can show and hide them together.'));
   }
-  fill($('#navHead'), h('span', { class: 'project-bar-label' }, 'Projects'), h('span', { class: 'spacer' }), projectAllButtons(groups));
+  // In Left there's no title bar (see applyNavLayout): All sessions heads the bar, and New Session joins + Project.
+  fill($('#navHead'), tree && $('#btnGrid'), h('span', { class: 'project-bar-label' }, 'Projects'), h('span', { class: 'spacer' }), projectAllButtons(groups));
   fill($('#navList'), rows);
-  fill($('#navFoot'), projectAddButton());
+  fill($('#navFoot'), tree && $('#btnAdd'), projectAddButton());
   syncStatus($('#navList'));
   if (tree) revealActive($('#navList'), '.session-tab.active');
 }
@@ -1087,15 +1089,17 @@ function createSession(info) {
       return;
     }
     s.act.lastIn = performance.now();
+    // Enter gives it something to do. Not just any input: xterm answers the terminal's own queries (which Claude sends
+    // as it starts) through here too.
+    if (data.includes('\r')) s.act.starting = false;
     post({ type: 'input', id: s.id, data });
   });
   term.onResize(({ cols, rows }) => { if (s.running) post({ type: 'resize', id: s.id, cols, rows }); });
   term.onTitleChange((t) => { s.title = t; renderTileHeader(s); });
-  // Some agents (Codex) report what they're doing in an OSC 7501 sequence, "state=working:app=codex", with state=blocked
-  // while they wait on an answer from you. A session that reports it is taken at its word rather than read off the screen.
+  // Some agents (Codex) report what they're doing in an OSC 7501 sequence, "state=working:app=codex" (see reportState).
   term.parser.registerOscHandler(7501, (data) => {
     const reported = /(?:^|:)state=([a-z]+)/.exec(data)?.[1];
-    if (reported) { s.reportsState = true; setAsking(s, reported === 'blocked'); }
+    if (reported) reportState(s, reported);
     return true;
   });
   term.onBell(() => { if (state.expandedId !== s.id) setAttention(s, true); });
@@ -1157,8 +1161,9 @@ function startSession(s) {
   s.startsOnOpen = false;
   fitTerm(s);
   s.startedTheme = themeName();
+  s.act.starting = true;
   request('start', { id: s.id, cols: s.term.cols, rows: s.term.rows, theme: s.startedTheme })
-    .then(() => { s.running = true; s.exitCode = null; renderTileHeader(s); renderSessionTabs(); })
+    .then((r) => { if (r?.prompted) s.act.starting = false; s.running = true; s.exitCode = null; renderTileHeader(s); renderSessionTabs(); })
     .catch((err) => {
       s.running = false;
       s.term.writeln(`\x1b[31mFailed to start "${s.command}" in ${s.directory}\x1b[0m`);
@@ -1176,8 +1181,9 @@ function restartSession(s, { resume = false } = {}) {
   s.term.reset();
   setAsking(s, false);   // the question went with the old screen (and a failed restart writes no output to clear it)
   s.startedTheme = themeName();
+  s.act.starting = true;
   request('restart', { id: s.id, cols: s.term.cols, rows: s.term.rows, theme: s.startedTheme, resume })
-    .then(() => { s.running = true; s.exitCode = null; renderTileHeader(s); renderSessionTabs(); })
+    .then((r) => { if (r?.prompted) s.act.starting = false; s.running = true; s.exitCode = null; renderTileHeader(s); renderSessionTabs(); })
     .catch((err) => { s.term.writeln(`\x1b[31m${err.message}\x1b[0m`); });
 }
 
@@ -1198,7 +1204,8 @@ function onReplay(id, data) {
   const s = state.byId.get(id);
   if (!s) return;
   fitTerm(s);   // at its real size first: the output's cursor moves assume the width it was written at
-  s.term.write(data, () => { s.act.drawnAt = performance.now(); });
+  s.replaying = true;   // the states it reported back then are taken, but a turn it finished then doesn't flag it now
+  s.term.write(data, () => { s.act.drawnAt = performance.now(); s.replaying = false; });
 }
 
 function onExited(id, code) {
@@ -1215,12 +1222,32 @@ function onExited(id, code) {
   renderSessionTabs();
 }
 
+/**
+ * What an agent that reports its state (OSC 7501: Codex) says it's doing, taken at its word instead of being guessed
+ * from its output: "working" while it works; "done" when it finishes a turn, which is your turn (flagged as waiting for
+ * you unless you're looking at it); "idle" when it's ready without having worked (it has just started); "blocked" while
+ * it waits on your answer to a question or approval.
+ */
+function reportState(s, reported) {
+  s.reportsState = true;
+  const a = s.act, was = a.state;
+  a.starting = false;
+  if (reported === 'working') {
+    if (was !== 'working') { a.state = 'working'; a.workingSince = performance.now(); }
+  } else a.state = 'idle';
+  setAsking(s, reported === 'blocked');
+  if (reported === 'working' && s.attention) setAttention(s, false);
+  else if (reported === 'done' && was === 'working' && !s.replaying && state.expandedId !== s.id) setAttention(s, true);
+  else if (a.state !== was) renderTileState(s);
+}
+
 // Activity: Claude's spinner redraws continuously while it works and goes quiet when it is waiting on
-// you, so a sustained burst of output followed by silence means "your turn" → flag the tile.
+// you, so a sustained burst of output followed by silence means "your turn" → flag the tile. Not for an agent that
+// reports its state (see reportState).
 function noteActivity(s) {
   const now = performance.now();
   const a = s.act;
-  if (now - a.lastIn < 400) { a.lastOut = now; return; }   // echo of our own typing
+  if (now - a.lastIn < 400 || s.reportsState) { a.lastOut = now; return; }   // echo of our own typing
   if (a.state !== 'working') {
     if (now - a.lastOut > 1500) a.burstStart = now;
     if (now - a.burstStart > 1200) {
@@ -1242,9 +1269,13 @@ setInterval(() => {
   const now = performance.now();
   for (const s of state.sessions) {
     const a = s.act;
-    if (a.state === 'working' && now - a.lastOut > 2500) {
+    if (a.state === 'working' && !s.reportsState && now - a.lastOut > 2500) {
       a.state = 'idle';
-      if (now - a.workingSince > 4000 && state.expandedId !== s.id) setAttention(s, true);
+      // The output a program writes as it starts (Claude's start-up, a dev server's build) isn't a turn finished: it's
+      // ready, not waiting for you. Once it's been given something to do (see term.onData), quiet means your turn.
+      const startUp = a.starting;
+      a.starting = false;
+      if (!startUp && now - a.workingSince > 4000 && state.expandedId !== s.id) setAttention(s, true);
       else renderTileState(s);
     }
     // Once the screen has settled after new output has been drawn (mid-redraw it can be half drawn), see whether the
@@ -1256,6 +1287,12 @@ setInterval(() => {
     }
   }
 }, 500);
+
+/** Presses Enter in the session for LlamaTree (sending a prompt or a notice typed into it): it now has something to do. */
+function pressEnter(s) {
+  s.act.starting = false;
+  post({ type: 'input', id: s.id, data: '\r' });
+}
 
 function setAttention(s, on) {
   if (s.attention === on) return;
@@ -1424,7 +1461,7 @@ function renderTileHeader(s) {
 }
 
 function sessionTabTitle(s) {
-  return [s.directory, s.server && serverTitle(serverOf(s)), statusText(s), conversationLine(s), 'Click again to go back to all sessions · middle-click to close'].filter(Boolean).join('\n');
+  return [s.directory, s.git?.branch && `Branch: ${s.git.branch}`, s.server && serverTitle(serverOf(s)), statusText(s), conversationLine(s), 'Click again to go back to all sessions · middle-click to close'].filter(Boolean).join('\n');
 }
 
 /**
@@ -1477,12 +1514,28 @@ function sessionTab(s, i, marks = false) {
     onauxclick: (e) => { if (e.button === 1) confirmRemove(s); },
     oncontextmenu: (e) => { e.preventDefault(); sessionMenu(s, e.clientX, e.clientY, 'sessionTab'); },
   }, h('button', { class: 'tab-label' },
-    statusDot(s), h('span', { class: 'tab-name' }, s.name),
+    statusDot(s),
+    // Down the left, its branch beneath the name.
+    marks ? h('span', { class: 'tab-text' }, h('span', { class: 'tab-name' }, s.name), tabBranch(s)) : h('span', { class: 'tab-name' }, s.name),
     // Down the left, icons for its agent and where it runs; across the top, the server's name for a session on one.
-    marks ? sessionMarks(s) : s.server && h('span', { class: 'tab-server' + (serverDown(s) ? ' down' : ''), title: serverTitle(serverOf(s)) }, iconEl('server'), h('span', {}, serverName(serverOf(s)))),
+    marks ? sessionMarks(s) : s.server &&h('span', { class: 'tab-server' + (serverDown(s) ? ' down' : ''), title: serverTitle(serverOf(s)) }, iconEl('server'), h('span', {}, serverName(serverOf(s)))),
     i < 9 ? h('span', { class: 'key' }, `Ctrl+${i + 1}`) : null),
   // Closing a session tab removes the session, after the same confirmation as "Remove session…".
   h('button', { class: 'icon-btn small tab-close', title: 'Close session…', onclick: () => confirmRemove(s) }, iconEl('close')));
+}
+
+/** The branch the session's folder is on, for its row down the left; always there (empty until Git has said, or outside a repository) so it updates in place. */
+function tabBranch(s) {
+  const b = s.git?.branch || '';
+  return h('span', { class: 'tab-branch' }, b && iconEl('branch'), b && h('span', {}, b));   // empty (and hidden) without one
+}
+
+/** Puts the session's branch on its tabs after a Git status: beneath the name down the left, and in their tooltips. */
+function updateTabBranch(s) {
+  for (const tab of document.querySelectorAll(`.session-tab[data-id="${s.id}"]`)) {
+    tab.title = sessionTabTitle(s);
+    tab.querySelector('.tab-branch')?.replaceWith(tabBranch(s));
+  }
 }
 
 const AGENT_ICONS = { claude: 'agentClaude', codex: 'agentCodex' };   // by AgentProfile.Id
@@ -2677,6 +2730,7 @@ function onGitStatus(m) {
   }
   s.git = m;
   renderTileHeader(s);
+  updateTabBranch(s);
   refreshOpenDiff(s);   // the visible diff follows its own session, whichever one the Git panel shows
   projectViewChanged(s);
   const historyPending = !s.log && !logFailed(s);
@@ -4303,7 +4357,7 @@ function refreshPanel(p) {
   if (owner?.startsOnOpen) { startSession(owner); toast(`Starting "${owner.name}". Refresh again once Claude is up.`); return; }
   if (!owner?.running) { toast(`"${owner?.name ?? 'Its session'}" isn't running, so it can't refresh this panel.`, true); return; }
   post({ type: 'input', id: owner.id, data: p.refresh });
-  setTimeout(() => post({ type: 'input', id: owner.id, data: '\r' }), 150);
+  setTimeout(() => pressEnter(owner), 150);
   toast(`Asked ${owner.name} to refresh "${p.title}".`);
 }
 
@@ -7644,7 +7698,7 @@ function relayNotify(s) {
   const names = [...(relay.from[s.id] ?? [])].map((id) => `"${relayName(id)}"`);
   const text = `[LlamaTree] ${n === 1 ? 'A message has' : `${n} messages have`} come from ${names.length ? names.join(' and ') : 'another session'}. Read ${n === 1 ? 'it' : 'them'} with the read_messages tool, and answer with send_message: the sender doesn't see what you write here.`;
   s.term.paste(text);
-  setTimeout(() => post({ type: 'input', id: s.id, data: '\r' }), 150);
+  setTimeout(() => pressEnter(s), 150);
   setTimeout(() => resendNotice(s, 3), 1500);
 }
 
@@ -7654,7 +7708,7 @@ function relayNotify(s) {
  */
 function resendNotice(s, tries) {
   if (!s.running || performance.now() - s.act.lastIn < 1500 || !noticeInPrompt(s)) return;
-  post({ type: 'input', id: s.id, data: '\r' });
+  pressEnter(s);
   if (tries > 1) setTimeout(() => resendNotice(s, tries - 1), 1500);
 }
 
@@ -7781,7 +7835,7 @@ function controlPrompt(id, text, tries = 0) {
   // The host refuses control characters already; this keeps a paste from ever carrying keys of its own.
   text = text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '');
   s.term.paste(text);
-  setTimeout(() => post({ type: 'input', id, data: '\r' }), 150);
+  setTimeout(() => pressEnter(s), 150);
 }
 
 /** The tile's mark for a session another started: who, opening the starter. */
@@ -8051,6 +8105,7 @@ $('#btnAddEmpty').addEventListener('click', () => showAddDialog());
 makeScrollable($('#projectTabs'));
 makeScrollable($('#sessionTabs'));
 makeScrollable($('#docTabs'), 'doc');
+$('#docTabs').parentElement.append(h('div', { id: 'docTools' }));   // the title bar's buttons, in Left (see applyNavLayout)
 
 /** Moves `id` before or after `targetId` in a list of ids. */
 function moveId(ids, id, targetId, before) {
@@ -8101,15 +8156,26 @@ const NAV_LAYOUTS = [
 ];
 
 /**
- * Applies the layout: Top keeps the two rows of tabs; Hybrid and Left drop the projects row for the bar down the left
- * (see renderNav), and the buttons that row held join the title bar, All sessions first and the version and theme last.
+ * Applies the layout: Top keeps the two rows of tabs; Hybrid drops the projects row for the bar down the left (see
+ * renderNav), and the buttons that row held join the title bar, All sessions first and the version and theme last.
+ * Left drops the title bar too, with no session tabs left in it: All sessions and New Session go to the bar down the
+ * left (renderNav puts them there), and the rest to the end of the tab row above the terminals (#docTools).
  */
 function applyNavLayout(render = true) {
-  const top = state.navLayout === 'top';
+  const top = state.navLayout === 'top', left = state.navLayout === 'left';
   document.body.dataset.nav = state.navLayout;
-  const row = top ? $('#projectBar') : $('#titlebar');
-  row.prepend($('#btnGrid'));
-  row.append($('#appVersion'), $('#btnTheme'));
+  document.body.classList.toggle('no-nav-branches', !state.navBranches);
+  // In Left the tab row runs across the side panel too (a grid row of #main), so these stay put as it opens and closes.
+  const docRow = $('#docTools').parentElement;
+  if (left) $('#main').prepend(docRow);
+  else $('#stage').prepend(docRow);
+  if (left) $('#docTools').append($('#btnUpdate'), $('#pluginButtons'), $('#appVersion'), $('#btnGit').parentElement, $('#btnTheme'));
+  else {
+    $('#titlebar').append($('#btnUpdate'), $('#btnAdd'), $('#btnGit').parentElement, $('#pluginButtons'));   // as index.html has them
+    const row = top ? $('#projectBar') : $('#titlebar');
+    row.prepend($('#btnGrid'));
+    row.append($('#appVersion'), $('#btnTheme'));
+  }
   $('#navBar').style.width = state.navWidth + 'px';
   if (render) applyProjectFilter();   // redraws both bars, and the empty grid's hint says where the projects are
 }
@@ -8123,7 +8189,16 @@ function setNavLayout(id) {
 const navLayoutItems = () => [
   { header: 'Layout' },
   ...NAV_LAYOUTS.map((l) => ({ label: l.label, checked: state.navLayout === l.id, action: () => setNavLayout(l.id) })),
-];
+  // With the sessions down the left, their branches can go (a row each, rather than two).
+  state.navLayout === 'left' && '-',
+  state.navLayout === 'left' && { label: 'Show branches', checked: state.navBranches, action: () => setNavBranches(!state.navBranches) },
+].filter(Boolean);
+
+function setNavBranches(on) {
+  state.navBranches = on;
+  store.set('navBranches', on);
+  document.body.classList.toggle('no-nav-branches', !on);
+}
 
 applyNavLayout(false);   // the bars are filled once the sessions arrive
 
