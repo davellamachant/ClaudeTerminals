@@ -16,7 +16,7 @@ From the palette button at the top right, choose *System*, *Light*, *Dark* or on
 A theme is a JSON file of colours. The app comes with three:
 
 - **Nerds**: everything in shades of your accent colour on near-black, like an old monochrome screen, in a monospaced face with a faint glow. Pick green under *Accent colour* for a phosphor terminal, amber for an old amber one; the whole app recolours as you click. Status, Git's changes and the terminal's colours differ by how light or strong their shade is rather than by hue, and the status dots still differ in shape.
-- **Tron**: the Grid, near-black ruled with light-lines in your accent colour (cyan for the original, red for Ares), with amber for what needs you, mint for what went well and red for what went wrong, in Bahnschrift with a glow and a light-cycle cursor; the terminals and diffs dress to match. Like Nerds it's built from the accent colour, but keeps those signal colours, Git's change colours and the terminal's own sixteen.
+- **Tron**: the Grid, near-black ruled with light-lines in your accent colour (cyan for the original, red for Ares), with amber for what needs you, mint for what went well and red for what went wrong, in Bahnschrift with a glow and a light cycle riding beside the cursor; the terminals and diffs dress to match. Like Nerds it's built from the accent colour, but keeps those signal colours, Git's change colours and the terminal's own sixteen.
 - **Matrix**: green phosphor on black in a monospaced face, with glyphs raining down the window's floor and, dimmed, behind the terminals' text; red for a question.
 
 ### Your own theme
@@ -48,7 +48,7 @@ A theme can set three colours or all of them:
 - **`font`** is a font family for the app's own text (not the terminals'); **`glow`** makes text glow faintly in the accent colour.
 - **`grid`:** `true` rules the window's floor in faint lines of the accent colour, with a glow at the horizon, behind the title bar, tabs and panels and under the terminals' text, as the Tron themes do; editors, menus and cards keep their own backgrounds.
 - **`rain`:** `true` has glyphs rain down the window's floor in the accent colour, as Matrix does, behind the title bar, tabs and panels and, dimmed, under the terminals' text; editors, menus and cards keep their own backgrounds. With Windows' reduce-motion setting on, the rain stands still.
-- **`cursor`:** `"light-cycle"` makes the terminals' cursor a light cycle, as in the Tron themes: it glows in the terminal's cursor colour and leaves a ribbon of light fading behind it as it moves, turning at right angles when it changes line. Leave it out for the plain cursor. With Windows' reduce-motion setting on, the glow stays and the ribbon doesn't.
+- **`cursor`:** `"light-cycle"` puts a light cycle beside the terminals' cursor, as in the Tron themes: it rides a little to the right of the cursor (which stays a blinking bar in the cursor colour, so you can see where you're typing and whether the terminal has focus; the cycle dims while it hasn't), glows in that colour and leaves a ribbon of light fading behind it as it moves, turning at right angles when it changes line. Leave it out for the plain cursor. With Windows' reduce-motion setting on, the glow stays and the ribbon doesn't.
 
 A theme is only data: the app takes the names above and checks each value, so it can't restyle anything else or load anything. A file it can't use, or a value it leaves out, is listed under *Why?* in the palette menu.
 
