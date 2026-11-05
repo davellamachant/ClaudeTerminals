@@ -1,3 +1,7 @@
+<p align="center">
+    <img alt="LlamaTree" src="../docs/brand/LlamaTree-Logo-Light.svg" width="360">
+</p>
+
 # Plugins
 
 The plugins for LlamaTree, one folder each. A plugin is a web page shown in a tab or in the side panel; it runs sandboxed on an address of its own and sees nothing of your sessions until you allow what its manifest asks for. See [Plugins](../README.md#plugins) in the app's README for what a plugin can do and the messages it exchanges with the app.
@@ -14,6 +18,13 @@ The plugins for LlamaTree, one folder each. A plugin is a web page shown in a ta
 <!-- plugins:end -->
 
 The table is written by `node plugins/tools/catalog.mjs --readme` from each plugin's `plugin.json`; the version links to its release.
+
+<table>
+  <tr>
+    <td width="62%"><a href="../docs/images/overview.png"><img src="../docs/images/overview.png" alt="The LlamaTree window: sessions as tiles, grouped by project, with Git Changes on the right"></a><br><sub>LlamaTree, where a plugin shows in a tab or in the side panel beside Git Changes.</sub></td>
+    <td width="38%"><a href="../docs/images/plugin-messenger.png"><img src="../docs/images/plugin-messenger.png" alt="Messenger in the side panel: a conversation with the Roster night shift session, and a note that another session sent it a message"></a><br><sub>Messenger in the side panel, talking to a session.</sub></td>
+  </tr>
+</table>
 
 ## Installing one
 

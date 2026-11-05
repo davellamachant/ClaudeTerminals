@@ -2,6 +2,8 @@
 
 Send a message to a Claude or Codex session and see its answer, or read the messages sessions send to the plugin. It shows in the side panel, beside Git Changes.
 
+![Messenger in the side panel: a session picked at the top, your messages on the right and its answers on the left, and a note that another session sent Messenger a message](../../docs/images/plugin-messenger.png)
+
 ## Using it
 
 - Open it from the palette button, under **Plugins**, or right-click a session's tab (or open its ⋯ menu) and choose **Message this session**, which opens Messenger with that session picked.
