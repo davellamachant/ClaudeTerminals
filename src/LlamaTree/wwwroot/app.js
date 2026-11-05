@@ -5908,6 +5908,7 @@ function applyTheme(before = null) {
   const look = themeLook();
   store.set('themeLook', look);   // so it paints at once on the next start
   markTheme(look);
+  syncVeilSliders();   // the new theme's amount (its own, or yours for it)
   for (const s of state.sessions) lightCycle(s, look?.cursor === 'light-cycle');   // sets the terminal's colours either way
   if (window.monaco) monaco.editor.setTheme(diffTheme(look));
   applyAccent();
