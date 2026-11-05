@@ -306,8 +306,19 @@ internal sealed class HostLink
     private void OnHostMessage(LinkChannel link, char kind, string json)
     {
         if (kind == LinkKind.Page && TakeOwnReply(json)) return;
-        if (kind == LinkKind.Page) window.RunOnUi(() => window.PostJson(json));
-        else if (kind == LinkKind.Window) window.RunOnUi(() => DoWindowOp(link, json));
+        if (kind != LinkKind.Page && kind != LinkKind.Window) return;
+        // A server sending faster than the window takes it in is made to wait, rather than the window filling up (see
+        // LinkChannel.Hold). This computer's host isn't: it would end the connection instead (see LinkChannel.MaxOutbox).
+        var done = Remote != null ? link.Hold(json.Length) : null;
+        window.RunOnUi(() =>
+        {
+            try
+            {
+                if (kind == LinkKind.Page) window.PostJson(json);
+                else DoWindowOp(link, json);
+            }
+            finally { done?.Invoke(); }
+        });
     }
 
     private void DoWindowOp(LinkChannel link, string json)
@@ -320,6 +331,9 @@ internal sealed class HostLink
             switch (Str(op, "op"))
             {
                 case "welcome":
+                    // The first time: copies of the server's plugins from an earlier run go (it sends them all again),
+                    // so the disk only holds what this run counts against their limits (see ServerCopies).
+                    if (Remote != null && !everWelcomed) Copies.ClearPluginsExcept(new HashSet<string>());
                     welcomed = everWelcomed = true;
                     if (Remote != null) reconnects = 0;   // back after a dropped connection: the waits start short again
                     hostVersion = Str(op, "version");
@@ -358,7 +372,9 @@ internal sealed class HostLink
                     break;
             }
         }
-        catch (JsonException) { }
+        // Whatever the host sent fails only itself: never the window (this runs on its UI thread) or the connection.
+        // A cancellation as the window closes goes on up.
+        catch (Exception ex) when (ex is not OperationCanceledException || !closing) { }
     }
 
     /// <summary>

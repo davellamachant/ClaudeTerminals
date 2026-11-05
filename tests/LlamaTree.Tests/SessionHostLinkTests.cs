@@ -54,6 +54,93 @@ public sealed class SessionHostLinkTests
     }
 
     [Fact]
+    public async Task A_line_longer_than_allowed_ends_the_connection_and_says_why()
+    {
+        var huge = new string('x', LinkChannel.MaxLine + 10);
+        var fromServer = new MemoryStream(System.Text.Encoding.UTF8.GetBytes("P {\"a\":1}\nP " + huge + "\nP {\"b\":2}\n"));
+        var link = new LinkChannel(new DuplexStream(fromServer, new MemoryStream(), () => { }));
+        var got = new List<string>();
+        var closed = new TaskCompletionSource();
+        link.Received += (_, json) => { lock (got) got.Add(json); };
+        link.Closed += () => closed.TrySetResult();
+        link.Start();
+        await closed.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.Equal(["{\"a\":1}"], got);   // none of it, nor anything after it
+        Assert.Contains("longer than", link.CloseReason);
+    }
+
+    [Fact]
+    public async Task A_side_that_stops_reading_is_disconnected_rather_than_queued_for()
+    {
+        var (a, b) = Pair();   // b never reads
+        var closed = new TaskCompletionSource();
+        a.Closed += () => closed.TrySetResult();
+        a.Start();
+        var line = "{\"data\":\"" + new string('x', 1 << 20) + "\"}";
+        for (var i = 0; i < LinkChannel.MaxOutbox / line.Length + 2 && a.IsOpen; i++) a.Send(LinkKind.Page, line);
+        await closed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Contains("stopped reading", a.CloseReason);
+        b.Dispose();
+    }
+
+    [Fact]
+    public async Task Reading_pauses_while_too_much_received_is_still_being_handled()
+    {
+        var (a, b) = Pair();
+        var holds = new List<Action>();
+        var count = 0;
+        b.Received += (_, json) => { lock (holds) { holds.Add(b.Hold(json.Length)); count++; } };   // handled later: not until let go
+        a.Start();
+        b.Start();
+        var line = "{\"data\":\"" + new string('x', 1 << 20) + "\"}";
+        var sent = LinkChannel.MaxHeld / line.Length + 8;
+        for (var i = 0; i < sent; i++) a.Send(LinkKind.Page, line);
+        await Task.Delay(1500);
+        int paused;
+        lock (holds) paused = count;
+        Assert.True(paused <= LinkChannel.MaxHeld / line.Length + 1, $"read {paused} of {sent} while all were held");
+        Assert.True(a.IsOpen && b.IsOpen);   // the sender waits; nobody is cut off
+        // Once they're handled, the rest comes.
+        var until = DateTime.UtcNow.AddSeconds(10);
+        while (DateTime.UtcNow < until)
+        {
+            lock (holds)
+            {
+                foreach (var done in holds) done();
+                holds.Clear();
+                if (count == sent) break;
+            }
+            await Task.Delay(50);
+        }
+        Assert.Equal(sent, count);
+        a.Dispose();
+        b.Dispose();
+    }
+
+    [Fact]
+    public async Task A_handler_that_throws_fails_only_its_message()
+    {
+        var (a, b) = Pair();
+        var got = new List<string>();
+        var both = new TaskCompletionSource();
+        b.Received += (_, json) =>
+        {
+            if (json.Contains("bad")) throw new InvalidOperationException("a bad message");
+            lock (got) { got.Add(json); if (got.Count == 2) both.TrySetResult(); }
+        };
+        a.Start();
+        b.Start();
+        a.Send(LinkKind.Page, """{"n":1}""");
+        a.Send(LinkKind.Page, """{"bad":true}""");
+        a.Send(LinkKind.Page, """{"n":2}""");
+        await both.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(["""{"n":1}""", """{"n":2}"""], got);
+        Assert.True(b.IsOpen);
+        a.Dispose();
+        b.Dispose();
+    }
+
+    [Fact]
     public void A_plugin_keeps_its_address_for_the_run_and_others_cant_guess_it()
     {
         var key = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
