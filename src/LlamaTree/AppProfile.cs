@@ -46,7 +46,12 @@ internal static class AppProfile
     }
 
     /// <summary>The folder under <paramref name="root"/>, moved from its old name if only that exists. If it can't be moved, the old one is used as it is.</summary>
-    internal static string Resolve(Environment.SpecialFolder root) => Resolve(Environment.GetFolderPath(root));
+    /// <remarks>
+    /// Made if it isn't there: on macOS and Linux, a new account (a server's, say) may have no ~/.config or
+    /// ~/.local/share yet, and asked for one that isn't there .NET answers "", which left the folder relative.
+    /// </remarks>
+    internal static string Resolve(Environment.SpecialFolder root) => Resolve(Environment.GetFolderPath(root, Environment.SpecialFolderOption.Create) is { Length: > 0 } path
+        ? path : throw new InvalidOperationException($"There's no {root} folder for LlamaTree's data (is HOME set?)."));
 
     internal static string Resolve(string root)
     {

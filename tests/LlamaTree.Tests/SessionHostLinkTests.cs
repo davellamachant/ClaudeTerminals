@@ -66,6 +66,37 @@ public sealed class SessionHostLinkTests
         Assert.Equal("https://notes.plugin.local/", PluginAddressing.VirtualHosts.Base("notes"));
     }
 
+    [Theory]
+    [InlineData("dev@server", true)]
+    [InlineData("server", true)]
+    [InlineData("ssh://dev@server:2222", true)]
+    [InlineData("dev@[fe80::1]", true)]
+    [InlineData("", false)]
+    [InlineData("-oProxyCommand=calc", false)]   // an option, not a server
+    [InlineData("dev@server ls", false)]          // a command after it
+    [InlineData("dev@server\nls", false)]
+    public void A_server_is_only_ever_one_ssh_destination(string target, bool valid) =>
+        Assert.Equal(valid, LlamaTree.Hosting.HostLink.IsValidTarget(target));
+
+    [Fact]
+    public async Task A_programs_output_and_input_make_one_connection()
+    {
+        // As the window uses ssh's: lines read from one stream, written to the other.
+        var fromServer = new MemoryStream(System.Text.Encoding.UTF8.GetBytes("W {\"op\":\"welcome\"}\n"));
+        var toServer = new MemoryStream();
+        var disposed = false;
+        var link = new LinkChannel(new DuplexStream(fromServer, toServer, () => disposed = true));
+        var got = new TaskCompletionSource<string>();
+        var closed = new TaskCompletionSource();
+        link.Received += (kind, json) => got.TrySetResult(kind + json);
+        link.Closed += () => closed.TrySetResult();
+        link.Start();
+        link.Send(LinkKind.Hello, """{"remote":"dev@server"}""");
+        Assert.Equal("W{\"op\":\"welcome\"}", await got.Task.WaitAsync(TimeSpan.FromSeconds(10)));
+        await closed.Task.WaitAsync(TimeSpan.FromSeconds(10));   // the output ended: so does the connection
+        Assert.True(disposed);
+    }
+
     [Fact]
     public void Kept_output_is_the_end_of_it_cut_at_a_line_break()
     {

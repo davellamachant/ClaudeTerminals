@@ -28,8 +28,12 @@ internal sealed class PseudoConsoleProcess : IPtyProcess
 
     public int ProcessId { get; private set; }
 
-    public void Start(string command, string workingDirectory, IReadOnlyDictionary<string, string> environment, int cols, int rows) =>
-        Start(CommandLineResolver.Resolve(command, environment), workingDirectory, SessionEnvironment.ToBlock(environment), cols, rows);
+    public void Start(string command, string workingDirectory, IReadOnlyDictionary<string, string> environment, int cols, int rows, string? within = null)
+    {
+        // Confined: the folders on its way are held, so none can be swapped, until the process has started there.
+        using var confined = within != null ? ConfinedFolder.Open(workingDirectory, within) : null;
+        Start(CommandLineResolver.Resolve(command, environment), confined?.Path ?? workingDirectory, SessionEnvironment.ToBlock(environment), cols, rows);
+    }
 
     /// <summary>Starts a CreateProcess command line with an environment block (see <see cref="SessionEnvironment.ToBlock"/>).</summary>
     public void Start(string commandLine, string workingDirectory, string environmentBlock, int cols, int rows)

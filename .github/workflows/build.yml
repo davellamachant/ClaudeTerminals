@@ -53,7 +53,7 @@ jobs:
       - name: Publish
         run: dotnet publish src/LlamaTree/LlamaTree.csproj -f ${{ matrix.framework }} -c Release -r ${{ matrix.rid }} --self-contained true -p:DebugType=None -o artifacts/LlamaTree-${{ matrix.rid }}
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         with:
           name: LlamaTree-${{ matrix.rid }}
           path: artifacts/LlamaTree-${{ matrix.rid }}

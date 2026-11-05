@@ -5,7 +5,7 @@
   </picture>
 </h1>
 
-*Formerly Claude Terminals.*
+**[www.llamatree.dev](https://www.llamatree.dev)** · *Formerly Claude Terminals.*
 
 One window for many local Claude Code and Codex sessions, with a Visual Studio–style Git Changes / Git Repository view and diff viewer for each session's worktree.
 
@@ -49,7 +49,21 @@ One window for many local Claude Code and Codex sessions, with a Visual Studio�
 
 ## Install
 
-Download `LlamaTree-Setup-<version>.exe` from the [latest release](https://github.com/LlamachantTechnology/LlamaTree/releases/latest) and run it. It installs for your account only (no admin), and later versions install themselves from inside the app.
+**Windows** (PowerShell):
+
+```powershell
+powershell -c "irm https://github.com/LlamachantTechnology/LlamaTree/releases/latest/download/install.ps1 | iex"
+```
+
+**Linux:**
+
+```sh
+curl -fsSL https://github.com/LlamachantTechnology/LlamaTree/releases/latest/download/install.sh | sh
+```
+
+Each downloads the latest release, checks it against the SHA-256 GitHub publishes for it, and installs it. On Windows that's the setup below, run silently. On Linux it's the `.deb` or `.rpm` when there's apt, dnf or zypper and you can use sudo (it asks for your password); otherwise it's the `.tar.gz` unpacked into `~/.local/share/LlamaTree`, with a `llamatree` command in `~/.local/bin` and a menu entry, for your account only. Set `LLAMATREE_INSTALL=tar` to choose that anyway (`curl … | LLAMATREE_INSTALL=tar sh`). Both scripts are in [tools/install](tools/install) if you'd like to read them first.
+
+Or install by hand: download `LlamaTree-Setup-<version>.exe` from the [latest release](https://github.com/LlamachantTechnology/LlamaTree/releases/latest) and run it. It installs for your account only (no admin), and later versions install themselves from inside the app.
 
 Releases are signed by **Llamachant Technology Ltd**. If SmartScreen still warns about a new release ("Windows protected your PC"), check that the publisher says Llamachant Technology Ltd, then choose *More info › Run anyway*.
 
@@ -141,7 +155,19 @@ With Windows' animation effects turned off the dots stay still, and in every sty
 
 **Closing the window** with sessions running asks what to do with them. **Keep running** closes only the window: the sessions carry on in the background, and opening LlamaTree again shows them as they are, with what they printed meanwhile. **Stop sessions** stops them but loses nothing: Claude keeps every conversation, and the sessions come back with the app; the question says which pick up where they left off (those that continue or resume) and which start a new conversation. Tick *Don't ask again* to always do one or the other; the version menu (top right) changes it, and has *Quit and stop all sessions*. With no session running, closing the window ends LlamaTree.
 
-**Starting when opened:** when the app starts, a Claude session it brings back waits until you first open it (its tile says *Starts when you open it*; pressing Enter in it works too). Claude's start-up context, such as hooks, the date and Git status, is then fresh when you use the session, and one you don't open runs nothing. New sessions, and sessions running any other command (a dev server, say), start straight away.
+**Sessions on servers, among your own.** In the *New Session* dialog, *Computer* picks where a session runs: this computer, or a server (`user@server`, `ssh://user@server:port`, or a `Host` from your SSH config). A server's sessions show with your local ones, in your projects, with the server's name on their tile and a link mark on their tab; typing, Git, diffs, *Browse…*, opening files and pasting pictures all work as for a local session, on that server. Once LlamaTree has connected to a server, every session its LlamaTree has shows here. They keep running there when LlamaTree closes or the connection drops: the tile says *Can't reach* the server, LlamaTree keeps trying, and clicking the server's name tries again now. Their panels show here, and they can message your local sessions and be messaged by them (with the same permissions), while their server is connected. The requirements are those below.
+
+**A server's own window.** `LlamaTree --remote user@server` opens a window of its own for a server's sessions only: they run on the server, in its folders, and keep running there when the window closes or the connection drops (the window reconnects by itself). The server can also be `ssh://user@server:port` or a `Host` from your SSH config.
+
+Sessions on a server, in either kind of window, need:
+
+- `ssh` on this computer (Windows 10 and 11 have it), signing in with a key or ssh-agent: LlamaTree can't type a password. Connect once from a terminal first, so the server's host key is known.
+- LlamaTree installed on the server (the `.deb` or `.rpm` gives the `llamatree` command it runs; it doesn't need a desktop there). Update it there as you do its other packages.
+- If the server ends your processes when you log out (systemd's `KillUserProcesses`), run `loginctl enable-linger` there once, or the sessions end with the connection.
+
+The server's files are reached through the window. *Browse…* in the new session dialog, and *Browse the folder* wherever you'd open one in File Explorer or Finder, show the server's folders in the window. A file you open (a path link in the terminal, Git's *Open*, a file in those folders) is copied to this computer and opened there, as it would be locally: it's a copy, so edits to it stay here. Pictures and files you paste into a session are copied to the server first (its LlamaTree data folder, `pasted/`, cleared after a week) and their paths there are pasted. The server's plugins show as they would locally: the window is sent a copy of each plugin's folder. Web links open on this computer.
+
+**Starting when opened:** when the app starts, a Claude session it brings back waits until you first open it (its tile says *Starts when you open it*; pressing Enter in it works too). Claude's start-up context, such as hooks, the date and Git status, is then fresh when you use the session, and one you don't open runs nothing. A message from another session starts it too, so the sender isn't left waiting. New sessions, and sessions running any other command (a dev server, say), start straight away.
 
 Sessions are saved in `%APPDATA%\LlamaTree\sessions.json`. Set `LLAMATREE_DATA` to use a different folder (separate profiles, testing). Until 1.2 the app was called Claude Terminals: the first time 1.2 runs it moves `%APPDATA%ClaudeTerminals` and `%LOCALAPPDATA%ClaudeTerminals` to their new names, and the old `CLAUDE_TERMINALS_DATA` still works. Only one copy runs per profile; launching again brings the existing window forward.
 
@@ -465,6 +491,8 @@ dotnet test
 
 - **Host:** one app with two windows (`src/LlamaTree`). `net10.0-windows` is the Windows app: WinForms + WebView2 (`Hosting/WinForms`). `net10.0` is the macOS and Linux app: a [Photino](https://www.tryphotino.io/) window, which hosts WKWebView on macOS and WebKitGTK on Linux (`Hosting/Photino`); it also runs on Windows (`-f net10.0`, on WebView2) for trying it out. Everything else is shared: `AppHost` holds the sessions, git, panels and plugins, and talks to the same page through either window.
 - **Session host:** `AppHost` runs in a process of its own, the same program started with `--host` (`Hosting/SessionHost.cs`), so sessions can outlive the window. The window starts it if it isn't running and connects through a named pipe (Windows) or a Unix socket (macOS, Linux; in `$XDG_RUNTIME_DIR` or the per-user temp folder) that only the same user can open, one per profile (`Hosting/Link`). The page's messages pass through unchanged; the folder picker, clipboard, title bar colours and plugins' pages stay with the window (`Hosting/HostLink.cs`). The host keeps the end of each session's output for a window that attaches later, and ends once no window is attached and no session is running. An update waits for both processes to end; the installer checks for either (`AppMutex`).
+- **Sessions on servers among your own:** this computer's session host keeps an ssh connection to each server with sessions here (`Hosting/ServerConnection.cs`) and is a window to that server's host: what it tells its page about a session is passed to this page under the session's id here, and requests about the session go there under its id there; a request naming a server instead (adding sessions, browsing its folders, its saved conversations) goes to that server (`AppHost.Servers.cs`). `sessions.json` keeps each server session's place, project, and what it was last seen as (`Server`, `RemoteId`). While connected, the server's host passes its sessions' tool calls (panels, messages) up to this host, which answers them as for its own sessions; without it the server answers them itself.
+- **Sessions on a server:** a window started with `--remote <target>` runs `ssh -T -o BatchMode=yes <target> llamatree --attach` and speaks the same protocol over ssh's input and output. On the server, `--attach` (`Hosting/HostBridge.cs`) connects to that user's session host there, starting it detached if needed, and copies between the two; when SSH drops only the bridge ends. The host's lock is per user across login sessions on macOS and Linux (`Hosting/InstanceLock.cs`), and it listens again if its socket file is removed (Linux empties `$XDG_RUNTIME_DIR` when the last login ends). Told the window is remote, the host skips update checks and opens nothing on its own desktop: a folder opens in the page's folder browser (`fs.list`), and a file is sent to the window in pieces (`Hosting/ServerFiles.cs`, `ServerCopies.cs`), which opens its copy. Pasted files go the other way (`upload.*`, the window waiting every few pieces for the host to catch up), and a plugin's folder is sent ahead of the page hearing of it, so the window serves the copy as it would a local folder. `LLAMATREE_SSH` names another ssh program; `LLAMATREE_REMOTE_COMMAND` replaces `llamatree --attach`.
 - **Terminals:** real pseudo terminals rendered with xterm.js: ConPTY on Windows, where child processes live in a kill-on-close job object; a Unix pty on macOS and Linux (`UnixPtyProcess`, started with posix_spawn in a session of its own), where closing a session hangs up its terminal.
 - **Diffs:** Monaco diff editor, with dark and light themes after Visual Studio's
 
@@ -500,9 +528,9 @@ Signed releases are built by `azure-pipelines.yml` on the Azure DevOps agent wit
 
 1. Bump `<Version>` in `LlamaTree.csproj` and merge to `main`.
 2. In Azure DevOps, run the pipeline on `main` (or on a tag `v<version>`) with *Create the GitHub release* ticked. Untick it for a trial run that only builds and signs, keeping the installer on the run's Artifacts.
-3. The pipeline runs `publish.ps1 -Sign`, which signs `LlamaTree.exe`/`.dll`, setup and its uninstaller as *Llamachant Technology Ltd* (picked from the certificate store by subject, as the NuGet signing does), timestamps them with Sectigo's server, and fails unless each carries a valid, timestamped signature from that publisher. It then creates a **draft** GitHub release with the installer.
+3. The pipeline runs `publish.ps1 -Sign`, which signs `LlamaTree.exe`/`.dll`, setup and its uninstaller as *Llamachant Technology Ltd* (picked from the certificate store by subject, as the NuGet signing does), timestamps them with Sectigo's server, and fails unless each carries a valid, timestamped signature from that publisher. It then creates a **draft** GitHub release with the installer, the Linux packages and the two install scripts from `tools/install` (which the one-line installs fetch from the latest release, so keep their names).
 4. Write the release notes on the draft and publish it: that's what makes the in-app updater offer the new version. The updater shows everything above the notes' *Install* heading, and needs the installer named `LlamaTree-Setup-<version>.exe` on a `v<version>` tag (Linux copies update from the `.deb`, `.rpm` and `.tar.gz` under the names `publish.ps1` gives them).
 
 ## License
 
-MIT, see [LICENSE](LICENSE). Bundles [xterm.js](https://github.com/xtermjs/xterm.js) and [Monaco Editor](https://github.com/microsoft/monaco-editor) (both MIT).
+Apache License 2.0, see [LICENSE](LICENSE) and [NOTICE](NOTICE). Copyright 2026 Llamachant Technology Ltd. Versions up to 1.2.0 were released under the MIT License, which still applies to them. The license doesn't grant use of the LlamaTree or Llamachant names or logos (section 6). Bundles [xterm.js](https://github.com/xtermjs/xterm.js) and [Monaco Editor](https://github.com/microsoft/monaco-editor) (both MIT).
