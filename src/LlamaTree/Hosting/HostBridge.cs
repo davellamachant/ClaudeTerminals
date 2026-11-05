@@ -15,6 +15,7 @@ internal static class HostBridge
 {
     public static int Run()
     {
+        AppLog.Start("bridge");
         try
         {
             return RunAsync().GetAwaiter().GetResult();
@@ -22,6 +23,7 @@ internal static class HostBridge
         catch (Exception ex)
         {
             Console.Error.WriteLine("LlamaTree: " + ex.Message);
+            AppLog.Error("The bridge failed: " + AppLog.Describe(ex));
             return 1;
         }
     }
@@ -44,6 +46,7 @@ internal static class HostBridge
         if (host == null)
         {
             Console.Error.WriteLine("LlamaTree: the session host didn't start on " + Environment.MachineName + ".");
+            AppLog.Error("The session host didn't start.");
             return 1;
         }
         await using (host)

@@ -115,7 +115,7 @@ internal sealed class HostLink
             window.RunOnUi(() => Failed(failure));
             return;
         }
-        var link = new LinkChannel(stream);
+        var link = new LinkChannel(stream) { Name = Remote ?? "session host" };
         latest = link;
         link.Received += (kind, json) => OnHostMessage(link, kind, json);
         link.Closed += () => window.RunOnUi(() => OnLost(link));
@@ -376,7 +376,10 @@ internal sealed class HostLink
         }
         // Whatever the host sent fails only itself: never the window (this runs on its UI thread) or the connection.
         // A cancellation as the window closes goes on up.
-        catch (Exception ex) when (ex is not OperationCanceledException || !closing) { }
+        catch (Exception ex) when (ex is not OperationCanceledException || !closing)
+        {
+            AppLog.Warn($"{link.Name}: a {AppLog.MessageType(json)} message ({json.Length} characters) failed and was dropped: {AppLog.Describe(ex)}");
+        }
     }
 
     /// <summary>
@@ -472,6 +475,6 @@ internal sealed class HostLink
         Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(remote.ToLowerInvariant())))[..16];
 
     /// <summary>This window's copies of the server's files (see <see cref="ServerCopies"/>).</summary>
-    private ServerCopies Copies => copies ??= new ServerCopies(Path.Combine(AppProfile.CustomFolder ?? AppProfile.LocalFolder, "servers", RemoteKey(Remote!)));
+    private ServerCopies Copies => copies ??= new ServerCopies(Path.Combine(AppProfile.CustomFolder ?? AppProfile.LocalFolder, "servers", RemoteKey(Remote!)), Remote!);
     private ServerCopies? copies;
 }

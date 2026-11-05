@@ -8,10 +8,12 @@ namespace LlamaTree.Hosting;
 /// server sends is checked as it would be from anyone: names can't reach out of their folder; a file to open is taken
 /// only when this computer asked to open one (<see cref="ExpectFile"/>); and the number and size of transfers, files
 /// and plugins are capped, so a server can't fill this computer's disk or hold its files open. Called on the window's
-/// (or this computer's host's) UI thread.
+/// (or this computer's host's) UI thread. What's refused is logged (see <see cref="AppLog"/>): why, never what was in it.
 /// </summary>
-internal sealed class ServerCopies(string folder)
+internal sealed class ServerCopies(string folder, string server = "a server")
 {
+    private void Refused(string what) => AppLog.Warn($"{server}: {what}");
+
     private readonly Dictionary<string, Incoming> files = [];
     private readonly Dictionary<string, long> pluginBytes = [];
 
@@ -74,17 +76,31 @@ internal sealed class ServerCopies(string folder)
     /// </summary>
     public string? FilePart(string token, string name, string data, int index, bool last)
     {
-        if (token.Length is 0 or > 64 || !token.All(char.IsAsciiLetterOrDigit) || token.Contains('/')) return null;
+        if (token.Length is 0 or > 64 || !token.All(char.IsAsciiLetterOrDigit) || token.Contains('/'))
+        {
+            if (index == 0) Refused("a file to open was refused: its token isn't one.");
+            return null;
+        }
         if (index == 0)
         {
             Drop(token);
             Prune();
-            if (files.Keys.Count(k => !k.Contains('/')) >= MaxOpenTransfers) return null;
+            if (files.Keys.Count(k => !k.Contains('/')) >= MaxOpenTransfers)
+            {
+                Refused($"a file to open was refused: {MaxOpenTransfers} were already on their way.");
+                return null;
+            }
             // The oldest request for a file of this name; else the oldest that named none.
             var safe = ServerFiles.SafeName(name);
             var asked = expected.FindIndex(e => e.Name == safe);
             if (asked < 0) asked = expected.FindIndex(e => e.Name == null);
-            if (asked < 0) return null;
+            if (asked < 0)
+            {
+                Refused(expected.Count == 0
+                    ? "a file to open was refused: nothing here asked to open one."
+                    : "a file to open was refused: nothing here asked to open a file of that name.");
+                return null;
+            }
             safe = expected[asked].Name ?? safe;
             expected.RemoveAt(asked);
             Tidy();
@@ -122,7 +138,11 @@ internal sealed class ServerCopies(string folder)
     public void PluginBegin(string id)
     {
         if (!PluginCatalog.IsValidId(id)) return;
-        if (!pluginBytes.ContainsKey(id) && pluginBytes.Count >= MaxPlugins) return;
+        if (!pluginBytes.ContainsKey(id) && pluginBytes.Count >= MaxPlugins)
+        {
+            Refused($"plugin {id} was refused: it has {MaxPlugins} here already.");
+            return;
+        }
         PluginGone(id);
         pluginBytes[id] = 0;
     }
@@ -169,19 +189,32 @@ internal sealed class ServerCopies(string folder)
         if (!PluginCatalog.IsValidId(id) || !pluginBytes.ContainsKey(id)) return;
         var parts = relative.Split('/');
         var invalid = Path.GetInvalidFileNameChars();
-        if (relative.Length > 400 || parts.Any(p => p.Length == 0 || p == "." || p == ".." || p.Any(c => invalid.Contains(c) || c is '\\' or ':' || char.IsControl(c)))) return;   // the same on every system
+        if (relative.Length > 400 || parts.Any(p => p.Length == 0 || p == "." || p == ".." || p.Any(c => invalid.Contains(c) || c is '\\' or ':' || char.IsControl(c))))   // the same on every system
+        {
+            if (index == 0) Refused($"a file of plugin {id} was refused: its name can't be used.");
+            return;
+        }
         var root = PluginFolder(id);
         var path = Path.GetFullPath(Path.Combine([root, .. parts]));
-        if (!path.StartsWith(Path.GetFullPath(root) + Path.DirectorySeparatorChar, StringComparison.Ordinal)) return;
+        if (!path.StartsWith(Path.GetFullPath(root) + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+        {
+            if (index == 0) Refused($"a file of plugin {id} was refused: it's outside the plugin's folder.");
+            return;
+        }
         var key = id + "/" + relative;
         if (index == 0)
         {
             Drop(key);
-            if (files.Keys.Count(k => k.Contains('/')) >= MaxOpenTransfers) return;
+            if (files.Keys.Count(k => k.Contains('/')) >= MaxOpenTransfers)
+            {
+                Refused($"a file of plugin {id} was refused: {MaxOpenTransfers} were already on their way.");
+                return;
+            }
             // Counted as it starts, empty or not: too many files is none of the plugin.
             pluginFiles[id] = pluginFiles.GetValueOrDefault(id) + 1;
             if (pluginFiles[id] > MaxPluginFiles || pluginFiles.Values.Sum() > MaxAllPluginFiles)
             {
+                Refused($"plugin {id} was dropped: it has more files than a plugin may ({MaxPluginFiles}, {MaxAllPluginFiles} in all).");
                 PluginGone(id);
                 return;
             }
@@ -192,13 +225,19 @@ internal sealed class ServerCopies(string folder)
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                return;   // a file where it needs a folder, or a folder where it needs a file: that file isn't taken
+                // A file where it needs a folder, or a folder where it needs a file: that file isn't taken.
+                Refused($"a file of plugin {id} was refused: it collides with another of its files or folders ({ex.GetType().Name}).");
+                return;
             }
         }
         Append(key, data, index, last, MaxPluginBytes, out var written);
         pluginBytes[id] += written;
         // More than a plugin, or all of a server's, should be: none of it.
-        if (pluginBytes[id] > MaxPluginBytes || pluginBytes.Values.Sum() > MaxAllPluginBytes) PluginGone(id);
+        if (pluginBytes[id] > MaxPluginBytes || pluginBytes.Values.Sum() > MaxAllPluginBytes)
+        {
+            Refused($"plugin {id} was dropped: it's bigger than a plugin may be ({MaxPluginBytes >> 20} MB, {MaxAllPluginBytes >> 20} MB in all).");
+            PluginGone(id);
+        }
     }
 
     /// <summary>
@@ -229,6 +268,7 @@ internal sealed class ServerCopies(string folder)
         }
         catch (Exception ex) when (ex is FormatException or InvalidDataException or IOException)
         {
+            Refused($"a file on its way was dropped: {(ex is InvalidDataException ? "a part out of order, or more than it may be" : ex.GetType().Name)}.");
             Drop(key);
             return null;
         }

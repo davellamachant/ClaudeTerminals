@@ -37,7 +37,7 @@ internal sealed class ServerConnection : IDisposable
     {
         Target = target;
         this.runOnUi = runOnUi;
-        copies = new ServerCopies(copiesFolder);
+        copies = new ServerCopies(copiesFolder, target);
     }
 
     /// <summary>How the server is reached: user@server, or a Host from the SSH config.</summary>
@@ -114,7 +114,7 @@ internal sealed class ServerConnection : IDisposable
             runOnUi(() => Lost(mine, ssh.Failure, reached: false));
             return;
         }
-        var channel = new LinkChannel(ssh.Stream);
+        var channel = new LinkChannel(ssh.Stream) { Name = Target };
         var welcomed = false;
         channel.Received += (kind, json) =>
         {
@@ -127,7 +127,7 @@ internal sealed class ServerConnection : IDisposable
                 runOnUi(() =>
                 {
                     try { if (link == channel) PageMessage?.Invoke(this, json); }
-                    catch (Exception ex) when (Survivable(ex)) { /* that message is dropped; the connection carries on */ }
+                    catch (Exception ex) when (Survivable(ex)) { Dropped(json, ex); }   // that message is dropped; the connection carries on
                     finally { done(); }
                 });
             }
@@ -204,6 +204,7 @@ internal sealed class ServerConnection : IDisposable
                     link = channel;
                     pending = null;
                     failures = 0;
+                    overCapNoted = false;   // a new connection: said again if it still lists too many
                     Machine = Str(op, "machine");
                     features = op.TryGetProperty("features", out var fs) && fs.ValueKind == JsonValueKind.Array
                         ? fs.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!).ToHashSet(StringComparer.Ordinal) : [];
@@ -258,9 +259,22 @@ internal sealed class ServerConnection : IDisposable
         }
         catch (Exception ex) when (Survivable(ex))
         {
+            Dropped(json, ex);
             return "";
         }
     }
+
+    /// <summary>A message from the server failed, and was dropped: logged by its type and size, never what it said (files, tokens…).</summary>
+    private void Dropped(string json, Exception ex) =>
+        AppLog.Warn($"{Target}: a {AppLog.MessageType(json)} message ({json.Length} characters) failed and was dropped: {AppLog.Describe(ex)}");
+
+    private bool overCapNoted;
+
+    /// <summary>
+    /// True the first time it's asked on this connection (it's asked as the server lists more sessions than are shown
+    /// here, see AppHost.MaxServerSessions), so that's said once a connection, not each time it lists them.
+    /// </summary>
+    internal bool NoteOverCap() => !overCapNoted && (overCapNoted = true);
 
     /// <summary>
     /// Whether an exception from handling one of the server's messages is that message's failure only. Anything is,
