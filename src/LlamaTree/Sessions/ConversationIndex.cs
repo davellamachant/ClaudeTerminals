@@ -164,7 +164,7 @@ internal static partial class ConversationIndex
 
     private static string? UserText(JsonElement e)
     {
-        if (!e.TryGetProperty("message", out var m) || !m.TryGetProperty("content", out var c)) return null;
+        if (!ConversationReader.Obj(e, "message", out var m) || !m.TryGetProperty("content", out var c)) return null;
         string? text = null;
         if (c.ValueKind == JsonValueKind.String) text = c.GetString();
         else if (c.ValueKind == JsonValueKind.Array)

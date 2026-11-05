@@ -14,7 +14,7 @@ internal static partial class CodexTranscript
     /// <summary>One rollout line (a <see cref="TranscriptParser"/>).</summary>
     public static void Line(JsonElement e, List<ConversationTurn> turns)
     {
-        if (Str(e, "type") != "response_item" || !e.TryGetProperty("payload", out var p)) return;
+        if (Str(e, "type") != "response_item" || !ConversationReader.Obj(e, "payload", out var p)) return;
         switch (Str(p, "type"))
         {
             case "message" when Str(p, "role") == "user":
@@ -23,7 +23,7 @@ internal static partial class CodexTranscript
                     {
                         Index = turns.Count,
                         Prompt = ConversationReader.Clip(prompt, ConversationReader.MaxTextChars),
-                        Time = e.TryGetProperty("timestamp", out var ts) && ts.TryGetDateTime(out var t) ? t : null,
+                        Time = ConversationReader.Time(e, "timestamp"),
                     });
                 break;
             case "message" when Str(p, "role") == "assistant" && turns.Count > 0:
@@ -39,7 +39,7 @@ internal static partial class CodexTranscript
                 turns[^1].Items.Add(Tool(Str(p, "name"), InputDetail(Str(p, "input"))));
                 break;
             case "local_shell_call" when turns.Count > 0:
-                var command = p.TryGetProperty("action", out var action) && action.TryGetProperty("command", out var c) ? Words(c) : null;
+                var command = ConversationReader.Obj(p, "action", out var action) && action.TryGetProperty("command", out var c) ? Words(c) : null;
                 turns[^1].Items.Add(Tool("shell", command));
                 break;
         }
@@ -48,7 +48,7 @@ internal static partial class CodexTranscript
     /// <summary>What the person typed in a user message, or null when it is only context Codex added.</summary>
     internal static string? PromptText(JsonElement payload)
     {
-        if (!payload.TryGetProperty("content", out var c) || c.ValueKind != JsonValueKind.Array) return null;
+        if (payload.ValueKind != JsonValueKind.Object || !payload.TryGetProperty("content", out var c) || c.ValueKind != JsonValueKind.Array) return null;
         var parts = new List<string>();
         foreach (var part in c.EnumerateArray())
             if (Str(part, "type") == "input_text" && Str(part, "text")?.Trim() is { Length: > 0 } text && !text.StartsWith('<'))

@@ -141,6 +141,59 @@ public sealed class ConversationReaderTests : IDisposable
     }
 
     [Fact]
+    public void Fields_of_unexpected_types_are_skipped_and_reading_again_adds_nothing_twice()
+    {
+        var path = Transcript("s6",
+            User("one") +
+            Assistant(Text("answer one")) +
+            """{"type":"assistant","message":"a string where an object goes"}""" + "\n" +
+            """{"type":"assistant","message":{"content":{"type":"text","text":"an object where an array goes"}}}""" + "\n" +
+            """{"type":"assistant","message":{"content":[{"type":"text","text":42},{"type":"tool_use","name":7,"input":[1,2]},5,null]}}""" + "\n" +
+            """{"type":"user","message":null}""" + "\n" +
+            """{"type":"user","message":{"content":[1,"x",null,{"type":"text","text":{}}]}}""" + "\n" +
+            """{"type":123,"message":{}}""" + "\n" +
+            "[1,2]\nnull\n\"text\"\n{not json\n" +
+            """{"type":"user","timestamp":12345,"message":{"content":"two"}}""" + "\n" +
+            Assistant(Text("answer two")));
+        var next = User("three");
+        File.AppendAllText(path, next[..15]);
+
+        Conversation? first = null;
+        for (var poll = 0; poll < 3; poll++)
+        {
+            var c = ConversationReader.Read("s6", path);
+            Assert.Equal(["one", "two"], c.Turns.Select(t => t.Prompt));
+            Assert.Equal(["text:answer one", "tool:tool:"], c.Turns[0].Items.Select(i => i.Kind == "tool" ? $"tool:{i.Tool}:{i.Text}" : $"text:{i.Text}"));
+            Assert.Null(c.Turns[1].Time);   // a number isn't a time; the rest of the line still counts
+            Assert.Equal("answer two", Assert.Single(c.Turns[1].Items).Text);
+            if (first != null) Assert.Equal(first.Version, c.Version);
+            first = c;
+        }
+
+        // The half-written line is read once it's finished, and only once.
+        File.AppendAllText(path, next[15..]);
+        Assert.Equal(["one", "two", "three"], ConversationReader.Read("s6", path).Turns.Select(t => t.Prompt));
+        Assert.Equal(["one", "two", "three"], ConversationReader.Read("s6", path).Turns.Select(t => t.Prompt));
+    }
+
+    [Fact]
+    public void A_line_the_parser_fails_on_is_passed_over_and_the_lines_before_it_are_not_added_again()
+    {
+        // A parser that trips over one line: what it added from the lines before must not be added again on the next read.
+        static void Parse(JsonElement e, List<ConversationTurn> turns)
+        {
+            if (e.GetProperty("p").GetString() == "boom") throw new InvalidOperationException("unexpected shape");
+            turns.Add(new ConversationTurn { Index = turns.Count, Prompt = e.GetProperty("p").GetString()! });
+        }
+        var path = Transcript("s7", Line(new { p = "one" }) + Line(new { p = "boom" }) + Line(new { p = "two" }));
+
+        for (var poll = 0; poll < 3; poll++)
+            Assert.Equal(["one", "two"], ConversationReader.Read("s7", path, Parse).Turns.Select(t => t.Prompt));
+        File.AppendAllText(path, Line(new { p = "three" }));
+        Assert.Equal(["one", "two", "three"], ConversationReader.Read("s7", path, Parse).Turns.Select(t => t.Prompt));
+    }
+
+    [Fact]
     public void The_session_file_of_a_process_in_the_terminal_leads_to_its_transcript()
     {
         var work = Path.Combine(config, "work");

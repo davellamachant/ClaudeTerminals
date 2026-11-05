@@ -59,11 +59,13 @@ internal static partial class ActivityReader
                     c.Offset = 0;
                     c.Events.Clear();
                     c.Pending.Clear();
+                    c.LastReply = null;
+                    c.CostAt = -1;
                 }
                 if (stream.Length > c.Offset)
                 {
                     stream.Seek(c.Offset, SeekOrigin.Begin);
-                    c.Offset += ReadLines(stream, c);
+                    ConversationReader.ReadLines(stream, ref c.Offset, line => AddLine(line, c));
                 }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -72,29 +74,6 @@ internal static partial class ActivityReader
             }
             return new ActivityEvents(c.Events.Count, c.Events.Select(e => e with { }).ToList());
         }
-    }
-
-    private static long ReadLines(Stream stream, Cached c)
-    {
-        long consumed = 0;
-        var buffer = new MemoryStream();
-        var chunk = new byte[64 * 1024];
-        int n;
-        while ((n = stream.Read(chunk, 0, chunk.Length)) > 0)
-        {
-            var start = 0;
-            for (var i = 0; i < n; i++)
-            {
-                if (chunk[i] != (byte)'\n') continue;
-                buffer.Write(chunk, start, i - start);
-                consumed += buffer.Length + 1;
-                AddLine(buffer.GetBuffer().AsSpan(0, (int)buffer.Length), c);
-                buffer.SetLength(0);
-                start = i + 1;
-            }
-            buffer.Write(chunk, start, n - start);
-        }
-        return consumed;
     }
 
     internal static void AddLine(ReadOnlySpan<byte> line, Cached c)
@@ -111,42 +90,53 @@ internal static partial class ActivityReader
         }
         using (doc)
         {
-            var e = doc.RootElement;
-            if (e.ValueKind != JsonValueKind.Object || Bool(e, "isSidechain")) return;
-            if (!e.TryGetProperty("timestamp", out var ts) || !ts.TryGetDateTime(out var t)) return;
-            t = t.ToUniversalTime();
-            switch (Str(e, "type"))
+            try
             {
-                case "system":
-                    if (Str(e, "subtype") == "compact_boundary") c.Events.Add(new ActivityEvent(t, "compact", null, null, null));
-                    break;
-                case "user":
-                    if (Results(e, c)) break;
-                    if (Bool(e, "isMeta") || Bool(e, "isCompactSummary")) break;
-                    if (ConversationReader.PromptText(e) is { } prompt) c.Events.Add(new ActivityEvent(t, "prompt", null, Clip(prompt), null));
-                    break;
-                case "assistant":
-                    if (!e.TryGetProperty("message", out var m) || !m.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array) break;
-                    var first = c.Events.Count;
-                    var tools = false;
-                    foreach (var part in content.EnumerateArray())
-                        if (Str(part, "type") == "tool_use")
-                        {
-                            tools = true;
-                            var ev = ToolEvent(t, part);
-                            if (ev == null) continue;
-                            c.Events.Add(ev);
-                            if (ev.K is "edit" or "run" or "build" or "test" && Str(part, "id") is { } id) c.Pending[id] = c.Events.Count - 1;
-                        }
-                    if (!tools)
-                    {
-                        // An answer with no tool call: what Claude said, which may be a question.
-                        var text = string.Join("\n", content.EnumerateArray().Where(p => Str(p, "type") == "text").Select(p => Str(p, "text") ?? "")).Trim();
-                        if (text.Length > 0) c.Events.Add(new ActivityEvent(t, "say", null, FirstSentence(text), null, text.EndsWith('?')));
-                    }
-                    Cost(m, c, first);
-                    break;
+                AddLine(doc.RootElement, c);
             }
+            catch (Exception ex) when (ConversationReader.IsMalformedLine(ex))
+            {
+                // A line in a shape this doesn't expect: skip it and keep the rest.
+            }
+        }
+    }
+
+    private static void AddLine(JsonElement e, Cached c)
+    {
+        if (e.ValueKind != JsonValueKind.Object || Bool(e, "isSidechain")) return;
+        if (ConversationReader.Time(e, "timestamp") is not { } t) return;
+        t = t.ToUniversalTime();
+        switch (Str(e, "type"))
+        {
+            case "system":
+                if (Str(e, "subtype") == "compact_boundary") c.Events.Add(new ActivityEvent(t, "compact", null, null, null));
+                break;
+            case "user":
+                if (Results(e, c)) break;
+                if (Bool(e, "isMeta") || Bool(e, "isCompactSummary")) break;
+                if (ConversationReader.PromptText(e) is { } prompt) c.Events.Add(new ActivityEvent(t, "prompt", null, Clip(prompt), null));
+                break;
+            case "assistant":
+                if (!ConversationReader.Obj(e, "message", out var m) || !m.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array) break;
+                var first = c.Events.Count;
+                var tools = false;
+                foreach (var part in content.EnumerateArray())
+                    if (Str(part, "type") == "tool_use")
+                    {
+                        tools = true;
+                        var ev = ToolEvent(t, part);
+                        if (ev == null) continue;
+                        c.Events.Add(ev);
+                        if (ev.K is "edit" or "run" or "build" or "test" && Str(part, "id") is { } id) c.Pending[id] = c.Events.Count - 1;
+                    }
+                if (!tools)
+                {
+                    // An answer with no tool call: what Claude said, which may be a question.
+                    var text = string.Join("\n", content.EnumerateArray().Where(p => Str(p, "type") == "text").Select(p => Str(p, "text") ?? "")).Trim();
+                    if (text.Length > 0) c.Events.Add(new ActivityEvent(t, "say", null, FirstSentence(text), null, text.EndsWith('?')));
+                }
+                Cost(m, c, first);
+                break;
         }
     }
 
@@ -177,12 +167,12 @@ internal static partial class ActivityReader
     }
 
     private static int Int(JsonElement e, string name) =>
-        e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var n) ? n : 0;
+        e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var n) ? n : 0;
 
     /// <summary>Fills in the outcome of pending calls from the tool results in a user line. True when the line held results.</summary>
     private static bool Results(JsonElement e, Cached c)
     {
-        if (!e.TryGetProperty("message", out var m) || !m.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array) return false;
+        if (!ConversationReader.Obj(e, "message", out var m) || !m.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array) return false;
         var any = false;
         foreach (var part in content.EnumerateArray())
         {

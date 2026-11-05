@@ -163,6 +163,46 @@ public sealed class ActivityTests
     }
 
     [Fact]
+    public void Fields_of_unexpected_types_are_skipped_and_reading_again_adds_nothing_twice()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "ct-activity-" + Guid.NewGuid().ToString("N")[..8] + ".jsonl");
+        try
+        {
+            File.WriteAllText(path,
+                User("go") +
+                Assistant(Tool("t1", "Bash", new { command = "dotnet test" })) +
+                $$"""{"type":"assistant","timestamp":"{{Time}}","message":"a string where an object goes"}""" + "\n" +
+                """{"type":"user","timestamp":12345,"message":{"content":"a number where a time goes"}}""" + "\n" +
+                Line(new { type = "assistant", timestamp = Time, message = new { content = new object?[] { 5, null, new { type = "tool_use", name = "Read", input = "not an object" } }, usage = new[] { 1 } } }) +
+                Line(new { type = "user", timestamp = Time, message = new { content = new[] { new { type = "tool_result", tool_use_id = 5, content = new { x = 1 } } } } }) +
+                $$"""{"type":"user","timestamp":"{{Time}}","message":null}""" + "\n" +
+                "[1]\nnull\n{not json\n" +
+                User(new[] { Result("t1", "Passed!") }) +
+                Assistant(Text("All green.")));
+            var next = Assistant(Text("More to say here, at some length."));
+            File.AppendAllText(path, next[..20]);
+
+            for (var poll = 0; poll < 3; poll++)
+            {
+                var a = ActivityReader.Read(path);
+                Assert.Equal(["prompt", "test", "read", "say"], a.Events.Select(e => e.K));
+                Assert.True(a.Events[1].Ok);
+                Assert.Null(a.Events[2].File);
+                Assert.Equal(4, a.Version);
+            }
+
+            // The half-written line is read once it's finished, and only once.
+            File.AppendAllText(path, next[20..]);
+            Assert.Equal(5, ActivityReader.Read(path).Version);
+            Assert.Equal(5, ActivityReader.Read(path).Version);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
     public async Task Top_level_folders_come_with_their_file_counts()
     {
         using var repo = new TempRepo();

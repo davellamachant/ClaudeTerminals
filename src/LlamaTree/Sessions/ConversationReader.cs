@@ -31,6 +31,9 @@ internal sealed record Conversation(string SessionId, string Path, long Version,
 /// <summary>Adds what one line of an agent's transcript says to the turns: a new prompt, or items of the answer to the last one.</summary>
 internal delegate void TranscriptParser(JsonElement line, List<ConversationTurn> turns);
 
+/// <summary>One complete line of a JSONL file, without its newline.</summary>
+internal delegate void LineHandler(ReadOnlySpan<byte> line);
+
 /// <summary>
 /// Finds the conversation a session's terminal is showing and reads it into prompts and answers.
 /// Claude Code writes ~/.claude/sessions/&lt;pid&gt;.json for each interactive process, naming the conversation it is in;
@@ -178,7 +181,8 @@ internal static partial class ConversationReader
                 if (stream.Length > c.Offset)
                 {
                     stream.Seek(c.Offset, SeekOrigin.Begin);
-                    c.Offset += ReadLines(stream, c.Turns, parse ?? ClaudeLine);
+                    var p = parse ?? ClaudeLine;
+                    ReadLines(stream, ref c.Offset, line => AddLine(line, c.Turns, p));
                 }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -191,10 +195,13 @@ internal static partial class ConversationReader
         }
     }
 
-    /// <summary>Parses complete lines from the stream into the turns. Returns the bytes consumed (a half-written last line is left for next time).</summary>
-    private static long ReadLines(Stream stream, List<ConversationTurn> turns, TranscriptParser parse)
+    /// <summary>
+    /// Hands each complete line from the stream to <paramref name="handle"/>, moving <paramref name="offset"/> past it
+    /// first: a line is read once, even if handling it or reading on fails, so what it added is never added again. A
+    /// half-written last line is left for next time.
+    /// </summary>
+    internal static void ReadLines(Stream stream, ref long offset, LineHandler handle)
     {
-        long consumed = 0;
         var buffer = new MemoryStream();
         var chunk = new byte[64 * 1024];
         int n;
@@ -205,15 +212,21 @@ internal static partial class ConversationReader
             {
                 if (chunk[i] != (byte)'\n') continue;
                 buffer.Write(chunk, start, i - start);
-                consumed += buffer.Length + 1;
-                AddLine(buffer.GetBuffer().AsSpan(0, (int)buffer.Length), turns, parse);
+                offset += buffer.Length + 1;
+                handle(buffer.GetBuffer().AsSpan(0, (int)buffer.Length));
                 buffer.SetLength(0);
                 start = i + 1;
             }
             buffer.Write(chunk, start, n - start);
         }
-        return consumed;
     }
+
+    /// <summary>
+    /// Whether an exception came from a line shaped other than expected (a field of another type, a value out of
+    /// range), so the line is skipped rather than failing the whole read.
+    /// </summary>
+    internal static bool IsMalformedLine(Exception ex) =>
+        ex is JsonException or InvalidOperationException or FormatException or KeyNotFoundException or ArgumentException or IndexOutOfRangeException;
 
     private static void AddLine(ReadOnlySpan<byte> line, List<ConversationTurn> turns, TranscriptParser parse)
     {
@@ -229,7 +242,15 @@ internal static partial class ConversationReader
         }
         using (doc)
         {
-            if (doc.RootElement.ValueKind == JsonValueKind.Object) parse(doc.RootElement, turns);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object) return;
+            try
+            {
+                parse(doc.RootElement, turns);
+            }
+            catch (Exception ex) when (IsMalformedLine(ex))
+            {
+                // A line in a shape the parser doesn't expect: skip it and keep the rest.
+            }
         }
     }
 
@@ -246,11 +267,11 @@ internal static partial class ConversationReader
                     {
                         Index = turns.Count,
                         Prompt = Clip(prompt, MaxTextChars),
-                        Time = e.TryGetProperty("timestamp", out var ts) && ts.TryGetDateTime(out var t) ? t : null,
+                        Time = Time(e, "timestamp"),
                     });
                 break;
             case "assistant":
-                if (turns.Count == 0 || !e.TryGetProperty("message", out var m) ||
+                if (turns.Count == 0 || !Obj(e, "message", out var m) ||
                     !m.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array) return;
                 var items = turns[^1].Items;
                 foreach (var part in content.EnumerateArray())
@@ -281,7 +302,7 @@ internal static partial class ConversationReader
     /// <summary>The text the user typed, or null for tool results, notifications and other entries that aren't prompts.</summary>
     internal static string? PromptText(JsonElement e)
     {
-        if (!e.TryGetProperty("message", out var m) || !m.TryGetProperty("content", out var c)) return null;
+        if (!Obj(e, "message", out var m) || !m.TryGetProperty("content", out var c)) return null;
         string? text;
         if (c.ValueKind == JsonValueKind.String) text = c.GetString();
         else if (c.ValueKind == JsonValueKind.Array)
@@ -316,7 +337,7 @@ internal static partial class ConversationReader
 
     private static string ToolDetail(JsonElement part)
     {
-        if (!part.TryGetProperty("input", out var input) || input.ValueKind != JsonValueKind.Object) return "";
+        if (!Obj(part, "input", out var input)) return "";
         foreach (var key in ToolKeys)
             if (Str(input, key) is { } v && !string.IsNullOrWhiteSpace(v))
                 return Clip(v.ReplaceLineEndings(" ").Trim(), MaxToolChars);
@@ -330,4 +351,16 @@ internal static partial class ConversationReader
 
     private static bool Bool(JsonElement e, string name) =>
         e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.True;
+
+    /// <summary>The field <paramref name="name"/> of <paramref name="e"/> when both are objects; false for anything else.</summary>
+    internal static bool Obj(JsonElement e, string name, out JsonElement value)
+    {
+        if (e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out value) && value.ValueKind == JsonValueKind.Object) return true;
+        value = default;
+        return false;
+    }
+
+    /// <summary>The date written as a string in the field <paramref name="name"/>; null when it's missing, of another type or not a date.</summary>
+    internal static DateTime? Time(JsonElement e, string name) =>
+        e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String && v.TryGetDateTime(out var t) ? t : null;
 }
