@@ -23,6 +23,7 @@ The keys and clicks that get you around LlamaTree. On macOS, <kbd>⌘</kbd> does
 | Copy / paste | <kbd>Ctrl</kbd>+<kbd>C</kbd> with a selection / <kbd>Ctrl</kbd>+<kbd>V</kbd>, or right-click. Files copied in Explorer paste as their paths |
 | Paste a screenshot | <kbd>Ctrl</kbd>+<kbd>V</kbd> with an image on the clipboard: it pastes the path of a PNG saved from it, which Claude Code and Codex attach |
 | Font size | <kbd>Ctrl</kbd>+<kbd>=</kbd> / <kbd>Ctrl</kbd>+<kbd>-</kbd> / <kbd>Ctrl</kbd>+<kbd>0</kbd> |
+| Terminals solid or see-through | The small slider in the terminal's bottom-right corner (on the open terminal; on a tile while the pointer is over it), under a theme that allows it, such as Matrix or Tron; remembered for the theme you're on |
 | Open a file or folder named in the output | Click its path (underlined on hover once it's found to exist); right-click for *Open containing folder* and *Copy path*. Files open to view or edit, never run |
 | Read back through the conversation | Hover the ticks at the right edge; click one (or right-click › *Show conversation*) to open the Conversation tab there |
 

@@ -619,7 +619,7 @@ function themeLook() {
   if (!themes.list.includes(t)) return t;   // the kept look
   const made = t.monochrome ? monochromeLook(accentColour(), t.base === 'light') : {};
   return {
-    id: t.id, name: t.name, base: t.base, font: t.font, glow: t.glow, grid: !!t.grid, rain: !!t.rain, monochrome: t.monochrome, cursor: t.cursor ?? null,
+    id: t.id, name: t.name, base: t.base, font: t.font, glow: t.glow, grid: !!t.grid, rain: !!t.rain, monochrome: t.monochrome, cursor: t.cursor ?? null, terminalBackground: t.terminalBackground ?? null,
     colors: { ...made.colors, ...t.colors }, terminal: { ...made.terminal, ...t.terminal }, diff: { ...made.diff, ...t.diff },
     accent: t.accent ?? made.accent ?? null,
   };
@@ -696,6 +696,81 @@ function rainFrame() {
 }
 addEventListener('resize', () => rainSize());
 
+// ---- Terminal background --------------------------------------------------------------------------------------------
+// How solid the terminals are over the window's floor: the tile paints the terminal's background at --terminal-veil (see
+// .tile in app.css). A theme that lets you see through says how solid they start ("terminalBackground": Matrix's 42 shows
+// its rain, Tron's 100 starts solid), and only then is there a slider in each terminal's corner to change it. Yours is kept
+// per theme, so Matrix can be nearly solid for you while Tron stays as it is. Without it the terminals are solid.
+const veil = { byTheme: store.get('terminalVeil', {}) };
+const veilKey = () => theme.pref;
+/** The theme's own amount, 0–100, or null when it keeps the terminals solid (and has no slider). */
+const veilOwn = (look = themeLook()) => (typeof look?.terminalBackground === 'number' ? look.terminalBackground : null);
+/** Your amount for the theme on, 0–100, or null for the theme's own. */
+function veilSetting() {
+  const v = veil.byTheme?.[veilKey()];
+  return typeof v === 'number' && Number.isFinite(v) ? Math.min(100, Math.max(0, Math.round(v))) : null;
+}
+/** The amount on the page now, 0–100. */
+function veilAmount() {
+  const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--terminal-veil'));
+  return Number.isFinite(v) ? Math.min(100, Math.max(0, v)) : 100;
+}
+/** Whether the terminals' own canvas must be see-through: over a floor, or under a veil of less than 100%. */
+const seeThrough = (look = themeLook()) => !!(look?.grid || look?.rain) || veilAmount() < 100;
+/**
+ * Puts the amount on the page (yours, else the theme's own; none when the theme keeps the terminals solid), marks the
+ * page while the terminals are see-through, and while the theme has a slider (data-veil-slider shows it).
+ */
+function markVeil(look = themeLook(), value = veilSetting()) {
+  const root = document.documentElement;
+  const own = veilOwn(look);
+  const amount = own === null ? null : value ?? own;
+  if (amount === null) root.style.removeProperty('--terminal-veil');
+  else root.style.setProperty('--terminal-veil', amount + '%');
+  if (own === null) delete root.dataset.veilSlider;
+  else root.dataset.veilSlider = '';
+  if (seeThrough(look)) root.dataset.veil = '';
+  else delete root.dataset.veil;
+}
+/** The amount on the page, every terminal dressed for it, and every tile's slider at it. */
+function applyVeil(value = veilSetting()) {
+  markVeil(themeLook(), value);
+  for (const s of state.sessions) if (s.term) dressCursor(s);
+  syncVeilSliders();
+}
+/**
+ * The small slider in a tile's corner (see .tile-veil in app.css), shown while the theme has one. Dragging shows at once;
+ * letting go keeps it for the theme on (or forgets yours, back at the theme's own). Its clicks stay its own, so they
+ * don't expand the tile.
+ */
+function veilSlider() {
+  const v = String(Math.round(veilAmount()));
+  const input = h('input', { type: 'range', min: '0', max: '100', step: '1', value: v, 'aria-label': 'How solid the terminal is' });
+  const out = h('span', {}, v + '%');
+  input.addEventListener('input', () => applyVeil(+input.value));
+  input.addEventListener('change', () => { const n = +input.value; setVeil(n === veilOwn() ? null : n); });
+  const el = h('div', { class: 'tile-veil', title: "How solid the terminals are over the theme's floor, for this theme. Drag to change it." }, input, out);
+  for (const type of ['pointerdown', 'mousedown', 'click', 'dblclick', 'contextmenu']) el.addEventListener(type, (e) => e.stopPropagation());
+  return el;
+}
+/** Every tile's slider at the amount on the page. */
+function syncVeilSliders() {
+  const v = String(Math.round(veilAmount()));
+  for (const s of state.sessions) {
+    if (!s.veil) continue;
+    const input = s.veil.querySelector('input');
+    if (input.value !== v) input.value = v;
+    s.veil.querySelector('span').textContent = v + '%';
+  }
+}
+/** Your amount for the theme on (null takes it away), kept and shown. */
+function setVeil(value) {
+  if (value === null) delete veil.byTheme[veilKey()];
+  else veil.byTheme[veilKey()] = value;
+  store.set('terminalVeil', veil.byTheme);
+  applyVeil();
+}
+
 /** Marks the page with the theme: data-theme light or dark for the stylesheet, and a theme's own colours, font and glow. */
 function markTheme(look = themeLook()) {
   const root = document.documentElement;
@@ -710,6 +785,7 @@ function markTheme(look = themeLook()) {
   else delete root.dataset.grid;
   if (look?.rain) root.dataset.rain = '';
   else delete root.dataset.rain;
+  markVeil(look);   // after the floor is marked: whether the terminals are see-through depends on it
   digitalRain(!!look?.rain);
 }
 markTheme(themes.last?.id === theme.pref ? themes.last : null);   // the accent isn't known yet: last time's look
@@ -879,14 +955,15 @@ const BURST_MOVES = 12, BURST_MS = 500;
 const trailsAllowed = () => !matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /**
- * The terminal's colours as the theme wants them on screen: see-through over the Grid floor (the tile under it paints
- * the floor's lines, see .tile in app.css), and the cursor a bar, blinking as ever, while the light cycle rides beside it.
+ * The terminal's colours as the theme wants them on screen: see-through over the Grid floor or the rain (the tile under
+ * it paints the floor's lines, see .tile in app.css) and under a veil of less than 100% (the slider in its corner), and the
+ * cursor a bar, blinking as ever, while the light cycle rides beside it.
  */
 function dressCursor(s) {
   const t = termTheme();
   const theme = { ...t };
   const look = themeLook();
-  if (look?.grid || look?.rain) theme.background = 'rgba(0, 0, 0, 0)';
+  if (seeThrough(look)) theme.background = 'rgba(0, 0, 0, 0)';
   s.term.options.theme = theme;
   s.term.options.cursorStyle = s.cycle ? 'bar' : 'block';   // a bar beside the cycle: the cell stays readable
 }
@@ -1051,7 +1128,8 @@ function createSession(info) {
   s.header.addEventListener('mouseenter', () => loadConversationInfo(s));
   s.rail = h('div', { class: 'chat-rail' });
   attachRail(s.rail);
-  s.tile = h('div', { class: 'tile', 'data-id': s.id }, s.header, h('div', { class: 'tile-body' }, s.surface, s.rail, s.cover, s.exitedBadge));
+  s.veil = veilSlider();
+  s.tile = h('div', { class: 'tile', 'data-id': s.id }, s.header, h('div', { class: 'tile-body' }, s.surface, s.rail, s.cover, s.exitedBadge, s.veil));
 
   const term = new Terminal({
     fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, Menlo, "DejaVu Sans Mono", "Courier New", monospace',
@@ -5827,6 +5905,7 @@ function applyTheme(before = null) {
   const look = themeLook();
   store.set('themeLook', look);   // so it paints at once on the next start
   markTheme(look);
+  syncVeilSliders();   // the new theme's amount (its own, or yours for it)
   for (const s of state.sessions) lightCycle(s, look?.cursor === 'light-cycle');   // sets the terminal's colours either way
   if (window.monaco) monaco.editor.setTheme(diffTheme(look));
   applyAccent();
@@ -6423,6 +6502,7 @@ function themeSnapshot(title) {
     ...(look?.grid ? { grid: true } : {}),
     ...(look?.rain ? { rain: true } : {}),
     ...(look?.cursor ? { cursor: look.cursor } : {}),
+    ...(veilOwn(look) !== null ? { terminalBackground: Math.round(veilAmount()) } : {}),   // as you have it now
     accent: { line: value('accent'), strong: value('accent-strong') },
     colors: Object.fromEntries(themes.names.colors.map((n) => [n, value(n)]).filter(([, v]) => v)),
     terminal: Object.fromEntries(themes.names.terminal.filter((n) => terminal[n]).map((n) => [n, terminal[n]])),
