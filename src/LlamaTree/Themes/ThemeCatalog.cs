@@ -26,10 +26,11 @@ namespace LlamaTree.Themes;
 /// How solid the terminals start over the window's floor, 0 to 100 (Matrix's 42 lets its rain show through), and that you
 /// may change it with the slider in a terminal's corner; null keeps the terminals solid, with no slider.
 /// </param>
+/// <param name="Version">"version" in its file (major.minor.patch), as themes from Get themes have; null if it has none.</param>
 internal sealed record ThemeInfo(string Id, string Name, string Base, string? Font, bool Glow, bool Grid, bool Rain, bool Monochrome, string? Cursor, ThemeAccent? Accent,
     IReadOnlyList<ThemeAccentChoice> Accents,
     IReadOnlyDictionary<string, string> Colors, IReadOnlyDictionary<string, string> Terminal, IReadOnlyDictionary<string, string> Diff,
-    bool BuiltIn, int? TerminalBackground = null);
+    bool BuiltIn, int? TerminalBackground = null, string? Version = null);
 
 /// <param name="Line">Lines, ticks and highlights: readable on the theme's background.</param>
 /// <param name="Strong">Fills that carry white text: active tabs, buttons, menus.</param>
@@ -50,7 +51,7 @@ internal static partial class ThemeCatalog
     /// <summary>The names a theme can't take: the app's own choices in the theme menu.</summary>
     private static readonly HashSet<string> Reserved = ["system", "light", "dark"];
 
-    private const int MaxFileBytes = 64 * 1024;
+    internal const int MaxFileBytes = 64 * 1024;
 
     /// <summary>How many accent colours a theme can suggest.</summary>
     public const int MaxAccents = 8;
@@ -224,7 +225,8 @@ internal static partial class ThemeCatalog
             Colors(e, "colors", ColorNames, CssColor(), fileName, problems),
             Colors(e, "terminal", TerminalNames, CssColor(), fileName, problems),
             Colors(e, "diff", DiffNames, HexColor(), fileName, problems),
-            builtIn, terminalBackground);
+            builtIn, terminalBackground,
+            Str(e, "version") is { } v && Plugins.PluginCatalog.VersionPattern().IsMatch(v) ? v : null);
     }
 
     /// <summary>
