@@ -1060,6 +1060,7 @@ function syncSessions(list, projects) {
   saveHiddenProjects();
 
   const seen = new Set();
+  const stopped = [];
   for (const info of list) {
     seen.add(info.id);
     let s = state.byId.get(info.id);
@@ -1073,8 +1074,13 @@ function syncSessions(list, projects) {
     // Running already: it ran on in the session host while no window was open (its output follows as a replay).
     if (info.running && !s.running) s.started = true;
     s.startedBy = info.startedBy || null;   // the session whose agent started this one (start_session)
-    s.running = info.running || s.running;
+    // A server's list is its word on what runs there. Its sessions can end without an "exited" reaching here: its
+    // LlamaTree restarting on a new version stops them as the connection closes, and so does the server restarting.
+    // Taken as exited, the terminal says so, and Enter starts it again there, rather than typing into nothing.
+    if (info.server && s.running && !info.running) stopped.push(s.id);
+    else s.running = info.running || s.running;
   }
+  for (const id of stopped) onExited(id, null);
   for (const s of [...state.byId.values()]) {
     if (!seen.has(s.id)) disposeSession(s);
   }
