@@ -486,6 +486,6 @@ internal sealed class HostLink
     private static string ServedId(string pluginId) => Remote is { } r ? PluginAddressing.RemoteId(r, pluginId) : pluginId;
 
     /// <summary>This window's copies of the server's files (see <see cref="ServerCopies"/>).</summary>
-    private ServerCopies Copies => copies ??= new ServerCopies(Path.Combine(AppProfile.CustomFolder ?? AppProfile.LocalFolder, "servers", RemoteKey(Remote!)), Remote!);
+    private ServerCopies Copies => copies ??= new ServerCopies(Path.Combine(AppProfile.CustomFolder ?? AppProfile.LocalFolder, "servers", RemoteKey(Remote!)), Remote);
     private ServerCopies? copies;
 }
