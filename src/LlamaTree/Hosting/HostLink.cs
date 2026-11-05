@@ -385,9 +385,16 @@ internal sealed class HostLink
         {
             // Its output can end a moment before ssh has finished saying why: wait for that (briefly).
             var said = ssh?.ErrorsAsync(TimeSpan.FromSeconds(2)) ?? Task.FromResult("");
+            var tried = ssh;
             _ = said.ContinueWith(t => window.RunOnUi(() =>
             {
                 var why = t.Result;
+                // It runs Windows, found just now: connected to again at once, with the bridge command for Windows.
+                if (tried?.FoundWindows(why) == true && !closing && latest == link)
+                {
+                    _ = ConnectAsync(reload: false);
+                    return;
+                }
                 Failed(why.Length > 0 ? why : "The connection ended before LlamaTree answered on the server.");
             }), TaskScheduler.Default);
             return;

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
 using LlamaTree.Hosting.Link;
@@ -17,8 +18,9 @@ internal sealed class Ssh
     /// shell started by ssh often doesn't have on its PATH). In sh, whatever your login shell is (fish, csh…).
     /// LLAMATREE_REMOTE_COMMAND overrides it.
     /// </summary>
-    private static string RemoteCommand =>
-        Environment.GetEnvironmentVariable("LLAMATREE_REMOTE_COMMAND") is { Length: > 0 } c ? c : DefaultRemoteCommand;
+    private static string RemoteCommand(string target) =>
+        Environment.GetEnvironmentVariable("LLAMATREE_REMOTE_COMMAND") is { Length: > 0 } c ? c
+        : RunsWindows(target) ? WindowsRemoteCommand : DefaultRemoteCommand;
 
     /// <summary>Exit code of the bridge command when LlamaTree isn't installed on the server.</summary>
     public const int NotInstalled = 127;
@@ -26,10 +28,49 @@ internal sealed class Ssh
     /// <summary>What the bridge command says when LlamaTree isn't installed on the server.</summary>
     public const string NotInstalledMessage = "LlamaTree: it is not installed on this server.";
 
+    /// <summary>What the bridge command says when the sh it found is Git's or Cygwin's, on Windows.</summary>
+    internal const string WindowsMessage = "LlamaTree: this server runs Windows.";
+
     internal const string DefaultRemoteCommand =
-        "sh -c 'if command -v llamatree >/dev/null 2>&1; then exec llamatree --attach; " +
+        "sh -c 'case \"$(uname -s 2>/dev/null)\" in MINGW*|MSYS*|CYGWIN*) echo \"" + WindowsMessage + "\" >&2; exit 126;; esac; " +
+        "if command -v llamatree >/dev/null 2>&1; then exec llamatree --attach; " +
         "elif [ -x \"$HOME/.local/bin/llamatree\" ]; then exec \"$HOME/.local/bin/llamatree\" --attach; " +
-        "else echo \"LlamaTree: it is not installed on this server.\" >&2; exit 127; fi'";
+        "else echo \"" + NotInstalledMessage + "\" >&2; exit 127; fi'";
+
+    /// <summary>
+    /// The same on a Windows server, for cmd (the shell Windows' OpenSSH Server runs commands with): LlamaTree where
+    /// its setup puts it, for this user (the default) or for everyone. Its own process is the bridge, as with exec in sh.
+    /// </summary>
+    internal const string WindowsRemoteCommand =
+        "if exist \"%LOCALAPPDATA%\\Programs\\LlamaTree\\LlamaTree.exe\" (\"%LOCALAPPDATA%\\Programs\\LlamaTree\\LlamaTree.exe\" --attach) " +
+        "else if exist \"%ProgramFiles%\\LlamaTree\\LlamaTree.exe\" (\"%ProgramFiles%\\LlamaTree\\LlamaTree.exe\" --attach) " +
+        "else (echo " + NotInstalledMessage + " 1>&2& exit /b 127)";
+
+    /// <summary>Servers found to run Windows (by what the bridge command said there): they're sent its cmd form.</summary>
+    private static readonly ConcurrentDictionary<string, bool> windowsServers = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Whether <paramref name="target"/> has been found to run Windows.</summary>
+    public static bool RunsWindows(string target) => windowsServers.ContainsKey(target);
+
+    /// <summary>
+    /// Whether what ssh said, for a connection that ended before LlamaTree answered, shows a Windows server: cmd found no
+    /// sh (exit code 9009, which an ssh on macOS or Linux reports as 9009's low byte, 49), PowerShell found no sh, or the
+    /// sh was Git's or Cygwin's. cmd's words are in the server's language, so its exit code is what's relied on.
+    /// (A server whose OpenSSH runs commands in PowerShell instead isn't supported: what it says is shown as it is.)
+    /// </summary>
+    internal static bool SaysWindows(int? exitCode, string errors) =>
+        errors.Contains(WindowsMessage, StringComparison.Ordinal) ||
+        (exitCode is 9009 or 49 && errors.Contains("sh", StringComparison.Ordinal));
+
+    /// <summary>
+    /// After a connection that ended before LlamaTree answered: true when that showed the server runs Windows and it
+    /// wasn't known yet, so connecting again at once (with the bridge command for Windows) is worth it.
+    /// </summary>
+    public bool FoundWindows(string errors) =>
+        target != null && !RunsWindows(target) && SaysWindows(exitCode, errors) && windowsServers.TryAdd(target, true);
+
+    private string? target;
+    private int? exitCode;
 
     private readonly StringBuilder errors = new();
     private readonly TaskCompletionSource errorsDone = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -59,7 +100,14 @@ internal sealed class Ssh
     /// line): its exit code, and what it printed (its output and errors, the last 8000 characters). Ended after
     /// <paramref name="timeout"/>.
     /// </summary>
-    public static async Task<(int Code, string Output)> RunScriptAsync(string target, string script, TimeSpan timeout)
+    public static Task<(int Code, string Output)> RunScriptAsync(string target, string script, TimeSpan timeout) =>
+        RunAsync(target, "sh -s", script, timeout);
+
+    /// <summary>
+    /// Runs <paramref name="command"/> on <paramref name="target"/>, in whatever shell its SSH server runs commands with,
+    /// with <paramref name="input"/> as its input (or none): as <see cref="RunScriptAsync"/>.
+    /// </summary>
+    public static async Task<(int Code, string Output)> RunAsync(string target, string command, string? input, TimeSpan timeout)
     {
         var program = Environment.GetEnvironmentVariable("LLAMATREE_SSH") is { Length: > 0 } p ? p : "ssh";
         var psi = new ProcessStartInfo(program)
@@ -70,7 +118,7 @@ internal sealed class Ssh
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
-        foreach (var a in new[] { "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "--", target, "sh -s" }) psi.ArgumentList.Add(a);
+        foreach (var a in new[] { "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "--", target, command }) psi.ArgumentList.Add(a);
         Process ssh;
         try { ssh = Process.Start(psi) ?? throw new InvalidOperationException("ssh didn't start."); }
         catch (System.ComponentModel.Win32Exception) { throw new InvalidOperationException("ssh isn't installed on this computer (or isn't on the PATH)."); }
@@ -90,7 +138,7 @@ internal sealed class Ssh
             ssh.ErrorDataReceived += (_, e) => Keep(e.Data);
             ssh.BeginOutputReadLine();
             ssh.BeginErrorReadLine();
-            await ssh.StandardInput.WriteAsync(script.Replace("\r\n", "\n"));
+            if (input != null) await ssh.StandardInput.WriteAsync(input.Replace("\r\n", "\n"));
             ssh.StandardInput.Close();
             using var cancel = new CancellationTokenSource(timeout);
             try { await ssh.WaitForExitAsync(cancel.Token); }
@@ -118,7 +166,7 @@ internal sealed class Ssh
             RedirectStandardError = true,
         };
         // Keep-alives notice a dead connection within about 45 seconds.
-        foreach (var a in new[] { "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "--", target, RemoteCommand })
+        foreach (var a in new[] { "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "--", target, RemoteCommand(target) })
             psi.ArgumentList.Add(a);
         Process? ssh;
         try
@@ -132,6 +180,7 @@ internal sealed class Ssh
         if (ssh == null) return new Ssh { Failure = "ssh didn't start." };
         var result = new Ssh
         {
+            target = target,
             Stream = new DuplexStream(ssh.StandardOutput.BaseStream, ssh.StandardInput.BaseStream, () =>
             {
                 try { if (!ssh.HasExited) ssh.Kill(); } catch (Exception) { }
@@ -142,7 +191,10 @@ internal sealed class Ssh
         {
             if (e.Data == null)
             {
-                result.errorsDone.TrySetResult();   // ssh has ended
+                // ssh has ended (its error output with it): its exit code is the server's command's.
+                try { if (ssh.WaitForExit(1000)) result.exitCode = ssh.ExitCode; }
+                catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException) { }
+                result.errorsDone.TrySetResult();
                 return;
             }
             lock (result.errors) { if (result.errors.Length < 4000) result.errors.AppendLine(e.Data); }

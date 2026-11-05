@@ -28,6 +28,10 @@ internal static partial class ServerUpdate
     /// <summary>Installs <paramref name="version"/> on <paramref name="target"/>. Returns what to tell you; throws with why it didn't.</summary>
     public static async Task<string> UpdateAsync(string target, Version version)
     {
+        // Its setup can't replace a session host that's running in your desktop session there, which setup run over
+        // SSH (in a session of its own) doesn't see: it's updated there, as any Windows install of LlamaTree is.
+        if (Ssh.RunsWindows(target))
+            throw new InvalidOperationException($"{target} runs Windows: update LlamaTree there (LlamaTree's menu, Check for updates), and its sessions here pick it up when it restarts.");
         var files = await UpdateService.ReleaseFilesAsync(version);
         // Only addresses and hashes that are plainly that go into the script.
         string Var(string name, string file, bool hash)

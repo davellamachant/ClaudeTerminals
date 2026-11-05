@@ -33,7 +33,7 @@ internal static class HostBridge
         // holds its lock a moment, and the one started meanwhile sees it and leaves.
         for (var i = 0; i < 120 && host == null; i++)
         {
-            if (i % 12 == 0 && !SessionHost.StartDetached()) break;
+            if (i % 12 == 0 && !StartHost(i)) break;
             host = await HostEndpoint.ConnectAsync(TimeSpan.FromMilliseconds(250));
         }
         if (host == null)
@@ -49,6 +49,19 @@ internal static class HostBridge
             await Task.WhenAny(Pump(input, host), Pump(host, output));
         }
         return 0;
+    }
+
+    /// <summary>
+    /// Starts the host, on try <paramref name="i"/>. On Windows, in your desktop session at first (see
+    /// <see cref="WindowsHostStart"/>); then, if none has answered in the six seconds or so since (you aren't signed in
+    /// there), or at once if Task Scheduler wouldn't take it, outside the SSH connection's job. A second host, if the
+    /// first was only slow, sees the first and leaves.
+    /// </summary>
+    private static bool StartHost(int i)
+    {
+        if (!OperatingSystem.IsWindows()) return SessionHost.StartDetached();
+        if (i == 0) return WindowsHostStart.InDesktopSession() || WindowsHostStart.OutsideJob();
+        return i < 24 || WindowsHostStart.OutsideJob();
     }
 
     private static async Task Pump(Stream from, Stream to)

@@ -47,10 +47,37 @@ internal static class HostEndpoint
             await client.ConnectAsync((int)timeout.TotalMilliseconds);
             return client;
         }
+        catch (UnauthorizedAccessException) when (OperatingSystem.IsWindows())
+        {
+            await client.DisposeAsync();
+            return await ConnectAsUserAsync(timeout);
+        }
         catch (Exception ex) when (ex is TimeoutException or IOException or UnauthorizedAccessException)
         {
             await client.DisposeAsync();
             return null;
         }
+    }
+
+    /// <summary>
+    /// On Windows, CurrentUserOnly checks that the pipe's owner is this process's token's default owner, which in an
+    /// administrator's elevated token (an SSH sign-in's, say) is the Administrators group rather than the user, while
+    /// the host on the desktop made its pipe as the user. This checks the pipe's owner is this user instead: connected
+    /// to without the option (only this user may: the host's pipe lets no one else in), then refused unless it is.
+    /// </summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static async Task<Stream?> ConnectAsUserAsync(TimeSpan timeout)
+    {
+        var client = new NamedPipeClientStream(".", Name, PipeDirection.InOut, PipeOptions.Asynchronous);
+        try
+        {
+            await client.ConnectAsync((int)timeout.TotalMilliseconds);
+            var owner = client.GetAccessControl().GetOwner(typeof(System.Security.Principal.SecurityIdentifier));
+            using var me = System.Security.Principal.WindowsIdentity.GetCurrent();
+            if (owner != null && owner.Equals(me.User)) return client;
+        }
+        catch (Exception ex) when (ex is TimeoutException or IOException or UnauthorizedAccessException or InvalidOperationException) { }
+        await client.DisposeAsync();
+        return null;
     }
 }
