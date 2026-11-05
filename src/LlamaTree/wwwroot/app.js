@@ -475,9 +475,10 @@ function renderNav() {
       ? h('div', { class: 'nav-sessions unnamed' }, shown.map(tabOf), sessionPlus(shown, 'like these'))
       : h('div', { class: 'nav-hint' }, 'Projects group your sessions, so you can show and hide them together.'));
   }
-  fill($('#navHead'), h('span', { class: 'project-bar-label' }, 'Projects'), h('span', { class: 'spacer' }), projectAllButtons(groups));
+  // In Left there's no title bar (see applyNavLayout): All sessions heads the bar, and New Session joins + Project.
+  fill($('#navHead'), tree && $('#btnGrid'), h('span', { class: 'project-bar-label' }, 'Projects'), h('span', { class: 'spacer' }), projectAllButtons(groups));
   fill($('#navList'), rows);
-  fill($('#navFoot'), projectAddButton());
+  fill($('#navFoot'), tree && $('#btnAdd'), projectAddButton());
   syncStatus($('#navList'));
   if (tree) revealActive($('#navList'), '.session-tab.active');
 }
@@ -8068,6 +8069,7 @@ $('#btnAddEmpty').addEventListener('click', () => showAddDialog());
 makeScrollable($('#projectTabs'));
 makeScrollable($('#sessionTabs'));
 makeScrollable($('#docTabs'), 'doc');
+$('#docTabs').parentElement.append(h('div', { id: 'docTools' }));   // the title bar's buttons, in Left (see applyNavLayout)
 
 /** Moves `id` before or after `targetId` in a list of ids. */
 function moveId(ids, id, targetId, before) {
@@ -8118,16 +8120,22 @@ const NAV_LAYOUTS = [
 ];
 
 /**
- * Applies the layout: Top keeps the two rows of tabs; Hybrid and Left drop the projects row for the bar down the left
- * (see renderNav), and the buttons that row held join the title bar, All sessions first and the version and theme last.
+ * Applies the layout: Top keeps the two rows of tabs; Hybrid drops the projects row for the bar down the left (see
+ * renderNav), and the buttons that row held join the title bar, All sessions first and the version and theme last.
+ * Left drops the title bar too, with no session tabs left in it: All sessions and New Session go to the bar down the
+ * left (renderNav puts them there), and the rest to the end of the tab row above the terminals (#docTools).
  */
 function applyNavLayout(render = true) {
-  const top = state.navLayout === 'top';
+  const top = state.navLayout === 'top', left = state.navLayout === 'left';
   document.body.dataset.nav = state.navLayout;
   document.body.classList.toggle('no-nav-branches', !state.navBranches);
-  const row = top ? $('#projectBar') : $('#titlebar');
-  row.prepend($('#btnGrid'));
-  row.append($('#appVersion'), $('#btnTheme'));
+  if (left) $('#docTools').append($('#btnUpdate'), $('#pluginButtons'), $('#btnGit').parentElement, $('#appVersion'), $('#btnTheme'));
+  else {
+    $('#titlebar').append($('#btnUpdate'), $('#btnAdd'), $('#btnGit').parentElement, $('#pluginButtons'));   // as index.html has them
+    const row = top ? $('#projectBar') : $('#titlebar');
+    row.prepend($('#btnGrid'));
+    row.append($('#appVersion'), $('#btnTheme'));
+  }
   $('#navBar').style.width = state.navWidth + 'px';
   if (render) applyProjectFilter();   // redraws both bars, and the empty grid's hint says where the projects are
 }

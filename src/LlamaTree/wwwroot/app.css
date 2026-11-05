@@ -888,8 +888,17 @@ img.plugin-ic { width: 16px; height: 16px; flex: none; object-fit: contain; }
 body:is([data-nav="hybrid"], [data-nav="left"]) #navBar { display: flex; }
 body:is([data-nav="hybrid"], [data-nav="left"]) #navSplitter { display: block; }
 body:is([data-nav="hybrid"], [data-nav="left"]) #projectBar { display: none; }
-body[data-nav="left"] #titlebar > .tab-scroller { display: none; }
+body[data-nav="left"] #titlebar { display: none; }   /* its buttons are in the bar down the left and in #docTools */
 #titlebar > .app-version { margin-left: 4px; }
+/* In Left, the title bar's other buttons, at the end of the tab row above the terminals: the side panel's beside it. */
+#docTools { display: none; flex: none; align-items: center; gap: 3px; height: 100%; padding: 0 4px 0 8px; margin-left: auto; }
+body[data-nav="left"] #docTools { display: flex; }
+#docTools .tb-btn { height: 24px; min-width: 24px; }
+#docTools .app-version { margin: 0 2px; }
+#navHead > #btnGrid { flex: none; height: 24px; min-width: 24px; margin: 0 4px 0 -4px; }
+#navFoot { display: flex; align-items: center; gap: 2px; }
+#navFoot > #btnAdd { flex: none; padding: 0 8px; color: var(--text-dim); }
+#navFoot > #btnAdd:hover { color: var(--text); }
 
 #navBar { flex: none; flex-direction: column; min-width: 160px; min-height: 0; background: var(--chrome-3); }
 #navSplitter { width: 5px; flex: none; cursor: col-resize; background: var(--chrome); border-right: 1px solid var(--border-soft); }
