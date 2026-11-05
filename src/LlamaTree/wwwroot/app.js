@@ -6105,33 +6105,6 @@ function onReconnecting(m) {
   ], [h('div', { class: 'spacer' }), h('button', { class: 'btn primary', onclick: closeModal }, 'OK')]);
 }
 
-/** Opens a window for a server's sessions: ssh to it, using your keys or ssh-agent. */
-function connectToServerDialog() {
-  const recent = store.get('servers', []);
-  const target = h('input', { placeholder: 'user@server', spellcheck: 'false', value: recent[0] ?? '', list: 'recentServers' });
-  const error = h('div', { class: 'form-error', hidden: true });
-  const connect = async () => {
-    const t = target.value.trim();
-    if (!t) return;
-    try {
-      await request('app.openRemote', { target: t });
-      store.set('servers', [t, ...recent.filter((r) => r !== t)].slice(0, 8));
-      closeModal();
-      toast(`Opening a window for ${t}…`);
-    } catch (err) {
-      error.textContent = err.message;
-      error.hidden = false;
-    }
-  };
-  target.addEventListener('keydown', (e) => { if (e.key === 'Enter') connect(); });
-  openModal('Connect to a server', [
-    field('Server', target, 'As user@server, ssh://user@server:port, or a Host from your SSH config.'),
-    h('datalist', { id: 'recentServers' }, recent.map((r) => h('option', { value: r }))),
-    h('p', { class: 'help' }, 'Its sessions open in a window of their own, and keep running on the server when the window closes or the connection drops. LlamaTree signs in with ssh using your keys or ssh-agent (it can’t ask for a password), and LlamaTree must be installed on the server.'),
-    error,
-  ], [h('div', { class: 'spacer' }), h('button', { class: 'btn', onclick: closeModal }, 'Cancel'), h('button', { class: 'btn primary', onclick: connect }, 'Connect')]);
-}
-
 /**
  * A server's folders and files, for a window showing a server's sessions (this computer's file manager and folder
  * picker can't reach them). Double-clicking a folder (or Enter) goes into it; a file opens on this computer, from a
@@ -6272,8 +6245,6 @@ function versionMenu(x, y) {
     ...[['ask', 'Ask each time'], ['keep', 'Keep them running'], ['stop', 'Stop them']].map(([value, label]) =>
       ({ label, checked: closeChoice() === value, action: () => store.set('closeChoice', value) })),
     { label: machine ? `Quit and stop all sessions on ${machine.remote}` : 'Quit and stop all sessions', action: () => request('app.close', { stop: true }) },
-    '-',
-    { icon: 'terminal', label: 'Connect to a server…', action: connectToServerDialog },
     '-',
     { icon: 'info', label: `LlamaTree ${updates.current ?? ''}`.trim() + ' · release notes',
       action: () => request('openUrl', { uri: 'https://github.com/LlamachantTechnology/LlamaTree/releases' }) },

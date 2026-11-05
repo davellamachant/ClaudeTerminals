@@ -236,17 +236,6 @@ internal sealed class HostLink
                     if (Uri.TryCreate(Str(msg, "uri"), UriKind.Absolute, out var u) && (u.Scheme == Uri.UriSchemeHttp || u.Scheme == Uri.UriSchemeHttps))
                         Desktop.OpenExternal(u.AbsoluteUri);
                     break;
-                case "app.openRemote":
-                {
-                    // Another window, for a server's sessions (this one stays as it is).
-                    var target = Str(msg, "target").Trim();
-                    if (!IsValidTarget(target)) throw new InvalidOperationException("Enter a server as user@server, or a Host from your SSH config.");
-                    var psi = new ProcessStartInfo(Environment.ProcessPath ?? throw new InvalidOperationException("No program path.")) { UseShellExecute = false };
-                    psi.ArgumentList.Add("--remote");
-                    psi.ArgumentList.Add(target);
-                    Process.Start(psi)?.Dispose();
-                    break;
-                }
                 case "app.reconnect":
                     if (channel == null && latest is not { IsOpen: true }) _ = ConnectAsync(reload: everWelcomed);
                     break;
