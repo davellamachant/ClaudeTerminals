@@ -17,7 +17,7 @@ namespace LlamaTree.Terminal;
 /// </summary>
 internal sealed unsafe class UnixPtyProcess : IPtyProcess
 {
-    /// <summary>One start at a time: ptsname's answer is shared, and a new terminal must be close-on-exec before another start.</summary>
+    /// <summary>One start at a time: ptsname's answer is shared.</summary>
     private static readonly object SpawnLock = new();
 
     /// <summary>macOS: makes the terminal on standard input the controlling one, then runs the command.</summary>
@@ -56,16 +56,15 @@ internal sealed unsafe class UnixPtyProcess : IPtyProcess
             {
                 // The terminal: its controlling side for this process, and the program's side opened here too, so that
                 // reading doesn't end (EIO) before the program has opened its own copy.
-                master = libc.posix_openpt(Libc.O_RDWR | libc.O_NOCTTY);
+                master = OpenMaster(libc);
                 if (master < 0) throw Failed("posix_openpt");
-                libc.Ioctl(master, libc.FIOCLEX, null);
                 if (libc.grantpt(master) != 0 || libc.unlockpt(master) != 0) throw Failed("grantpt");
                 var name = libc.ptsname(master);
                 if (name == null) throw Failed("ptsname");
                 var slavePath = Marshal.PtrToStringUTF8((IntPtr)name)!;
-                slave = libc.open(Utf8(slavePath, owned), Libc.O_RDWR | libc.O_NOCTTY);
+                // Close-on-exec as it's opened, likewise (open takes O_CLOEXEC on both systems).
+                slave = libc.open(Utf8(slavePath, owned), Libc.O_RDWR | libc.O_NOCTTY | libc.O_CLOEXEC);
                 if (slave < 0) throw Failed("open " + slavePath);
-                libc.Ioctl(slave, libc.FIOCLEX, null);
                 // The size is set once the program's side is open: macOS resets it when that side is first opened.
                 var size = WinSize(cols, rows);
                 libc.Ioctl(slave, libc.TIOCSWINSZ, &size);
@@ -129,6 +128,26 @@ internal sealed unsafe class UnixPtyProcess : IPtyProcess
         writer.Start();
         reader.Start();
         new Thread(WaitForExit) { IsBackground = true, Name = $"pty-exit-{ProcessId}" }.Start();
+    }
+
+    /// <summary>
+    /// The terminal's controlling side, close-on-exec from the moment it's opened: a program started meanwhile by another
+    /// thread (git, say, through Process.Start, which doesn't take <see cref="SpawnLock"/>) mustn't inherit it. Linux:
+    /// posix_openpt takes O_CLOEXEC (glibc and musl hand the flags to open). macOS: posix_openpt is documented to take
+    /// only O_RDWR and O_NOCTTY, so /dev/ptmx (what it opens there) is opened with O_CLOEXEC directly. Only if that fails
+    /// is it opened the old way, without the flag, and made close-on-exec straight after. Below 0 on failure.
+    /// </summary>
+    private static int OpenMaster(Libc libc)
+    {
+        var flags = Libc.O_RDWR | libc.O_NOCTTY;
+        int fd;
+        if (OperatingSystem.IsMacOS())
+            fixed (byte* ptmx = "/dev/ptmx\0"u8) fd = libc.open(ptmx, flags | libc.O_CLOEXEC);
+        else fd = libc.posix_openpt(flags | libc.O_CLOEXEC);
+        if (fd >= 0) return fd;
+        fd = libc.posix_openpt(flags);
+        if (fd >= 0) libc.Ioctl(fd, libc.FIOCLEX, null);
+        return fd;
     }
 
     /// <summary>Linux's signal numbers as macOS's: SIGCHLD 17→20 and SIGTSTP 20→18; the others used here match.</summary>
@@ -338,6 +357,10 @@ internal sealed unsafe class Libc
     private readonly IntPtr ioctl;
     private readonly delegate* unmanaged<byte*, byte*, byte*> realpath;
     private readonly delegate* unmanaged<void*, void> free;
+    private readonly delegate* unmanaged<uint> geteuid;
+    /// <summary>lstat, or glibc's __lxstat before 2.33 (<see cref="lxstatVersion"/> 0 or more); zero where struct stat isn't known here.</summary>
+    private readonly IntPtr lstat;
+    private readonly int lxstatVersion = -1;
 
     private static string LibraryPath => OperatingSystem.IsMacOS() ? "/usr/lib/libSystem.B.dylib" : "libc.so.6";
 
@@ -387,6 +410,47 @@ internal sealed unsafe class Libc
             ? (delegate* unmanaged<void*, int, int>)fchdir : null;
         realpath = (delegate* unmanaged<byte*, byte*, byte*>)Find("realpath");
         free = (delegate* unmanaged<void*, void>)Find("free");
+        geteuid = (delegate* unmanaged<uint>)Find("geteuid");
+        var arch = RuntimeInformation.ProcessArchitecture;
+        if (OperatingSystem.IsMacOS())
+        {
+            // On Intel, plain lstat is the old one with 32-bit inode numbers (another struct): the 64-bit one is lstat$INODE64.
+            if (arch == Architecture.X64 && NativeLibrary.TryGetExport(library, "lstat$INODE64", out var l)) lstat = l;
+            else if (arch == Architecture.Arm64 && NativeLibrary.TryGetExport(library, "lstat", out l)) lstat = l;
+        }
+        else if (OperatingSystem.IsLinux() && arch is Architecture.X64 or Architecture.Arm64)
+        {
+            if (NativeLibrary.TryGetExport(library, "lstat", out var l)) lstat = l;
+            else if (NativeLibrary.TryGetExport(library, "__lxstat", out l)) { lstat = l; lxstatVersion = arch == Architecture.X64 ? 1 : 0; }
+        }
+    }
+
+    /// <summary>geteuid(2): the user this process acts as.</summary>
+    public uint EffectiveUserId() => geteuid();
+
+    /// <summary>Whether <see cref="LStat"/> can be used here (macOS; Linux on x64 and arm64).</summary>
+    public bool CanLStat => lstat != IntPtr.Zero;
+
+    /// <summary>
+    /// lstat(2): the owner and mode (with its file type bits) of <paramref name="path"/> itself, a link not followed.
+    /// False if it can't be told (nothing there, say).
+    /// </summary>
+    public bool LStat(string path, out uint owner, out uint mode)
+    {
+        owner = mode = 0;
+        if (lstat == IntPtr.Zero) return false;
+        var bytes = Encoding.UTF8.GetBytes(path + "\0");
+        var buffer = stackalloc byte[512];   // struct stat: 144 bytes on x64 and macOS, 128 on Linux arm64
+        int r;
+        fixed (byte* p = bytes)
+            r = lxstatVersion >= 0
+                ? ((delegate* unmanaged<int, byte*, byte*, int>)lstat)(lxstatVersion, p, buffer)
+                : ((delegate* unmanaged<byte*, byte*, int>)lstat)(p, buffer);
+        if (r != 0) return false;
+        if (OperatingSystem.IsMacOS()) { mode = *(ushort*)(buffer + 4); owner = *(uint*)(buffer + 16); }               // dev (4), mode (2), nlink (2), ino (8), uid
+        else if (RuntimeInformation.ProcessArchitecture == Architecture.X64) { mode = *(uint*)(buffer + 24); owner = *(uint*)(buffer + 28); }   // dev, ino, nlink (8 each), mode, uid
+        else { mode = *(uint*)(buffer + 16); owner = *(uint*)(buffer + 24); }                                             // dev, ino (8 each), mode, nlink (4 each), uid
+        return true;
     }
 
     /// <summary>realpath(3): the path with every link resolved, or null if it doesn't exist.</summary>
