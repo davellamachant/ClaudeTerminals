@@ -858,12 +858,14 @@ const TERM_THEME_LIGHT = {
 /** The terminals' colours: a theme's own over its base's. */
 const termTheme = (look = themeLook()) => ({ ...(isLight() ? TERM_THEME_LIGHT : TERM_THEME_DARK), ...look?.terminal });
 
-// The light cycle cursor (a theme's "cursor": "light-cycle"): the cursor is a light cycle, drawn in the terminal's cursor
-// colour over the cell the cursor is in (its rear wheel on the cell, the rest riding out over the next two), leaving a
-// ribbon of light that fades behind it as it moves, turning at right angles when it changes line. It's a layer over the
-// terminal's screen; xterm's own cursor is made invisible (an underline in the background colour) while it's on.
+// The light cycle (a theme's "cursor": "light-cycle"): a light cycle drawn in the terminal's cursor colour, riding a little to
+// the right of the cursor (CYCLE_OFFSET; three cells wide) and leaving a ribbon of light that fades behind it as it moves,
+// turning at right angles when it changes line. It's a layer over the terminal's screen. The cursor itself stays a
+// blinking bar in the cursor colour, so you can see where you're typing and whether the terminal has focus; the cycle
+// dims while it hasn't (see .cycle-head in app.css).
 const TRAIL_MAX = 48;        // pieces of ribbon kept at once
 const CYCLE_CELLS = 3;       // how many cells wide the light cycle is drawn
+const CYCLE_OFFSET = 25;     // how far right of the cursor it rides, in pixels, so it never covers what you're typing
 // Side view, facing right, in a 24 by 16 box: two tall wheels with hubs, the canopy sweeping over them, the rider's
 // back, and the white light stripe along the canopy.
 const CYCLE_SVG = '<svg viewBox="0 0 24 16" preserveAspectRatio="xMinYMid meet" aria-hidden="true">' +
@@ -878,16 +880,15 @@ const trailsAllowed = () => !matchMedia('(prefers-reduced-motion: reduce)').matc
 
 /**
  * The terminal's colours as the theme wants them on screen: see-through over the Grid floor (the tile under it paints
- * the floor's lines, see .tile in app.css), and xterm's own cursor made invisible while the light cycle stands in for it.
+ * the floor's lines, see .tile in app.css), and the cursor a bar, blinking as ever, while the light cycle rides beside it.
  */
 function dressCursor(s) {
   const t = termTheme();
   const theme = { ...t };
   const look = themeLook();
   if (look?.grid || look?.rain) theme.background = 'rgba(0, 0, 0, 0)';
-  if (s.cycle) { theme.cursor = t.background; theme.cursorAccent = t.background; }
   s.term.options.theme = theme;
-  s.term.options.cursorStyle = s.cycle ? 'underline' : 'block';
+  s.term.options.cursorStyle = s.cycle ? 'bar' : 'block';   // a bar beside the cycle: the cell stays readable
 }
 
 /** Puts the light cycle on a session's terminal, or takes it off, and sets the terminal's colours either way. */
@@ -916,7 +917,7 @@ function lightCycle(s, on) {
     const cw = screen.clientWidth / term.cols, ch = screen.clientHeight / term.rows;
     const x = b.cursorX, y = b.cursorY;
     head.hidden = false;
-    Object.assign(head.style, { left: `${x * cw}px`, top: `${y * ch}px`, width: `${cw * CYCLE_CELLS}px`, height: `${ch}px` });
+    Object.assign(head.style, { left: `${x * cw + CYCLE_OFFSET}px`, top: `${y * ch}px`, width: `${cw * CYCLE_CELLS}px`, height: `${ch}px` });
     const from = c.last;
     c.last = { x, y };
     if (!from || (from.x === x && from.y === y)) return;
@@ -925,7 +926,7 @@ function lightCycle(s, on) {
     c.moves.push(now);
     if (c.moves.length > BURST_MOVES || !trailsAllowed()) return;
     // The ribbon, from the rear wheel: down (or up) the old column to the new line, then along it to the new cell.
-    const mid = (v, size) => (v + 0.5) * size;
+    const midX = (col) => (col + 0.5) * cw + CYCLE_OFFSET;   // a column's middle, where the cycle rides
     const wheel = (row) => (row + 0.69) * ch;   // the wheels' height in the cell (11 of 16 in CYCLE_SVG)
     const piece = (left, top, width, height) => {
       const p = h('div', { class: 'cycle-trail', style: `left:${left}px;top:${top}px;width:${width}px;height:${height}px` });
@@ -934,8 +935,8 @@ function lightCycle(s, on) {
       c.pieces.push(p);
       while (c.pieces.length > TRAIL_MAX) c.pieces.shift().remove();
     };
-    if (from.y !== y) piece(mid(from.x, cw) - 1, Math.min(wheel(from.y), wheel(y)), 2, Math.abs(y - from.y) * ch);
-    if (from.x !== x) piece(Math.min(mid(from.x, cw), mid(x, cw)), wheel(y) - 1, Math.abs(x - from.x) * cw, 2);
+    if (from.y !== y) piece(midX(from.x) - 1, Math.min(wheel(from.y), wheel(y)), 2, Math.abs(y - from.y) * ch);
+    if (from.x !== x) piece(Math.min(midX(from.x), midX(x)), wheel(y) - 1, Math.abs(x - from.x) * cw, 2);
   };
   const queue = () => { if (!c.queued) { c.queued = true; requestAnimationFrame(ride); } };
   c.move = s.term.onCursorMove(queue);

@@ -527,6 +527,7 @@ button.chip:hover { border-color: var(--border); color: var(--text); }
 .cycle-head { position: absolute; color: var(--cycle); filter: drop-shadow(0 0 2px var(--cycle)) drop-shadow(0 0 6px var(--cycle)); animation: cycle-idle 1.8s ease-in-out infinite; }
 .cycle-head svg { display: block; width: 100%; height: 100%; overflow: visible; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 @keyframes cycle-idle { 50% { opacity: .7; } }
+.xterm:not(.focus) .cycle-head { opacity: .3; animation: none; }   /* only the focused terminal's cycle is lit, as only its cursor blinks */
 .cycle-trail { position: absolute; background: var(--cycle); box-shadow: 0 0 4px var(--cycle), 0 0 10px var(--cycle); opacity: .85; animation: cycle-fade .8s ease-out forwards; }
 @keyframes cycle-fade { to { opacity: 0; } }
 .tile-cover { position: absolute; inset: 0; cursor: zoom-in; z-index: 2; }
