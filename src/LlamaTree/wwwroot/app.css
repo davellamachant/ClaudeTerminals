@@ -1596,3 +1596,20 @@ button.sb-item:hover, .sb-item.open { background: var(--hover-strong); color: va
 }
 .spawn-warn { padding: 6px 8px; border-radius: 4px; background: var(--info-bg); border: 1px solid var(--info-border); }
 .spawn-ask code { word-break: break-all; }
+/* Let my other computers connect */
+.remote-access { display: flex; flex-direction: column; gap: 10px; max-width: 560px; }
+.remote-access p { margin: 0; }
+.remote-access-status { display: flex; align-items: center; gap: 8px; font-weight: 600; color: var(--text-strong); }
+.remote-access-status .dot.on { background: var(--ok); }
+.remote-access-head { margin-top: 6px; font-weight: 600; color: var(--text-strong); }
+.remote-access-list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.remote-access-code { font: 12px "Cascadia Mono", Consolas, Menlo, "DejaVu Sans Mono", monospace; background: var(--code-bg); padding: 1px 5px; border-radius: 3px; user-select: text; overflow-wrap: anywhere; }
+.remote-access-key { display: flex; align-items: flex-start; gap: 8px; }
+.remote-access-key .remote-access-code { flex: 1; padding: 6px 8px; }
+.remote-access-warn { color: var(--warn, var(--text-strong)); }
+.remote-access-note { color: var(--text-faint); }
+textarea.key-text {
+  width: 100%; resize: vertical; padding: 6px 8px; border-radius: 4px; border: 1px solid var(--border); background: var(--chrome-2);
+  color: var(--text); font: 12px "Cascadia Mono", Consolas, Menlo, "DejaVu Sans Mono", monospace; outline: none;
+}
+textarea.key-text:focus { border-color: var(--focus); }

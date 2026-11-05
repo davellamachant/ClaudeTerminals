@@ -245,6 +245,32 @@ internal sealed class HostLink
                 case "window.closing":
                     closeAcknowledged = true;   // the page is asking you (see AskToClose)
                     break;
+                // "Let my other computers connect": about the computer this window is on, so only a window of its own
+                // sessions asks, and Windows' prompts for it come from the window you're looking at.
+                case "remoteAccess.state" when Remote == null && OperatingSystem.IsWindows():
+                    result = RemoteAccess.State();
+                    break;
+                case "remoteAccess.myKey.make" when Remote == null && OperatingSystem.IsWindows():
+                    result = RemoteAccess.MakeMyKey();
+                    break;
+                case "remoteAccess.enable" or "remoteAccess.disable" or "remoteAccess.addKey" or "remoteAccess.removeKey"
+                    when Remote == null && OperatingSystem.IsWindows():
+                {
+                    Task<object?> work = type switch
+                    {
+                        "remoteAccess.enable" => RemoteAccess.EnableAsync(Bool(msg, "keysOnly"), Bool(msg, "publicNetworks")).ContinueWith(t => { t.GetAwaiter().GetResult(); return (object?)null; }),
+                        "remoteAccess.disable" => RemoteAccess.DisableAsync().ContinueWith(t => { t.GetAwaiter().GetResult(); return (object?)null; }),
+                        "remoteAccess.addKey" => RemoteAccess.AddKeyAsync(Str(msg, "key")).ContinueWith(t => (object?)t.GetAwaiter().GetResult()),
+                        _ => RemoteAccess.RemoveKeyAsync(Str(msg, "fingerprint")).ContinueWith(t => { t.GetAwaiter().GetResult(); return (object?)null; }),
+                    };
+                    _ = work.ContinueWith(t => window.RunOnUi(() =>
+                    {
+                        if (reqId == null) return;
+                        if (t.IsCompletedSuccessfully) Reply(reqId.Value, true, t.Result, null);
+                        else Reply(reqId.Value, false, null, t.Exception?.InnerException?.Message ?? "It didn't finish.");
+                    }), TaskScheduler.Default);
+                    return true;
+                }
                 default:
                     if (Remote != null && ServerConnection.OpensFile(type)) Copies.ExpectFile(Str(msg, "path"));   // a file of that name may come for it
                     return false;
