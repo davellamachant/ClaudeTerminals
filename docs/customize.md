@@ -59,7 +59,7 @@ A theme is only data: the app takes the names above and checks each value, so it
 
 A plugin is a web page of your own, shown in a document tab (like a diff or the Project view) or in the side panel (beside Git Changes). The palette button lists your plugins under **Plugins**, each with the menu items it adds there; pick one to open it. Plugins can add items to a project's or a session's menu too, and a button to the title bar.
 
-**Open the plugins folder**, in the palette menu, opens the folder they live in: `plugins` in the app's data folder (`%APPDATA%\LlamaTree\plugins` on Windows). The folder is read each time the menu opens, so a plugin you add shows without restarting.
+**Open the plugins folder**, in the palette menu, opens the folder they live in: `plugins` in the app's data folder (`%APPDATA%\LlamaTree\plugins` on Windows). The folder is read each time the menu opens, so a plugin you add shows without restarting. The plugins themselves live in this repository under [`plugins/`](../plugins), one folder each with a release to download (its zip and checksum under [Releases](https://github.com/LlamachantTechnology/LlamaTree/releases), tagged `<id>-v<version>`): unzip it into that folder. [`plugins/CONTRIBUTING.md`](../plugins/CONTRIBUTING.md) says how one is written, checked and released.
 
 ### plugin.json
 
@@ -165,7 +165,7 @@ Its messages reach an agent as from the plugin ("Messenger (plugin)"), never fro
 | `sendMessage` `{ to, text, replyTo }` | Sends `text` to the session `to` (an id from `messageTargets`), as a reply to `replyTo` if given: `{ outcome, id }`, `outcome` being `delivered` or `denied`, and `id` the message's, which an answer names as its `replyTo`. |
 | `readMessages` | The messages sent to it since it last read them, each read once: `[{ id, from, fromName, text, sent, replyTo, turn }]`. |
 
-When a message comes for it, the app sends `message` `{ unread, from, fromName }` to its page (once it has loaded, if it isn't open yet); read them with `readMessages`. [`samples/plugins/messenger`](../samples/plugins/messenger) is a plugin that uses them: pick a session, send it a message, and see its answer. To try it, copy the folder into your plugins folder.
+When a message comes for it, the app sends `message` `{ unread, from, fromName }` to its page (once it has loaded, if it isn't open yet); read them with `readMessages`. [Messenger](../plugins/messenger) is a plugin that uses them: pick a session, send it a message, and see its answer. To try it, download its release and unzip it into your plugins folder.
 
 ### Asking Claude about your sessions
 

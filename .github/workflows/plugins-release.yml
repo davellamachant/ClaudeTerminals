@@ -1,0 +1,89 @@
+# A tag <id>-v<version> (messenger-v1.0.0) releases one plugin from plugins/<id>: the folder is checked, zipped as
+# <id>-<version>.zip with the folder as the zip's root, hashed, and published as a GitHub release (not marked latest, so
+# the app's own releases stay the latest) with its CHANGELOG section as the notes. Then catalog.json is rebuilt from
+# every released plugin and put on the rolling "catalog" release, which is what LlamaTree reads to offer the plugins.
+# Push the tag on main after the plugin's pull request has merged. The app's own tags (v1.2.0) don't match the pattern.
+name: Release a plugin
+
+on:
+  push:
+    tags: ['*-v[0-9]*.[0-9]*.[0-9]*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Read the tag
+        id: tag
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          id="${tag%-v*}"
+          version="${tag##*-v}"
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          test -f "plugins/$id/plugin.json" || { echo "no plugins/$id for tag $tag"; exit 1; }
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "tag $tag is not on main"; exit 1; }
+
+      - name: Check the plugin and its version
+        run: |
+          node plugins/tools/validate.mjs "${{ steps.tag.outputs.id }}"
+          v=$(node -e "console.log(JSON.parse(require('fs').readFileSync('plugins/${{ steps.tag.outputs.id }}/plugin.json','utf8')).version)")
+          [ "$v" = "${{ steps.tag.outputs.version }}" ] || { echo "plugin.json says $v, the tag says ${{ steps.tag.outputs.version }}"; exit 1; }
+
+      - name: Zip and hash
+        run: |
+          mkdir -p out
+          (cd plugins && zip -r -X "../out/${{ steps.tag.outputs.id }}-${{ steps.tag.outputs.version }}.zip" "${{ steps.tag.outputs.id }}" -x '*/.DS_Store' '*/Thumbs.db')
+          (cd out && sha256sum "${{ steps.tag.outputs.id }}-${{ steps.tag.outputs.version }}.zip" > "${{ steps.tag.outputs.id }}-${{ steps.tag.outputs.version }}.zip.sha256")
+          cat "out/${{ steps.tag.outputs.id }}-${{ steps.tag.outputs.version }}.zip.sha256"
+
+      - name: Release notes from the CHANGELOG
+        run: |
+          node -e "
+            const fs = require('fs');
+            const log = fs.readFileSync('plugins/${{ steps.tag.outputs.id }}/CHANGELOG.md', 'utf8');
+            const m = log.match(/^## ${{ steps.tag.outputs.version }}\b[^\n]*\n([\s\S]*?)(?=^## |\$(?![\s\S]))/m);
+            const title = JSON.parse(fs.readFileSync('plugins/${{ steps.tag.outputs.id }}/plugin.json', 'utf8')).title;
+            fs.writeFileSync('out/notes.md', (m ? m[1].trim() : 'No notes.') + '\n\nA LlamaTree plugin. Install: unzip into your plugins folder (palette button > Open the plugins folder). ' + title + ' shows under Plugins when the menu next opens, and the app asks before it sees anything.\n');
+            fs.writeFileSync('out/title.txt', 'Plugin: ' + title + ' ' + '${{ steps.tag.outputs.version }}');
+          "
+
+      - name: Publish the release
+        run: |
+          gh release create "${GITHUB_REF_NAME}" --latest=false \
+            --title "$(cat out/title.txt)" --notes-file out/notes.md \
+            "out/${{ steps.tag.outputs.id }}-${{ steps.tag.outputs.version }}.zip" \
+            "out/${{ steps.tag.outputs.id }}-${{ steps.tag.outputs.version }}.zip.sha256"
+
+      - name: Rebuild the catalog from every released plugin
+        run: |
+          mkdir -p sha
+          cp out/*.sha256 sha/
+          for dir in plugins/*/; do
+            id=$(basename "$dir")
+            [ -f "$dir/plugin.json" ] || continue
+            v=$(node -e "console.log(JSON.parse(require('fs').readFileSync('$dir/plugin.json','utf8')).version)")
+            [ -f "sha/$id-$v.zip.sha256" ] && continue
+            gh release download "$id-v$v" --pattern "$id-$v.zip.sha256" --dir sha 2>/dev/null || echo "$id $v: not released yet"
+          done
+          node plugins/tools/catalog.mjs --out out/catalog.json --sha-dir sha
+          cat out/catalog.json
+
+      - name: Put the catalog on the rolling "catalog" release
+        run: |
+          if ! gh release view catalog >/dev/null 2>&1; then
+            gh release create catalog --latest=false --title "Plugin catalog" --notes "catalog.json: every released plugin, rebuilt by the plugin release workflow. LlamaTree reads it to offer the plugins; nobody edits it by hand."
+          fi
+          gh release upload catalog out/catalog.json --clobber
