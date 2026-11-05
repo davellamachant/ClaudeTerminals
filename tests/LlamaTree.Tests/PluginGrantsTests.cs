@@ -99,7 +99,8 @@ public class PluginGrantsTests
     [Fact]
     public void AGrantGoesByThePluginJsonThereNow()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"grants-{Guid.NewGuid():N}.json");
+        using var temp = new TempFolder();
+        var path = temp.File("grants.json");
         try
         {
             var before = new PluginGrants(path);
@@ -151,7 +152,8 @@ public class PluginGrantsTests
     [Fact]
     public void AnswersAreKeptBetweenRuns()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"grants-{Guid.NewGuid():N}.json");
+        using var temp = new TempFolder();
+        var path = temp.File("grants.json");
         try
         {
             var g = new PluginGrants(path);

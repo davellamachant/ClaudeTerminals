@@ -100,8 +100,9 @@ public sealed class SessionHostLinkTests
         lock (holds) paused = count;
         Assert.True(paused <= LinkChannel.MaxHeld / line.Length + 1, $"read {paused} of {sent} while all were held");
         Assert.True(a.IsOpen && b.IsOpen);   // the sender waits; nobody is cut off
-        // Once they're handled, the rest comes.
-        var until = DateTime.UtcNow.AddSeconds(10);
+        // Once they're handled, the rest comes. Some tens of megabytes over a pipe: a slow CI machine (macOS on Intel) has
+        // taken more than 10 seconds, so it's given 30; the loop ends as soon as they're all in.
+        var until = DateTime.UtcNow.AddSeconds(30);
         while (DateTime.UtcNow < until)
         {
             lock (holds)

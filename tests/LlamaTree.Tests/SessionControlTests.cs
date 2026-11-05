@@ -392,7 +392,8 @@ public class SessionControlTests
     [Fact]
     public async Task The_tools_are_offered_and_answer_over_mcp()
     {
-        var mcp = new PanelMcp(new PanelStore(Path.Combine(Path.GetTempPath(), $"panels-{Guid.NewGuid():N}.json")), new RelayHub(new RelayPolicy(null)), control);
+        using var temp = new TempFolder();
+        var mcp = new PanelMcp(new PanelStore(temp.File("panels.json")), new RelayHub(new RelayPolicy(null)), control);
         static JsonElement Msg(string json) => JsonDocument.Parse(json).RootElement;
 
         var list = (await mcp.HandleAsync("a", Msg("""{ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }""")))!.ToJsonString();
