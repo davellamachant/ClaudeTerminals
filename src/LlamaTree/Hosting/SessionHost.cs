@@ -179,16 +179,27 @@ internal sealed class SessionHost : IHostWindow
             // computer's host, showing this one's sessions among its own) isn't.
             pluginCopies = app.Remote != null && root.TryGetProperty("plugins", out var wants) && wants.ValueKind == JsonValueKind.Object;
             toolCalls = app.Remote != null && root.TryGetProperty("tools", out var tools) && tools.ValueKind == JsonValueKind.True;
-            plugins = root.TryGetProperty("plugins", out var pl) && pl.ValueKind == JsonValueKind.Object &&
-                      pl.TryGetProperty("origin", out var o) && o.ValueKind == JsonValueKind.String &&
-                      pl.TryGetProperty("key", out var k) && k.ValueKind == JsonValueKind.String
-                ? new PluginAddressing(o.GetString(), k.GetString())
-                : PluginAddressing.VirtualHosts;
+            plugins = PluginsFrom(root, app.Remote);
         }
         catch (JsonException)
         {
             (windowPid, plugins, app.Remote, pluginCopies, toolCalls) = (null, PluginAddressing.VirtualHosts, null, false, false);
         }
+    }
+
+    /// <summary>
+    /// How the window that said <paramref name="hello"/> serves plugins. A --remote window that serves them under ids of
+    /// their own ("namespaced": true) is given addresses made from those (see <see cref="PluginAddressing.RemoteId"/>).
+    /// </summary>
+    internal static PluginAddressing PluginsFrom(JsonElement hello, string? remote)
+    {
+        if (!hello.TryGetProperty("plugins", out var pl) || pl.ValueKind != JsonValueKind.Object) return PluginAddressing.VirtualHosts;
+        var site = pl.TryGetProperty("origin", out var o) && o.ValueKind == JsonValueKind.String &&
+                   pl.TryGetProperty("key", out var k) && k.ValueKind == JsonValueKind.String
+            ? (Origin: o.GetString(), Key: k.GetString())
+            : (Origin: null, Key: null);
+        var ns = remote != null && pl.TryGetProperty("namespaced", out var n) && n.ValueKind == JsonValueKind.True ? remote : null;
+        return site.Origin == null && ns == null ? PluginAddressing.VirtualHosts : new PluginAddressing(site.Origin, site.Key, ns);
     }
 
     /// <summary>

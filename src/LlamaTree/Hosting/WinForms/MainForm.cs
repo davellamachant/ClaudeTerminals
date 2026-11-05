@@ -203,20 +203,22 @@ internal sealed class MainForm : Form, HostLink.IWindow
                     host ??= u.Host;
                     if (!string.Equals(host, u.Host, StringComparison.OrdinalIgnoreCase)) args.Cancel = true;
                 };
+                // A plugin's frame (or one inside it) asks here first, whatever origin it names: the answer is no, and
+                // the page's own handler below never hears of it.
+                created.Frame.PermissionRequested += (_, args) =>
+                {
+                    Answer(args, fromFrame: true);
+                    args.Handled = true;
+                };
             };
-            // The terminal's Paste menu item reads the clipboard; without this WebView2 asks "Allow clipboard access?"
-            // the first time, a prompt that also takes focus away from the terminal. Only the app's own origin gets it
-            // (requests name the origin, not the page; navigation never leaves the app page anyway).
-            core.PermissionRequested += (_, args) =>
+            // Only the app page reads the clipboard; plugins and any other origin get no permission (see WebPermissions).
+            core.PermissionRequested += (_, args) => Answer(args, fromFrame: false);
+            static void Answer(CoreWebView2PermissionRequestedEventArgs args, bool fromFrame)
             {
-                if (args.PermissionKind == CoreWebView2PermissionKind.ClipboardRead &&
-                    Uri.TryCreate(args.Uri, UriKind.Absolute, out var origin) &&
-                    origin.Scheme == Uri.UriSchemeHttps && string.Equals(origin.Host, "app.local", StringComparison.OrdinalIgnoreCase))
-                    args.State = CoreWebView2PermissionState.Allow;
-                // A plugin gets nothing: no clipboard, camera, location or notifications, and no prompt asking for them.
-                else if (PluginCatalog.IsPluginUri(args.Uri))
-                    args.State = CoreWebView2PermissionState.Deny;
-            };
+                var answer = WebPermissions.Decide(args.PermissionKind == CoreWebView2PermissionKind.ClipboardRead, args.Uri, fromFrame);
+                if (answer != WebPermissionAnswer.Default)
+                    args.State = answer == WebPermissionAnswer.Allow ? CoreWebView2PermissionState.Allow : CoreWebView2PermissionState.Deny;
+            }
             // The page's files come from the install folder and only change when the app is updated, but the browser
             // caches them heuristically from their timestamps; after an upgrade it could keep running the previous
             // version's app.js, possibly mixed with new files. Start each launch with an empty HTTP cache.

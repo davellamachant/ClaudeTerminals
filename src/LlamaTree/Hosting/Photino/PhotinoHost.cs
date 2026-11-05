@@ -58,7 +58,10 @@ internal sealed class PhotinoHost : HostLink.IWindow
             Maximized = true,
             Resizable = true,
             ContextMenuEnabled = false,
-            JavascriptClipboardAccessEnabled = true,
+            // Off: it's for the whole web view, plugins' frames too, and no plugin grant covers the clipboard. The page
+            // doesn't need it: it reads the clipboard through the window (clipboard.text, clipboard.files) and writes
+            // it only on a click or a key, which WebKit allows without it.
+            JavascriptClipboardAccessEnabled = false,
             // The page sits on its own loopback address; it never needs other browser permissions without asking.
             GrantBrowserPermissions = false,
 #if DEBUG

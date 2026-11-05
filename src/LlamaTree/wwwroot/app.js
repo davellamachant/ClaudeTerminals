@@ -318,8 +318,20 @@ function autoProjectColor(id) {
   return PROJECT_COLORS[hash % PROJECT_COLORS.length];
 }
 
+/**
+ * A colour from the host as it may go into a style: a #rgb, #rgba, #rrggbb or #rrggbbaa, or null for anything else. A
+ * server's host (in a --remote window) sends what it likes, and these go into style text, where more would be more CSS.
+ */
+const cssColor = (c) => typeof c === 'string' && /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(c) ? c : null;
+
 /** The project's chosen colour (the host only ever sends #rrggbb), or its automatic one. */
-const projectColor = (p) => p.color || autoProjectColor(p.id);
+const projectColor = (p) => cssColor(p.color) || autoProjectColor(p.id);
+
+/** An agent's colours (AgentProfile.Color) as a style, or null when it has none (or they aren't colours). */
+const agentStyle = (a) => {
+  const dark = cssColor(a?.color?.dark), light = cssColor(a?.color?.light);
+  return dark && light ? `--agent-dark: ${dark}; --agent-light: ${light}` : null;
+};
 
 /** A coloured tag naming the session's project; sessions in Unknown have none. */
 function projectTag(s) {
@@ -1296,6 +1308,7 @@ function createSession(info) {
     theme: termTheme(),
     windowsPty: { backend: 'conpty', buildNumber: 22621 },
     rightClickSelectsWord: false,
+    linkHandler: oscLinkHandler(s),
   });
   s.term = term;
   s.fit = new FitAddon.FitAddon();
@@ -1782,8 +1795,8 @@ function sessionMarks(s) {
   const glyph = a ? AGENT_ICONS[a.id] ?? 'sparkle' : 'terminal';   // an agent with no icon of its own gets a generic one
   return h('span', { class: 'session-marks' },
     h('span', {
-      class: 'session-mark agent' + (a?.color ? ' colored' : ''),
-      style: a?.color && `--agent-dark: ${a.color.dark}; --agent-light: ${a.color.light}`,
+      class: 'session-mark agent' + (agentStyle(a) ? ' colored' : ''),
+      style: agentStyle(a),
       title: a ? `Runs ${a.name}` : `Runs ${(s.command || '').trim().split(' ')[0] || 'a command'}: not a coding agent`,
     }, iconEl(glyph)),
     h('span', {
@@ -2209,6 +2222,41 @@ function termPathText(word, quoted = false) {
 }
 
 /**
+ * Handles OSC 8 hyperlinks (a URL behind other text) in a terminal's output: they open through openUrl like any other
+ * link (the host opens http/https only), and where the text shown isn't the URL itself, the real URL is shown first and
+ * the person confirms. xterm passes only http/https links here (allowNonHttpProtocols: false).
+ */
+function oscLinkHandler(s) {
+  const shownText = (range) => {
+    const buf = s.term.buffer.active;
+    let text = '';
+    for (let y = range.start.y; y <= range.end.y; y++) {
+      const line = buf.getLine(y - 1);
+      if (!line) break;
+      text += line.translateToString(true, y === range.start.y ? range.start.x - 1 : 0, y === range.end.y ? range.end.x : undefined);
+    }
+    return text.trim();
+  };
+  const same = (a, b) => a.replace(/\/+$/, '') === b.replace(/\/+$/, '');
+  return {
+    allowNonHttpProtocols: false,
+    activate(ev, uri, range) {
+      const open = () => request('openUrl', { uri }).catch((err) => toast(err.message, true));
+      const text = shownText(range);
+      if (same(text, uri)) return open();
+      openModal('Open link', h('div', {},
+        h('div', {}, 'The link says:'),
+        h('div', { class: 'link-confirm-url' }, text || '(no text)'),
+        h('div', {}, 'but it opens:'),
+        h('div', { class: 'link-confirm-url' }, uri)), [
+        h('button', { class: 'btn', onclick: closeModal, 'data-autofocus': true }, 'Cancel'),
+        h('button', { class: 'btn primary', onclick: () => { closeModal(); open(); } }, 'Open'),
+      ]);
+    },
+  };
+}
+
+/**
  * Makes the file and folder paths in a terminal's output links, once the host has said they're there (relative ones
  * are from the session's folder). Click opens one (a file is opened for viewing or editing, never run); its right-click
  * menu also opens the folder it's in. Paths wrapped onto the next row are found whole.
@@ -2417,8 +2465,8 @@ function showEditDialog(s, focus) {
 function agentTag(id) {
   const a = agentById(id);
   return h('span', {
-    class: 'conv-agent' + (a?.color ? ' colored' : ''),
-    style: a?.color && `--agent-dark: ${a.color.dark}; --agent-light: ${a.color.light}`,
+    class: 'conv-agent' + (agentStyle(a) ? ' colored' : ''),
+    style: agentStyle(a),
   }, a?.name ?? id);
 }
 
@@ -6282,7 +6330,7 @@ function renderNotice() {
   const kind = NOTICE_KINDS[n.kind] ?? NOTICE_KINDS.tip;
   bar.dataset.kind = n.kind;
   // A named colour has its tone in the stylesheet; a #rrggbb of the notice's own is mixed with the theme there too.
-  const own = n.color?.startsWith('#');
+  const own = !!cssColor(n.color);
   bar.dataset.color = own ? 'own' : n.color || 'accent';
   bar.style.setProperty('--notice', own ? n.color : '');
   fill(bar,
@@ -6321,7 +6369,7 @@ function showNoticesDialog() {
   const rows = notices.list.map((n) => {
     const kind = NOTICE_KINDS[n.kind] ?? NOTICE_KINDS.tip;
     const closed = notices.dismissed.has(n.id);
-    const own = n.color?.startsWith('#');
+    const own = !!cssColor(n.color);
     return h('div', { class: 'notice-row' + (closed ? ' closed' : ''), 'data-color': own ? 'own' : n.color || 'accent', style: own ? `--notice:${n.color}` : null },
       h('div', { class: 'notice-row-head' },
         h('span', { class: 'notice-kind' }, iconEl(kind.icon), kind.label),
@@ -6857,7 +6905,7 @@ function showAccentDialog() {
   const swatches = PROJECT_COLORS.map((c) => h('button', { class: 'swatch', style: `--swatch:${c}`, title: c, onclick: () => pick(c) }));
   // The theme's own suggestions, by name, first.
   const theirs = suggestedAccents().map((a) => h('button', { class: 'swatch-auto', title: a.color, 'data-colour': a.color, onclick: () => pick(a.color) },
-    h('span', { class: 'accent-dot', style: `background:${a.color}` }), a.name));
+    h('span', { class: 'accent-dot', style: cssColor(a.color) && `background:${a.color}` }), a.name));
   const note = h('div', { class: 'field help' });
   custom.addEventListener('input', () => pick(custom.value));
 
