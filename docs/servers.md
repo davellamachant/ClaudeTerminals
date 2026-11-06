@@ -5,7 +5,7 @@ Run agents on another machine (a build box, a cloud VM, a beefy desktop) and wor
 ## What you need
 
 - **`ssh` on this computer.** Windows 10 and 11 have it built in, as do macOS and Linux.
-- **A Linux server** (x86-64) that you can reach with SSH. LlamaTree can't be installed on a Mac or Windows server yet.
+- **A Linux server** (x86-64), **or another Windows PC** (see [A Windows PC as the server](#a-windows-pc-as-the-server)), that you can reach with SSH. LlamaTree can't be installed on a Mac server yet.
 - **Key or ssh-agent sign-in.** LlamaTree can't type a password. Connect once from a terminal first (`ssh user@server`) so the server's host key is known. If you haven't set up a key, see [Setting up SSH](#setting-up-ssh).
 - **Claude Code or Codex on the server**, installed and signed in, since that's where they run.
 - **LlamaTree on the server.** It gives the `llamatree` command that LlamaTree runs there. If it isn't there yet, LlamaTree says so and offers *Install LlamaTree on `<server>`…* (see [below](#installing-llamatree-on-the-server)). The server doesn't need a desktop.
@@ -136,7 +136,16 @@ If you work across several Windows PCs, any of them can be the server: a desktop
 > [!IMPORTANT]
 > The server PC's account must be a **local account, a Microsoft account, or an on-premises domain account**. Windows' SSH server can't sign in a Microsoft Entra ID (work or school, "AzureAD\…") account with a key, and LlamaTree only signs in with one.
 
-On the PC that will be the server:
+On the PC that will be the server, open LlamaTree, click the version at the top right, and choose **Let my other computers connect…**:
+
+1. **Turn on.** Windows asks for permission once. LlamaTree then installs and starts OpenSSH Server, has it start with Windows, and opens port 22 in the firewall for private networks. Tick *Also on networks Windows calls public* if the PC is a cloud VM, or is on a network Windows calls public. *Keys only* (ticked unless you untick it) turns off password sign-in, which LlamaTree doesn't need.
+2. **Add your other computer's public key**: paste the one line of its `~/.ssh/id_ed25519.pub` and click *Add key*. LlamaTree puts it where Windows' SSH server reads it, with the permissions it requires (an administrator's keys are kept where only administrators can change them, so Windows asks for permission again). Keys added here are listed, each with *Remove*.
+
+The dialog also shows what to type on your other computer (`you@that-pc`) and this PC's addresses (marking a [Tailscale](https://tailscale.com) one), warns about anything that would stop LlamaTree connecting, and shows this PC's own public key, with *Copy*, for adding on your other computers. *Turn off* stops OpenSSH Server and turns off its firewall rule; keys stay, for turning it on again.
+
+### Doing it by hand
+
+If you'd rather not use the dialog (or LlamaTree isn't on that PC yet), on the PC that will be the server:
 
 1. **Turn on OpenSSH Server.** In PowerShell, as administrator:
 
