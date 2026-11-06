@@ -215,4 +215,42 @@ public sealed class ThemeCatalogTests : IDisposable
         if (expected is null) Assert.Contains("terminalBackground", Assert.Single(problems));
         else Assert.Empty(problems);
     }
+
+    [Fact]
+    public void A_floor_is_its_script_as_text()
+    {
+        Write(user, "floored.json", new { name = "Floored", floor = "floor({ draw(ctx, now, info) { } });" });
+
+        var (themes, problems) = ThemeCatalog.Load(builtIn, user);
+
+        Assert.Equal("floor({ draw(ctx, now, info) { } });", Assert.Single(themes).Floor);
+        Assert.Empty(problems);
+    }
+
+    [Theory]
+    [InlineData("\"\"")]          // empty
+    [InlineData("true")]            // not a script
+    [InlineData("{ \"src\": \"floor.js\" }")]   // a file to load: a theme loads nothing
+    public void A_floor_that_isnt_a_script_is_left_out(string value)
+    {
+        File.WriteAllText(Path.Combine(user, "odd.json"), "{ \"name\": \"Odd\", \"floor\": " + value + " }");
+
+        var (themes, problems) = ThemeCatalog.Load(builtIn, user);
+
+        Assert.Null(Assert.Single(themes).Floor);   // the theme still loads, without a floor
+        Assert.Contains("floor", Assert.Single(problems));
+    }
+
+    [Fact]
+    public void A_floor_has_a_size_limit()
+    {
+        Write(user, "big.json", new { name = "Big", floor = new string('x', ThemeCatalog.MaxFloorChars + 1) });
+        Write(user, "most.json", new { name = "Most", floor = new string('x', ThemeCatalog.MaxFloorChars) });
+
+        var (themes, problems) = ThemeCatalog.Load(builtIn, user);
+
+        Assert.Null(Assert.Single(themes, t => t.Id == "big").Floor);
+        Assert.Equal(ThemeCatalog.MaxFloorChars, Assert.Single(themes, t => t.Id == "most").Floor!.Length);   // the file itself is within MaxFileBytes
+        Assert.Contains(problems, p => p.StartsWith("big.json: floor"));
+    }
 }

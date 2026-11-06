@@ -191,7 +191,8 @@ internal sealed class MainForm : Form, HostLink.IWindow
                 core.SetVirtualHostNameToFolderMapping(PluginCatalog.HostFor(id), folder, CoreWebView2HostResourceAccessKind.DenyCors);
             core.NewWindowRequested += (_, args) => args.Handled = true;
             // Plugins are pages in frames of their own (see PluginCatalog): a plugin's frame stays on plugin addresses.
-            core.FrameNavigationStarting += (_, args) => { if (!PluginCatalog.IsPluginUri(args.Uri) && args.Uri != "about:blank") args.Cancel = true; };
+            // A theme's own floor is a frame of the page's own writing (srcdoc), which stays put: it has no way to navigate.
+            core.FrameNavigationStarting += (_, args) => { if (!PluginCatalog.IsPluginUri(args.Uri) && args.Uri is not ("about:blank" or "about:srcdoc")) args.Cancel = true; };
             // And on its own plugin's address: the page answers a plugin's frame with what that plugin was allowed to see,
             // so another plugin's page mustn't get into it.
             core.FrameCreated += (_, created) =>

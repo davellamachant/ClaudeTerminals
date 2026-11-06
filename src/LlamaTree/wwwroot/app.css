@@ -153,16 +153,21 @@
     linear-gradient(90deg, color-mix(in srgb, var(--accent) 8%, transparent) 1px, transparent 1px) 0 0 / 32px 32px,
     var(--chrome);
 }
-:root:is([data-grid], [data-rain]) :is(#stage, #splitter, #docSplitter, #navSplitter) { background: transparent; }
-:root:is([data-grid], [data-rain]) #navBar { background: color-mix(in srgb, var(--chrome-3) 70%, transparent); }
-:root:is([data-grid], [data-rain]) :is(#titlebar, .doc-tabs, .tab-scroller.doc, .dock-group > .tw-title) { background: color-mix(in srgb, var(--chrome-2) 70%, transparent); }
-:root:is([data-grid], [data-rain]) #gitPanel { background: color-mix(in srgb, var(--panel) 55%, transparent); }
-:root:is([data-grid], [data-rain]) .tile-header { background: color-mix(in srgb, var(--panel) 70%, transparent); }
+:root:is([data-grid], [data-rain], [data-floor]) :is(#stage, #splitter, #docSplitter, #navSplitter) { background: transparent; }
+:root:is([data-grid], [data-rain], [data-floor]) #navBar { background: color-mix(in srgb, var(--chrome-3) 70%, transparent); }
+:root:is([data-grid], [data-rain], [data-floor]) :is(#titlebar, .doc-tabs, .tab-scroller.doc, .dock-group > .tw-title) { background: color-mix(in srgb, var(--chrome-2) 70%, transparent); }
+:root:is([data-grid], [data-rain], [data-floor]) #gitPanel { background: color-mix(in srgb, var(--panel) 55%, transparent); }
+:root:is([data-grid], [data-rain], [data-floor]) .tile-header { background: color-mix(in srgb, var(--panel) 70%, transparent); }
 /* The rain (a theme's "rain": true, see digitalRain in app.js): a canvas fixed behind the page; the terminal's canvas is
    see-through over it and the tile dims it with the terminal's own background at half strength, so the text reads. */
 #rain { position: fixed; inset: 0; z-index: -1; pointer-events: none; }   /* behind the page's content, over its background */
 :root[data-rain] { background: var(--chrome); }
 :root[data-rain] body { background: transparent; }   /* the body's own background would paint over the canvas; the root's paints under it */
+/* A theme's own floor (a theme's "floor", see themeFloor in app.js): a sandboxed frame fixed behind the page, as the rain's
+   canvas is. It never takes the pointer, and its colour scheme is the page's, so the browser doesn't paint it opaque. */
+#themeFloor { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; z-index: -1; pointer-events: none; background: transparent; color-scheme: normal; }
+:root[data-floor] { background: var(--chrome); }
+:root[data-floor] body { background: transparent; }
 /* The terminal itself: its canvas is see-through under a Grid theme (dressCursor in app.js), and the tile paints the same
    lines over the terminal's own background, fixed to the window so they run on from the floor around it. */
 :root[data-grid] .tile {
