@@ -1411,7 +1411,7 @@ function dressCursor(s) {
 function lightCycle(s, on) {
   if (!on) {
     if (s.cycle) {
-      s.cycle.move.dispose(); s.cycle.resize.dispose(); s.cycle.layer.remove();
+      s.cycle.move.dispose(); s.cycle.resize.dispose(); s.cycle.write.dispose(); s.cycle.layer.remove();
       s.cycle = null;
     }
     dressCursor(s);
@@ -1438,6 +1438,12 @@ function lightCycle(s, on) {
     const x = b.cursorX, y = b.cursorY;
     head.hidden = false;
     Object.assign(head.style, { left: `${x * cw + opts.offset}px`, top: `${y * ch}px`, width: `${cw * opts.size}px`, height: `${ch}px` });
+    // Text where it would ride (the cursor moved back into a line, or a hint after it, as Claude's prompt has): it steps
+    // back, faint and without its glow, so the text can be read, until it's over empty cells again.
+    const line = b.getLine(b.baseY + y), first = Math.floor(x + opts.offset / cw), last = Math.ceil(x + opts.offset / cw + opts.size);
+    let over = false;
+    for (let col = Math.max(first, x + 1); line && col <= last && col < term.cols && !over; col++) over = /\S/.test(line.getCell(col)?.getChars() ?? '');
+    head.classList.toggle('over-text', over);
     const from = c.last;
     c.last = { x, y };
     if (!from || (from.x === x && from.y === y)) return;
@@ -1464,6 +1470,7 @@ function lightCycle(s, on) {
   const queue = () => { if (!c.queued) { c.queued = true; requestAnimationFrame(ride); } };
   c.move = s.term.onCursorMove(queue);
   c.resize = s.term.onResize(() => { c.last = null; queue(); });
+  c.write = s.term.onWriteParsed(queue);   // text written beside it, though the cursor didn't move
   s.cycle = c;
   dressCursor(s);
   queue();

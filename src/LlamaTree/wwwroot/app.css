@@ -536,6 +536,7 @@ button.chip:hover { border-color: var(--border); color: var(--text); }
 .cycle-head svg { display: block; width: 100%; height: 100%; overflow: visible; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 @keyframes cycle-idle { 50% { opacity: .7; } }
 .xterm:not(.focus) .cycle-head { opacity: .3; animation: none; }   /* only the focused terminal's cycle is lit, as only its cursor blinks */
+.cycle-head.over-text { opacity: .12; filter: none !important; animation: none; }   /* over text: faint, so the text reads (lightCycle) */
 .cycle-trail { position: absolute; background: var(--cycle-trail, var(--cycle)); opacity: .85; animation: cycle-fade .8s ease-out forwards; }   /* its width, glow and fade are the theme's (lightCycle in app.js) */
 @keyframes cycle-fade { to { opacity: 0; } }
 .tile-cover { position: absolute; inset: 0; cursor: zoom-in; z-index: 2; }
