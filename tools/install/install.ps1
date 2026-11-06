@@ -9,8 +9,9 @@
 # country, is for code signing, and chains through Sectigo Public Code Signing Root R46's key. Not GitHub's word alone,
 # so someone who could only publish on GitHub can't swap the installer. Releases before 1.3.1 have no SHA256SUMS, so
 # this installs 1.3.1 or later only. Setup installs for this user only, with no admin, to
-# %LOCALAPPDATA%\Programs\LlamaTree, or upgrades the copy there is.
+# %LOCALAPPDATA%\Programs\LlamaTree, or upgrades the copy there is. Then it opens LlamaTree.
 #
+#   $env:LLAMATREE_NO_LAUNCH=1  install only: don't open LlamaTree afterwards (for scripted installs)
 #   $env:LLAMATREE_UPDATE_URL   a stand-in for the GitHub API's latest release, for tests (downloads may then be local)
 #
 # Runs on Windows PowerShell 5.1 and PowerShell 7. It's piped into iex, so it never calls exit (that would close the
@@ -257,16 +258,40 @@
         }
         if (-not $location) { $location = Join-Path $env:LOCALAPPDATA 'Programs\LlamaTree' }
 
-        Write-Host ''
-        Write-Host "LlamaTree $version is installed in $location" -ForegroundColor Green
-        Write-Host 'Start it from the Start menu (LlamaTree), or run:'
-        Write-Host "  & '$(Join-Path $location 'LlamaTree.exe')'"
-
         # Setup only warns about this in a message box, which a silent install doesn't show.
         $webView2 = 'SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
         $webView2Found = foreach ($path in "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}", "HKLM:\$webView2", "HKCU:\$webView2") {
             $pv = (Get-ItemProperty -Path $path -ErrorAction SilentlyContinue).pv
             if ($pv -and $pv -ne '0.0.0.0') { $true; break }
+        }
+
+        # Opens the app, unless asked not to, it can't start (no WebView2), there's no desktop to show it on (session 0:
+        # over SSH, or a service), or this window is elevated: the app would then run as administrator, which setup
+        # avoids too (runasoriginaluser). Start-Process doesn't tie it to this window, so closing the window leaves it
+        # open. When it's already open (an upgrade setup didn't have to close it), the new copy only brings the open
+        # window forward and exits (Program.cs's single-instance lock).
+        $exe = Join-Path $location 'LlamaTree.exe'
+        $elevated = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+            [Security.Principal.WindowsBuiltInRole]::Administrator)
+        $launch = $env:LLAMATREE_NO_LAUNCH -ne '1' -and $webView2Found -and (Test-Path -LiteralPath $exe) -and
+            (Get-Process -Id $PID).SessionId -ne 0 -and -not $elevated
+        $launched = $false
+        if ($launch) {
+            try { Start-Process -FilePath $exe -WorkingDirectory $location; $launched = $true }
+            catch { Write-Host "Couldn't start LlamaTree: $($_.Exception.Message)" -ForegroundColor Yellow }
+        }
+
+        Write-Host ''
+        Write-Host "LlamaTree $version is installed in $location" -ForegroundColor Green
+        if ($launched) {
+            Write-Host 'LlamaTree is opening. Later, start it from the Start menu (LlamaTree).'
+        }
+        else {
+            if ($elevated -and $env:LLAMATREE_NO_LAUNCH -ne '1') {
+                Write-Host "It wasn't opened from this administrator window, so that it doesn't run as administrator."
+            }
+            Write-Host 'Start it from the Start menu (LlamaTree), or run:'
+            Write-Host "  & '$exe'"
         }
         if (-not $webView2Found) {
             Write-Host ''

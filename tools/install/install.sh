@@ -15,6 +15,8 @@
 #
 #   LLAMATREE_INSTALL=tar      install for this user only, from the .tar.gz, even when a package could be installed
 #   LLAMATREE_INSTALL=package  install the package or stop: never fall back to the .tar.gz
+#   LLAMATREE_NO_LAUNCH=1      install only: don't open LlamaTree afterwards (for scripted installs). It's opened only
+#                              where there's a desktop (DISPLAY or WAYLAND_DISPLAY), never over SSH or as root.
 #   LLAMATREE_UPDATE_URL       a stand-in for the GitHub API's latest release, for tests (downloads may then be local)
 #   LLAMATREE_INSECURE_SKIP_SIGNATURE=1
 #                              where there's no openssl to check the signature with, install on GitHub's digest alone
@@ -328,6 +330,33 @@ restore_previous() {
     return 1
 }
 
+# Whether LlamaTree's window is open for this user: a LlamaTree process that isn't the session host (--host) or a
+# connection from another machine (--attach). Not knowing (no ps that takes -u) counts as not open; a second copy
+# started anyway only says it's already running and exits.
+app_open() {
+    ps -u "$(id -u)" -o comm= -o args= 2>/dev/null |
+        awk '$1 == "LlamaTree" && $0 !~ / --(host|attach)( |$)/ { found = 1 } END { exit !found }'
+}
+
+# Opens the app just installed ($1: the command), detached from this script and its terminal, so closing the terminal
+# leaves it open. Only where there's a desktop to show it on (not over SSH, or headless), not as root (under sudo, it
+# would be root's LlamaTree), not when it's already open, and not with LLAMATREE_NO_LAUNCH=1. Says how to start it
+# otherwise.
+launch() {   # command
+    if [ "${LLAMATREE_NO_LAUNCH-}" = 1 ] || [ -z "${DISPLAY-}${WAYLAND_DISPLAY-}" ] || [ "$(id -u)" = 0 ]; then
+        say "Start it from your applications menu, or run: llamatree"
+    elif app_open; then
+        say "LlamaTree is already open: close it and start it again to use this version."
+    else
+        if have setsid; then
+            setsid "$1" </dev/null >/dev/null 2>&1 &
+        else
+            nohup "$1" </dev/null >/dev/null 2>&1 &
+        fi
+        say "LlamaTree is opening. Later, start it from your applications menu, or run: llamatree"
+    fi
+}
+
 # Runs on any exit, and does its work once: a second Ctrl-C or TERM meanwhile can't cut the restore short.
 cleanup() {
     trap '' HUP INT TERM
@@ -408,7 +437,7 @@ main() {
         install_tar "$file"
         say ""
         say "LlamaTree $version is installed in $app."
-        say "Start it from your applications menu, or run: llamatree"
+        launch "$bin/llamatree"
         case ":$PATH:" in
             *":$bin:"*) ;;
             *) say ""
@@ -418,7 +447,8 @@ main() {
     else
         install_package "$kind" "$file" || die "The package didn't install. To install for this user only instead, run the installer with LLAMATREE_INSTALL=tar."
         say ""
-        say "LlamaTree $version is installed. Start it from your applications menu, or run: llamatree"
+        say "LlamaTree $version is installed."
+        launch llamatree
     fi
 }
 
