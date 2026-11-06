@@ -17,7 +17,7 @@ namespace LlamaTree.Themes;
 /// theme sets itself, and builds them again when the accent changes.
 /// </param>
 /// <param name="Accent">Its own accent, in place of the one picked in Accent colour; null keeps that.</param>
-/// <param name="Accents">Accent colours it suggests, offered first in Accent colour while it's on (Tron's cyan, Ares' red…).</param>
+/// <param name="Accents">Accent colours it suggests, offered first in Accent colour while it's on (Tron's cyan, Redline…).</param>
 /// <param name="Colors">The page's colours by name (see <see cref="ThemeCatalog.ColorNames"/>).</param>
 /// <param name="Terminal">The terminals' colours, by xterm.js's names (see <see cref="ThemeCatalog.TerminalNames"/>).</param>
 /// <param name="Diff">The diff editor's colours (see <see cref="ThemeCatalog.DiffNames"/>).</param>
@@ -115,7 +115,8 @@ internal static partial class ThemeCatalog
     /// <summary>
     /// The themes in <paramref name="builtIn"/> (shipped with the app) and then <paramref name="user"/> (the profile's
     /// themes folder), each by name. A file that isn't a theme is left out, and a value that isn't valid is left out of
-    /// its theme, with why.
+    /// its theme, with why. The app's own themes are also published in LlamaTree-Themes: a newer version from Get themes,
+    /// in the themes folder, takes the place of the one the app came with.
     /// </summary>
     public static (List<ThemeInfo> Themes, List<string> Problems) Load(string builtIn, string user)
     {
@@ -133,7 +134,8 @@ internal static partial class ThemeCatalog
                     problems.Add($"{fileName}: name the file with letters, digits and hyphens, and not light, dark or system.");
                     continue;
                 }
-                if (themes.Any(t => t.Id == id))
+                var shipped = themes.FindIndex(t => t.Id == id);
+                if (shipped >= 0 && !themes[shipped].BuiltIn)
                 {
                     problems.Add($"{fileName}: there's already a theme called {id}.");
                     continue;
@@ -146,7 +148,27 @@ internal static partial class ThemeCatalog
                         continue;
                     }
                     using var doc = JsonDocument.Parse(File.ReadAllText(file), new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true });
-                    if (Parse(id, doc.RootElement, isBuiltIn, fileName, problems) is { } theme) themes.Add(theme);
+                    var found = new List<string>();
+                    if (Parse(id, doc.RootElement, isBuiltIn, fileName, found) is not { } theme)
+                    {
+                        problems.AddRange(found);
+                        continue;
+                    }
+                    if (shipped < 0)
+                    {
+                        themes.Add(theme);
+                        problems.AddRange(found);
+                    }
+                    // One of the app's own themes, in the themes folder too: a newer version from Get themes takes its place
+                    // (still one the app comes with); an older one, left from before the app was updated, is passed over.
+                    // One of your own with its name (no version) can't take it.
+                    else if (theme.Version == null)
+                        problems.Add($"{fileName}: there's already a theme called {id}.");
+                    else if (themes[shipped].Version != null && IsNewer(theme.Version, themes[shipped].Version))
+                    {
+                        themes[shipped] = theme with { BuiltIn = true };
+                        problems.AddRange(found);
+                    }
                 }
                 catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
                 {
@@ -157,6 +179,10 @@ internal static partial class ThemeCatalog
         themes.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.CurrentCultureIgnoreCase));
         return (themes, problems);
     }
+
+    /// <summary>Whether <paramref name="version"/> is later than <paramref name="than"/> (major.minor.patch; none is earliest).</summary>
+    internal static bool IsNewer(string? version, string? than) =>
+        version != null && (than == null || Version.Parse(version) > Version.Parse(than));
 
     /// <summary>
     /// Writes <paramref name="theme"/> to <paramref name="folder"/> as a new file named after its name (my-dark.json; a

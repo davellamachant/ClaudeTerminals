@@ -191,13 +191,14 @@ internal static partial class GalleryService
     /// <summary>
     /// What can be done with a plugin or theme from a catalog, given the one here with that id (null: none) and its version:
     /// "install", "installed", "update", "needs-app" (it needs a newer LlamaTree), "yours" (a plugin or theme of your own
-    /// already has its id) or "built-in" (a theme the app comes with has its id).
+    /// already has its id) or "built-in" (a theme the app comes with has its id, at this version or later; at an earlier
+    /// one, "update", as for any other).
     /// </summary>
     internal static string StateOf(string version, string? minAppVersion, bool haveOne, string? haveVersion, bool builtIn = false)
     {
-        if (builtIn) return "built-in";
-        if (haveOne && haveVersion == null) return "yours";
-        var newer = !haveOne || Version.Parse(version) > Version.Parse(haveVersion!);
+        if (builtIn && (haveVersion == null || !Themes.ThemeCatalog.IsNewer(version, haveVersion))) return "built-in";   // a shipped copy without a version isn't one Get themes publishes
+        if (haveOne && haveVersion == null && !builtIn) return "yours";
+        var newer = !haveOne || Themes.ThemeCatalog.IsNewer(version, haveVersion);
         if (newer && minAppVersion != null && Version.Parse(minAppVersion) > UpdateService.CurrentVersion) return "needs-app";
         return !haveOne ? "install" : newer ? "update" : "installed";
     }
@@ -320,11 +321,15 @@ internal static partial class GalleryService
 
     // ---- themes
 
-    /// <summary>Writes the theme to <paramref name="themeFolder"/> as &lt;id&gt;.json, in place of an older copy from Get themes.</summary>
+    /// <summary>
+    /// Writes the theme to <paramref name="themeFolder"/> as &lt;id&gt;.json, in place of an older copy from Get themes. For one
+    /// the app comes with, that's a newer version, which then takes the place of the app's own (see ThemeCatalog.Load).
+    /// </summary>
     public static void InstallTheme(GalleryTheme theme, string themeFolder, string builtIn)
     {
-        if (File.Exists(Path.Combine(builtIn, theme.Id + ".json")))
-            throw new InvalidOperationException($"LlamaTree already comes with a theme called {theme.Id}.");
+        var shipped = Path.Combine(builtIn, theme.Id + ".json");
+        if (File.Exists(shipped) && (InstalledThemeVersion(shipped) is not { } shippedVersion || !Themes.ThemeCatalog.IsNewer(theme.Version, shippedVersion)))
+            throw new InvalidOperationException($"LlamaTree already comes with {theme.Id} at this version or later.");
         var path = Path.Combine(themeFolder, theme.Id + ".json");
         if (File.Exists(path) && InstalledThemeVersion(path) == null)
             throw new InvalidOperationException($"A theme of your own is called {theme.Id}.json, so it's left alone.");

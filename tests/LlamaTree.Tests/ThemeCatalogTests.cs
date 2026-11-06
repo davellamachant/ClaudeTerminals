@@ -74,19 +74,19 @@ public sealed class ThemeCatalogTests : IDisposable
         Assert.Equal(("#ffe066", "#3fe0a8"), (tron.Colors["attention"], tron.Colors["ok"]));
         Assert.DoesNotContain("chrome", tron.Colors.Keys);
         Assert.DoesNotContain("background", tron.Terminal.Keys);
-        Assert.Equal([new ThemeAccentChoice("Tron", "#00e5ff"), new ThemeAccentChoice("Ares", "#ff3b3b")], tron.Accents);
+        Assert.Equal([new ThemeAccentChoice("Tron", "#00e5ff"), new ThemeAccentChoice("Redline", "#ff3b3b")], tron.Accents);
         Assert.Equal(["Green phosphor", "Amber", "Paper white"], nerds.Accents.Select(a => a.Name));
         Assert.Equal("light-cycle", tron.Cursor);
-        Assert.True(tron.Grid);
+        Assert.False(tron.Grid);   // Tron and Matrix draw the Grid and the rain as floors of their own now (LlamaTree-Themes)
         Assert.False(tron.Rain);
         Assert.Null(nerds.Cursor);
         Assert.False(nerds.Grid);
         Assert.False(nerds.Rain);
         var matrix = Assert.Single(themes, t => t.Id == "matrix");
-        Assert.Equal(("Matrix", "dark", "Cascadia Mono", true, false, true, null, true), (matrix.Name, matrix.Base, matrix.Font, matrix.Glow, matrix.Grid, matrix.Rain, matrix.Cursor, matrix.BuiltIn));
+        Assert.Equal(("Matrix", "dark", "Cascadia Mono", true, false, false, null, true), (matrix.Name, matrix.Base, matrix.Font, matrix.Glow, matrix.Grid, matrix.Rain, matrix.Cursor, matrix.BuiltIn));
         Assert.Equal(("#39ff6a", "#0b6b26"), (matrix.Accent!.Line, matrix.Accent.Strong));
-        // Matrix lets its rain show through the terminals, and Tron its Grid (starting solid); Nerds keeps them solid, with no slider.
-        Assert.Equal((42, 100, (int?)null), (matrix.TerminalBackground, tron.TerminalBackground, nerds.TerminalBackground));
+        // Matrix lets its rain show through the terminals, and Tron its Grid; Nerds keeps them solid, with no slider.
+        Assert.Equal((42, 85, (int?)null), (matrix.TerminalBackground, tron.TerminalBackground, nerds.TerminalBackground));
         Assert.DoesNotContain(themes, t => t.Id == "tron-ares");   // Tron in red is Tron with a red accent now
         // Matrix is written out in full: every colour the page, the terminals and the diff editor can take, so nothing of Dark shows through.
         Assert.Equal(ThemeCatalog.ColorNames.OrderBy(n => n), matrix.Colors.Keys.OrderBy(n => n));
