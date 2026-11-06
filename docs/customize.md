@@ -17,7 +17,7 @@ From the palette button at the top right, choose *System*, *Light*, *Dark* or on
 
 A theme is a JSON file of colours. The app comes with three:
 
-- **Nerds**: everything in shades of your accent colour on near-black, like an old monochrome screen, in a monospaced face with a faint glow. Pick green under *Accent colour* for a phosphor terminal, amber for an old amber one; the whole app recolours as you click. Status, Git's changes and the terminal's colours differ by how light or strong their shade is rather than by hue, and the status dots still differ in shape.
+- **Nerds**: everything in shades of your accent colour on near-black, like an old monochrome screen, in a monospaced face with a faint glow. Pick green under *Accent colour* for a phosphor terminal, amber for an old amber one; the whole app recolours as you click. Git's changes and the terminal's colours differ by how light or strong their shade is rather than by hue. The status dots are the exception: idle, working, waiting and asking keep their own teal, blue, amber and pink, toned to the screen, so they're easy to tell apart at a glance.
 - **Tron**: the Grid, near-black ruled with light-lines in your accent colour (cyan for the original, or Redline), with amber for what needs you, mint for what went well and red for what went wrong, in Bahnschrift with a glow and a light cycle riding beside the cursor; the terminals and diffs dress to match. Like Nerds it's built from the accent colour, but keeps those signal colours, Git's change colours and the terminal's own sixteen.
 - **Matrix**: green phosphor on black in a monospaced face, with glyphs raining down the window's floor and, dimmed, behind the terminals' text; red for a question.
 
@@ -48,7 +48,7 @@ A theme can set three colours or all of them:
 
 - **`base`** (`dark` or `light`) fills in every colour the theme leaves out. It's also what Claude and plugins are told, so Claude runs in its dark or light colours.
 - **`monochrome`:** `true` builds every colour from the accent colour, as [Nerds](../src/LlamaTree/wwwroot/themes/nerds.json) does; colours the theme sets itself still win.
-- **`colors`:** the app's own: `chrome`, `chrome-2`, `chrome-3` (backgrounds, darkest last), `panel`, `panel-2`, `hover`, `hover-strong`, `border`, `border-soft`, `border-strong`, `text`, `text-dim`, `text-faint`, `text-strong`, `focus`, `select`, `select-inactive`, `terminal-bg`, `editor-bg`, the status colours `ok`, `working`, `attention`, `asking`, `danger`, `danger-fill`, Git's `st-m`, `st-a`, `st-d`, `st-r`, `st-u` (modified, added, deleted, renamed, untracked), `graph`, `ref-bg`, `ref-fg`, `ref-head-bg`, `ref-head-fg`, `ref-tag-bg`, `ref-tag-fg`, and `info-bg`, `info-border`, `error-bg`, `error-border`, `pv-warn-bg`, `pv-warn-border`, `ico-folder`, `ico-file`, `scroll-thumb`, `scroll-thumb-hover`, `tab-border-shown`, `tab-border-hover`, `tick`, `tick-active`, `tick-hot`, `card-bg`, `card-border`, `bubble`, `code-fg`, `code-bg`, `well`, `table-head`, `link`, `update-fg`. Colours are `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgb()` or `rgba()`.
+- **`colors`:** the app's own: `chrome`, `chrome-2`, `chrome-3` (backgrounds, darkest last), `panel`, `panel-2`, `hover`, `hover-strong`, `border`, `border-soft`, `border-strong`, `text`, `text-dim`, `text-faint`, `text-strong`, `focus`, `select`, `select-inactive`, `terminal-bg`, `editor-bg`, the status colours `ok`, `working`, `attention`, `asking`, `danger`, `danger-fill`, the status dots' own `status-ok`, `status-working`, `status-attention`, `status-asking` (for the dots, session tabs and tiles only; each is its status colour if left out), Git's `st-m`, `st-a`, `st-d`, `st-r`, `st-u` (modified, added, deleted, renamed, untracked), `graph`, `ref-bg`, `ref-fg`, `ref-head-bg`, `ref-head-fg`, `ref-tag-bg`, `ref-tag-fg`, and `info-bg`, `info-border`, `error-bg`, `error-border`, `pv-warn-bg`, `pv-warn-border`, `ico-folder`, `ico-file`, `scroll-thumb`, `scroll-thumb-hover`, `tab-border-shown`, `tab-border-hover`, `tick`, `tick-active`, `tick-hot`, `card-bg`, `card-border`, `bubble`, `code-fg`, `code-bg`, `well`, `table-head`, `link`, `update-fg`. Colours are `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgb()` or `rgba()`.
 - **`terminal`:** xterm.js's names: `background`, `foreground`, `cursor`, `cursorAccent`, `selectionBackground`, `selectionForeground`, `selectionInactiveBackground`, the sixteen `black` … `white` and `brightBlack` … `brightWhite`, and `overviewRulerBorder`, `scrollbarSliderBackground`, `scrollbarSliderHoverBackground`, `scrollbarSliderActiveBackground`.
 - **`diff`:** `background`, `foreground`, `lineNumber`, `lineNumberActive`, `selection`, `cursor`, `lineHighlightBorder`, `insertedLine`, `insertedText`, `removedLine`, `removedText`, `insertedGutter`, `removedGutter`, `insertedOverview`, `removedOverview`, `diagonalFill`, `scrollbar`, and the syntax colours `comment`, `keyword`, `string`, `number`, `type`; `#rrggbb` or `#rrggbbaa` only.
 - **`accents`** suggests accent colours, offered first in the *Accent colour* dialog while the theme is on: up to eight `{ "name": "Redline", "color": "#ff3b3b" }`, each a short name and a `#rrggbb`. Tron suggests its own cyan and Redline; Nerds green phosphor, amber and paper white. They're only suggestions: any accent still works.
@@ -59,6 +59,7 @@ A theme can set three colours or all of them:
 - **`terminalBackground`:** a whole number from 0 (see-through) to 100 (solid): how solid the terminals start over the window's floor, and that you may change it with the slider in each terminal's corner. Matrix has `42`, so its rain shows through; Tron has `100`, solid until you slide it. Leave it out to keep the terminals solid, with no slider.
 - **`cursor`:** `"light-cycle"` puts a light cycle beside the terminals' cursor, as in the Tron themes: it rides a little to the right of the cursor (which stays a blinking bar in the cursor colour, so you can see where you're typing and whether the terminal has focus; the cycle dims while it hasn't), glows in that colour and leaves a ribbon of light fading behind it as it moves, turning at right angles when it changes line. Leave it out for the plain cursor. With Windows' reduce-motion setting on, the glow stays and the ribbon doesn't.
 - **`cycle`:** the light cycle's own picture and how it glows, for a theme with `"cursor": "light-cycle"` (see [below](#a-light-cycle-of-its-own)).
+- **`dots`:** status dots of its own: a picture for each state, and how it moves (see [below](#status-dots-of-its-own)).
 - **`floor`:** a floor of the theme's own: a script that draws the window's floor (see [below](#a-floor-of-its-own)).
 
 A theme is only data: the app takes the names above and checks each value, so it can't restyle anything else or load anything. Its one piece of code, a `floor`, runs sandboxed, apart from the app (below). A file it can't use, or a value it leaves out, is listed under *Why?* in the palette menu.
@@ -96,6 +97,37 @@ A theme with `"cursor": "light-cycle"` can draw its own cycle, and say how it gl
 - **`trail`:** the ribbon: its `width` in pixels, 1 to 6 (2); how far its `glow` reaches, 0 to 20 (10); how long it takes to `fade`, in milliseconds, 200 to 3,000 (800); how far down the row it runs, `at` from 0 (top) to 1 (bottom) (0.69, Tron's wheels); and its `colour` (`"cursor"`). `"trail": false` leaves no ribbon.
 
 The picture is only shapes and numbers: the app checks each one and draws the picture itself, so a picture can't carry a script, a link or a style the way an SVG file can. A shape it can't use is left out, and a number out of range keeps Tron's, with why under *Why?* in the palette menu. The picture is clipped to its cells, so it can't paint over what the terminal shows.
+
+### Status dots of its own
+
+A theme can draw the status dots itself: a small picture for each state a session can be in, and how each one moves. While the theme is on, its dots are a card of their own in *Status dots…* (as "Forest's own"), used until you pick another style there for that theme ([more](sessions.md#status-dots)).
+
+```json
+"dots": {
+  "about": "Brackets round a cursor, as on a text screen.",
+  "size": 10,
+  "working": {
+    "image": { "viewBox": [0, 0, 10, 10], "shapes": [{ "path": "M5 1 A4 4 0 1 1 1 5", "width": 1.6 }] },
+    "motion": "spin"
+  },
+  "waiting": {
+    "image": { "viewBox": [0, 0, 10, 10], "shapes": [{ "rect": [1, 1, 8, 8], "fill": "status", "stroke": "none" }] },
+    "motion": "blink"
+  },
+  "asking": {
+    "image": { "viewBox": [0, 0, 10, 10], "shapes": [{ "polygon": [5, 0.5, 9.5, 9, 0.5, 9], "fill": "status", "stroke": "none" }] },
+    "motion": "hop"
+  }
+}
+```
+
+- **The states:** `idle`, `working`, `waiting` (done while you were away), `asking` (needs your answer) and `stopped` (not running). Draw as many as you like; a state left out is a plain, still dot in its colour (idle and stopped as in every style).
+- **`image`:** a picture, as the light cycle's is (`viewBox` and up to 64 `shapes`, [above](#a-light-cycle-of-its-own)), fitted into the dot's square. A shape's colours are `"status"` (the colour of the state it shows, which is what a stroke is if left out), `"accent"`, one of the page's colours by name, a `#rgb`, `#rrggbb` or `#rrggbbaa`, or `"none"`.
+- **`motion`:** `none` (if left out), `spin`, `pulse` (fades and comes back), `breathe` (shrinks and swells), `blink`, `beat`, `hop` or `shake`. With Windows' reduce-motion setting on, every dot stands still, so give each state a shape of its own as well as a colour.
+- **`size`:** how big the pictures are drawn, in pixels, 6 to 14 (10), centred where the 8px dot is. Larger ones reach past it without taking room, so a tab keeps its width.
+- **`about`:** a sentence for its card in *Status dots…*, up to 200 characters.
+
+Only the colours? `status-ok`, `status-working`, `status-attention` and `status-asking` under `colors` change the dots in every style, and the session tabs and tiles that show a status, without touching the other places those colours are used.
 
 ### A floor of its own
 

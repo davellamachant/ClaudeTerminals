@@ -243,6 +243,10 @@ svg.ic { width: 16px; height: 16px; flex: none; display: block; }
    preview in that dialog. Rings and glows reach past the 8px dot without taking room, so a tab keeps its width
    whatever the state, and syncStatus (app.js) keeps the animations going when a dot is rebuilt. Every style still
    tells the states apart by shape with Windows' "Animation effects" off. */
+/* Status colours: the theme's own, unless it gives status colours of their own (a monochrome theme: see monochromeLook),
+   which then show only here, where a session's status is shown. Set on the root, each takes the theme's colour there. */
+:root { --status-ok: var(--ok); --status-working: var(--working); --status-attention: var(--attention); --status-asking: var(--asking); }
+.dot, .session-tab, .tile { --ok: var(--status-ok); --working: var(--status-working); --attention: var(--status-attention); --asking: var(--status-asking); }
 .dot { position: relative; width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); flex: none; }
 .dot::before, .dot::after { position: absolute; border-radius: 50%; pointer-events: none; }
 .dot.exited { background: none; box-shadow: inset 0 0 0 1.5px var(--text-faint); }
@@ -373,6 +377,29 @@ svg.ic { width: 16px; height: 16px; flex: none; display: block; }
 /* Needs your answer: a pink dot in a ring that shakes, twice and rests, like a notification. */
 [data-dots="signal"] .dot.asking { background: var(--asking); animation: dot-shake 1.6s ease-in-out infinite; }
 [data-dots="signal"] .dot.asking::after { content: ''; inset: -3.5px; box-shadow: inset 0 0 0 1.5px var(--asking); }
+
+/* ---- A theme's own (its "dots", while it's on: see themeDots in app.js). Each state it draws is its picture, an image
+   on the root as --dot-icon-<status>, at the theme's size centred on the dot and moving as it says (--dot-motion-<status>);
+   data-dot-icons on the root lists those states. A state it leaves out is a plain, still dot in its colour (idle and
+   not running as in every style). */
+[data-dots="theme"] .dot.working { background: var(--working); }
+[data-dots="theme"] .dot.attention { background: var(--attention); }
+[data-dots="theme"] .dot.asking { background: var(--asking); }
+[data-dots="theme"] .dot.running { --icon: var(--dot-icon-running); --motion: var(--dot-motion-running); }
+[data-dots="theme"] .dot.working { --icon: var(--dot-icon-working); --motion: var(--dot-motion-working); }
+[data-dots="theme"] .dot.attention { --icon: var(--dot-icon-attention); --motion: var(--dot-motion-attention); }
+[data-dots="theme"] .dot.asking { --icon: var(--dot-icon-asking); --motion: var(--dot-motion-asking); }
+[data-dots="theme"] .dot.exited { --icon: var(--dot-icon-exited); --motion: var(--dot-motion-exited); }
+:root[data-dot-icons~="running"] [data-dots="theme"] .dot.running, :root[data-dot-icons~="working"] [data-dots="theme"] .dot.working,
+:root[data-dot-icons~="attention"] [data-dots="theme"] .dot.attention, :root[data-dot-icons~="asking"] [data-dots="theme"] .dot.asking,
+:root[data-dot-icons~="exited"] [data-dots="theme"] .dot.exited { background: none; box-shadow: none; border-radius: 0; }
+:root[data-dot-icons~="running"] [data-dots="theme"] .dot.running::before, :root[data-dot-icons~="working"] [data-dots="theme"] .dot.working::before,
+:root[data-dot-icons~="attention"] [data-dots="theme"] .dot.attention::before, :root[data-dot-icons~="asking"] [data-dots="theme"] .dot.asking::before,
+:root[data-dot-icons~="exited"] [data-dots="theme"] .dot.exited::before {
+  content: ''; inset: calc(50% - var(--dot-icon-size, 10px) / 2); border-radius: 0; box-shadow: none; opacity: 1;
+  background: var(--icon) center / contain no-repeat; animation: var(--motion, none);
+}
+:root[data-dot-icons~="running"] [data-dots="theme"] .dot.running::after { content: none; }   /* idle's resting glow: the picture is idle's own */
 
 @keyframes dot-typing {
   0%, 48%, 100% { box-shadow: -4.5px 20px var(--working), 0 20px var(--working), 4.5px 20px var(--working); }

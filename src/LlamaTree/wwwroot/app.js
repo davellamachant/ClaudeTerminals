@@ -803,7 +803,7 @@ function themeLook() {
   if (!themes.list.includes(t) && t !== themePreview) return t;   // the kept look
   const made = t.monochrome ? monochromeLook(accentColour(), t.base === 'light') : {};
   return {
-    id: t.id, name: t.name, base: t.base, font: t.font, glow: t.glow, grid: !!t.grid, rain: !!t.rain, monochrome: t.monochrome, cursor: t.cursor ?? null, terminalBackground: t.terminalBackground ?? null, floor: t.floor ?? null, cycle: t.cycle ?? null,
+    id: t.id, name: t.name, base: t.base, font: t.font, glow: t.glow, grid: !!t.grid, rain: !!t.rain, monochrome: t.monochrome, cursor: t.cursor ?? null, terminalBackground: t.terminalBackground ?? null, floor: t.floor ?? null, cycle: t.cycle ?? null, dots: t.dots ?? null,
     colors: { ...made.colors, ...t.colors }, terminal: { ...made.terminal, ...t.terminal }, diff: { ...made.diff, ...t.diff },
     accent: t.accent ?? made.accent ?? null,
   };
@@ -1230,8 +1230,8 @@ function hslHex(h, s, l) {
 
 /**
  * Every colour of a monochrome theme, in shades of one hue: backgrounds near black (near white on a light base), text and
- * highlights lighter. What needs telling apart (status, Git's changes, the terminal's sixteen colours, added and removed
- * lines) differs in how light and how strong its shade is rather than in hue.
+ * highlights lighter. What needs telling apart (Git's changes, the terminal's sixteen colours, added and removed lines)
+ * differs in how light and how strong its shade is rather than in hue. Status is the exception (see status below).
  */
 function monochromeLook(hex, light) {
   const [h, sAccent] = hexToHsl(hex);
@@ -1250,16 +1250,20 @@ function monochromeLook(hex, light) {
     const [[l0, r0], [l1, r1]] = [LEVELS[i - 1], LEVELS[i]];
     return r0 + (r1 - r0) * (l - l0) / (l1 - l0);
   };
-  const tone = (l, s) => {
+  const tone = (l, s, hue = h) => {
     const want = ratioFor(l);
     let lo = 0, hi = 100;   // lightness, searched away from the chrome until the shade reads as well as wanted
     for (let n = 0; n < 16; n++) {
       const mid = (lo + hi) / 2;
-      const enough = contrast(hslHex(h, s, light ? 100 - mid : mid), chrome) >= want;
+      const enough = contrast(hslHex(hue, s, light ? 100 - mid : mid), chrome) >= want;
       if (enough) hi = mid; else lo = mid;
     }
-    return hslHex(h, s, light ? 100 - hi : hi);
+    return hslHex(hue, s, light ? 100 - hi : hi);
   };
+  // A session's status is told apart by hue: shades of one hue on an 8px dot were too alike (idle, working, waiting and
+  // asking came within 1.3:1 of each other). Each keeps the hue it has in the other themes, as bright as the theme's
+  // marks; app.css uses them for the dots, session tabs and tiles only, so the rest stays in the one colour.
+  const status = (hue) => tone(66, 75, hue);
   const fg = (l) => tone(l, sat);           // text and marks
   const pale = (l) => tone(l, sat * 0.2);   // what's taken away (removed lines, errors), nearly grey
   // The accent: a bright shade that reads on the chrome for lines, and a deep one white text reads on for fills.
@@ -1273,7 +1277,8 @@ function monochromeLook(hex, light) {
       border: bg(20), 'border-soft': bg(13), 'border-strong': bg(32),
       text: fg(78), 'text-dim': fg(55), 'text-faint': fg(36), 'text-strong': fg(93),
       focus: fg(lineL), select: bg(18), 'select-inactive': bg(11), 'terminal-bg': bg(2.2), 'editor-bg': bg(3),
-      ok: fg(66), working: fg(72), attention: fg(84), asking: fg(95), danger: pale(70), 'danger-fill': hslHex(h, sat * 0.3, strongL),
+      ok: fg(66), working: fg(72), attention: fg(84), asking: fg(95), danger: pale(70),
+      'status-ok': status(170), 'status-working': status(212), 'status-attention': status(36), 'status-asking': status(330), 'danger-fill': hslHex(h, sat * 0.3, strongL),
       'st-m': fg(80), 'st-a': fg(66), 'st-d': pale(52), 'st-r': fg(88), 'st-u': fg(58),
       'info-bg': bg(9), 'info-border': bg(26), 'error-bg': bg(8), 'error-border': bg(30), 'pv-warn-bg': bg(10), 'pv-warn-border': bg(28),
       'ico-folder': fg(70), 'ico-file': fg(52), graph: fg(55),
@@ -1311,9 +1316,66 @@ const DOT_STYLES = [
   { id: 'calm', name: 'Calm', about: 'A different shape for each state, with only slow, small motion: a ring turning, a dot fading in a ring, a pink diamond.' },
   { id: 'signal', name: 'Signal', about: 'Bold, like a device’s status light: a ring filling while working, a blinking square, a dot that shakes for your answer.' },
 ];
-const dotStyle = { id: DOT_STYLES.some((d) => d.id === store.get('dotStyle')) ? store.get('dotStyle') : 'glow' };
-const applyDotStyle = () => { $('#app').dataset.dots = dotStyle.id; };
+// A theme can draw its own (its "dots": see ThemeDots), shown as one more style while it's on, until you pick another
+// while it's on: notThemes are the themes whose own you've put aside, and id is your style, shown with every other theme.
+const dotStyle = {
+  id: DOT_STYLES.some((d) => d.id === store.get('dotStyle')) ? store.get('dotStyle') : 'glow',
+  notThemes: new Set(store.get('dotStyleNotThemes', [])),
+};
+/** The style showing: the theme's own ("theme") while it has some you haven't put aside, otherwise yours. */
+const shownDotStyle = (look = themeLook()) => (look?.dots && !dotStyle.notThemes.has(look.id) ? 'theme' : dotStyle.id);
+const applyDotStyle = () => { $('#app').dataset.dots = shownDotStyle(); };
 applyDotStyle();
+
+// A theme's dots name the states as its floor's counts do; the page's dots are classed by status.
+const DOT_STATES = { idle: 'running', working: 'working', waiting: 'attention', asking: 'asking', stopped: 'exited' };
+// "status" in a dot's shape: the colour of the state it shows.
+const DOT_STATUS = { running: 'status-ok', working: 'status-working', attention: 'status-attention', asking: 'status-asking', exited: 'text-faint' };
+// How a theme's dot can move (ThemeDots.Motions): the app's own animations (see @keyframes in app.css).
+const DOT_MOTIONS = {
+  spin: 'dot-spin 1.6s linear infinite', pulse: 'dot-fade 2s ease-in-out infinite', breathe: 'dot-breathe 2s ease-in-out infinite',
+  blink: 'dot-blink 1.4s steps(1, end) infinite', beat: 'dot-beat 2.2s ease-out infinite', hop: 'dot-hop 1.6s infinite',
+  shake: 'dot-shake 1.6s ease-in-out infinite',
+};
+let dotVars = [];   // the variables themeDots set on the page, to take off again
+/**
+ * Puts a theme's own dots on the page: each state's picture as an image (--dot-icon-<status>) that the stylesheet shows
+ * in place of that dot when the theme's style is showing, with its motion (--dot-motion-<status>), and data-dot-icons on
+ * the root listing the states that have one. The pictures are drawn by cycleSvg from checked shapes, with their colours
+ * read off the page here (an image can't see the page's variables), so they're drawn again whenever the colours
+ * change: with the theme, and with the accent (applyAccent).
+ */
+function themeDots(look = themeLook()) {
+  const root = document.documentElement;
+  for (const v of dotVars) root.style.removeProperty(v);
+  dotVars = [];
+  const set = (name, value) => { root.style.setProperty(name, value); dotVars.push(name); };
+  const css = getComputedStyle(root);
+  const drawn = [];
+  for (const [state, cls] of Object.entries(DOT_STATES)) {
+    const dot = look?.dots?.states?.[state];
+    if (!dot?.image) continue;
+    const colour = (v) => {
+      const name = v === 'status' ? DOT_STATUS[cls] : v;
+      if (typeof name === 'string' && CYCLE_HEX.test(name)) return name;
+      if (typeof name !== 'string' || name === 'none' || !/^[a-z][a-z0-9-]{0,29}$/.test(name)) return 'none';
+      return css.getPropertyValue('--' + name).trim() || 'none';
+    };
+    const svg = cycleSvg(dot.image, colour);
+    svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    set(`--dot-icon-${cls}`, `url("data:image/svg+xml,${encodeURIComponent(new XMLSerializer().serializeToString(svg))}")`);
+    if (DOT_MOTIONS[dot.motion]) set(`--dot-motion-${cls}`, DOT_MOTIONS[dot.motion]);
+    drawn.push(cls);
+  }
+  if (drawn.length) {
+    root.dataset.dotIcons = drawn.join(' ');
+    const size = look.dots.size;
+    set('--dot-icon-size', `${Number.isFinite(size) ? Math.min(14, Math.max(6, size)) : 10}px`);
+  }
+  else delete root.dataset.dotIcons;
+  applyDotStyle();
+}
 
 const TERM_THEME_DARK = {
   background: '#181818', foreground: '#cccccc', cursor: '#d4d4d4', cursorAccent: '#181818',
@@ -1377,7 +1439,7 @@ function cycleColour(v) {
  * The cycle's picture as SVG, built here element by element from its shapes' numbers and path data: a theme's markup
  * is never put on the page, so a picture can't bring a script, a link or a style with it. Each value is checked again.
  */
-function cycleSvg(image) {
+function cycleSvg(image, colour = cycleColour) {
   const ns = 'http://www.w3.org/2000/svg';
   const finite = (a) => Array.isArray(a) && a.every((n) => typeof n === 'number' && Number.isFinite(n) && Math.abs(n) <= 10000);
   const clamp = (n, lo, hi, d) => (typeof n === 'number' && Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d);
@@ -1402,8 +1464,8 @@ function cycleSvg(image) {
       el = document.createElementNS(ns, sh.kind);
       el.setAttribute('points', sh.numbers.join(' '));
     } else continue;
-    el.style.fill = cycleColour(sh.fill);
-    el.style.stroke = cycleColour(sh.stroke);
+    el.style.fill = colour(sh.fill);
+    el.style.stroke = colour(sh.stroke);
     el.style.strokeWidth = String(clamp(sh.width, 0, 8, 1.6));
     el.style.opacity = String(clamp(sh.opacity, 0, 1, 1));
     svg.append(el);
@@ -6568,7 +6630,13 @@ function contrast(a, b) {
   return (hi + 0.05) / (lo + 0.05);
 }
 
+/** Puts the accent colour on the page, and draws a theme's own dots again in it (and in the theme's colours). */
 function applyAccent() {
+  accentColours();
+  themeDots();
+}
+
+function accentColours() {
   const root = document.documentElement.style;
   const own = themeLook()?.accent;   // a theme's own accent, or the one a monochrome theme built
   if (own) {
@@ -7373,8 +7441,9 @@ function themeMenu(x, y) {
         kbd: 'Change…', action: showAccentDialog },
     '-',
     { header: 'Status dots' },
-    { icon: h('span', { class: 'menu-dot', 'data-dots': dotStyle.id }, h('span', { class: 'dot attention' })),   // the style in use, waiting for you
-      label: DOT_STYLES.find((d) => d.id === dotStyle.id).name, kbd: 'Change…', action: showDotStyleDialog },
+    { icon: h('span', { class: 'menu-dot', 'data-dots': shownDotStyle() }, h('span', { class: 'dot attention' })),   // the style in use, waiting for you
+      label: shownDotStyle() === 'theme' ? `${themeLook().name}’s own` : DOT_STYLES.find((d) => d.id === dotStyle.id).name,
+      kbd: 'Change…', action: showDotStyleDialog },
     '-',
     ...navLayoutItems(),
     '-',
@@ -7446,41 +7515,65 @@ function themeSnapshot(title) {
     ...(look?.cursor ? { cursor: look.cursor } : {}),
     ...(veilOwn(look) !== null ? { terminalBackground: Math.round(veilAmount()) } : {}),   // as you have it now
     accent: { line: value('accent'), strong: value('accent-strong') },
-    colors: Object.fromEntries(themes.names.colors.map((n) => [n, value(n)]).filter(([, v]) => v)),
+    // A status colour of its own only where it differs from the one it would take (status-ok is ok's, and so on), so
+    // changing ok in the file changes the dots too.
+    colors: Object.fromEntries(themes.names.colors.map((n) => [n, value(n)])
+      .filter(([n, v]) => v && !(n.startsWith('status-') && v === value(n.slice(7))))),
     terminal: Object.fromEntries(themes.names.terminal.filter((n) => terminal[n]).map((n) => [n, terminal[n]])),
     diff: Object.fromEntries(themes.names.diff.filter((n) => diff[n]).map((n) => [n, diff[n]])),
+    ...(look?.dots ? { dots: dotsFile(look.dots) } : {}),
+  };
+}
+
+/** A theme's dots as its file has them (ThemeDots reads them into states of shapes with a kind). */
+function dotsFile(dots) {
+  const shape = (s) => ({ [s.kind]: s.kind === 'path' ? s.path : s.numbers, fill: s.fill, stroke: s.stroke, width: s.width, opacity: s.opacity });
+  return {
+    ...(dots.about ? { about: dots.about } : {}),
+    size: dots.size,
+    ...Object.fromEntries(Object.entries(dots.states ?? {}).map(([state, d]) =>
+      [state, { image: { viewBox: d.image.viewBox, shapes: d.image.shapes.map(shape) }, motion: d.motion }])),
   };
 }
 
 /**
  * Status dots: each style as a card showing every state moving, picked like the accent colour: each click previews it
- * on the whole app, and Cancel puts back what was there. The cards sit outside #app, so each shows its own style.
+ * on the whole app, and Cancel puts back what was there. The cards sit outside #app, so each shows its own style. A
+ * theme with dots of its own has a card of its own first; picking another while it's on puts its own aside, for it only.
  */
 function showDotStyleDialog() {
-  const before = dotStyle.id;
+  const look = themeLook();
+  const own = look?.dots ? { id: 'theme', name: `${look.name}’s own`, about: look.dots.about ?? `The status dots ${look.name} comes with.` } : null;
+  const before = { id: dotStyle.id, aside: !!own && dotStyle.notThemes.has(look.id) };
   const states = [['running', 'Idle'], ['working', 'Working'], ['attention', 'Waiting for you'], ['asking', 'Needs your answer'], ['exited', 'Not running']];
-  const cards = DOT_STYLES.map((d) => h('button', { class: 'dot-style', 'data-dots': d.id, onclick: () => pick(d.id) },
+  const cards = (own ? [own, ...DOT_STYLES] : DOT_STYLES).map((d) => h('button', { class: 'dot-style', 'data-dots': d.id, onclick: () => pick(d.id) },
     h('span', { class: 'dot-style-name' }, d.name),
     h('span', { class: 'dot-style-states' }, states.map(([cls, label]) => h('span', { class: 'dot-style-state' }, h('span', { class: 'dot ' + cls }), label))),
     h('span', { class: 'dot-style-about' }, d.about)));
 
+  const aside = (on) => { if (on) dotStyle.notThemes.add(look.id); else dotStyle.notThemes.delete(look.id); };
   function pick(id) {
-    dotStyle.id = id;
+    if (id !== 'theme') dotStyle.id = id;
+    if (own) aside(id !== 'theme');
     applyDotStyle();   // preview on the whole app
     for (const c of cards) c.classList.toggle('selected', c.dataset.dots === id);
   }
+  const save = () => {
+    store.set('dotStyle', dotStyle.id);
+    store.set('dotStyleNotThemes', [...dotStyle.notThemes]);
+  };
   let saved = false;
   openModal('Status dots', [
     h('div', { class: 'dot-style-grid' }, cards),
     h('div', { class: 'field help' }, 'With Windows’ animation effects turned off, the dots stand still and their shapes tell the states apart.'),
   ], [
     h('button', { class: 'btn', onclick: closeModal }, 'Cancel'),
-    h('button', { class: 'btn primary', onclick: () => { saved = true; store.set('dotStyle', dotStyle.id); closeModal(); } }, 'OK'),
+    h('button', { class: 'btn primary', onclick: () => { saved = true; save(); closeModal(); } }, 'OK'),
   ]);
   $('#modalHost .modal').classList.add('wide');
   // Cancel, Esc or a click outside: put back the style from before.
-  onModalClose = () => { if (!saved) { dotStyle.id = before; applyDotStyle(); } };
-  pick(before);
+  onModalClose = () => { if (!saved) { dotStyle.id = before.id; if (own) aside(before.aside); applyDotStyle(); } };
+  pick(shownDotStyle(look));
 }
 
 /**
@@ -8551,7 +8644,7 @@ function themeThumb(t) {
       h('span', { class: 'tt-tab', style: `border-color:${accentLine};color:${c['text-strong'] ?? text}` }, 'All sessions'),
       h('span', { class: 'tt-tab', style: `color:${c['text-dim'] ?? text}` }, 'Git Changes'),
       h('span', { class: 'spacer' }),
-      Object.keys(DOTS).map((s) => h('i', { class: 'tt-dot', style: `background:${c[s] ?? DOTS[s]}` }))),
+      Object.keys(DOTS).map((s) => h('i', { class: 'tt-dot', style: `background:${c['status-' + s] ?? c[s] ?? DOTS[s]}` }))),
     h('div', { class: 'tt-term', style: `background:${bg};color:${fg}` },
       line(['❯ ', term.green ?? DOTS.ok], ['git status', fg]),
       line(['  modified: ', term.yellow ?? DOTS.attention], ['app.js', term.red ?? '#f85149']),
@@ -8566,7 +8659,7 @@ function galleryThemeCard(e) {
   const on = theme.pref === e.id && !themePreview;
   const trying = themePreview?.previewOf === e.id;
   const note = galleryNote(e, 'theme');
-  const effects = [t.glow && 'a glow', t.grid && 'the Grid', t.rain && 'digital rain', t.cursor === 'light-cycle' && 'a light cycle', t.monochrome && 'your accent colour throughout'].filter(Boolean);
+  const effects = [t.glow && 'a glow', t.grid && 'the Grid', t.rain && 'digital rain', t.cursor === 'light-cycle' && 'a light cycle', t.dots && 'status dots of its own', t.monochrome && 'your accent colour throughout'].filter(Boolean);
   return h('section', { class: 'gallery-card' + (have ? ' have' : '') + (trying ? ' trying' : '') },
     themeThumb(t),
     h('header', {},

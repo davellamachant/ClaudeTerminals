@@ -28,7 +28,7 @@ internal sealed partial record ThemeCycle(CycleImage? Image, int Size, int Offse
         value is "cursor" or "accent" or "none" || ThemeCatalog.ColorNames.Contains(value) || Hex().IsMatch(value);
 
     [GeneratedRegex("^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")]
-    private static partial Regex Hex();
+    internal static partial Regex Hex();
 
     // Path data: its commands and numbers, nothing else, starting with a move.
     [GeneratedRegex(@"^\s*[Mm][MmLlHhVvCcSsQqTtAaZz0-9eE.,+\-\s]*$")]
@@ -77,16 +77,24 @@ internal sealed partial record ThemeCycle(CycleImage? Image, int Size, int Offse
         return new ThemeCycle(image, size, offset, glow, trail);
     }
 
-    private static CycleImage? ParseImage(JsonElement img, Action<string> problem)
+    /// <summary>
+    /// A picture: its "viewBox" and "shapes" (see ParseShape), as the light cycle and a theme's status dots (<see cref="ThemeDots"/>)
+    /// have. <paramref name="colours"/> says what a shape's colour can be (<see cref="IsColour"/> if left out), described by
+    /// <paramref name="colourHelp"/>; <paramref name="stroke"/> is a shape's stroke when it gives none, and <paramref name="kept"/>
+    /// says what stands in for a picture that can't be used.
+    /// </summary>
+    internal static CycleImage? ParseImage(JsonElement img, Action<string> problem, Func<string, bool>? colours = null, string stroke = "cursor",
+        string colourHelp = "\"cursor\", \"accent\", one of the page's colours, #rrggbb or \"none\"", string kept = "the app's own picture is kept")
     {
+        colours ??= IsColour;
         if (img.ValueKind != JsonValueKind.Object || !img.TryGetProperty("viewBox", out var vb) || !img.TryGetProperty("shapes", out var list) || list.ValueKind != JsonValueKind.Array)
         {
-            problem("image needs a \"viewBox\" ([x, y, width, height]) and its \"shapes\"; the app's own picture is kept.");
+            problem($"image needs a \"viewBox\" ([x, y, width, height]) and its \"shapes\"; {kept}.");
             return null;
         }
         if (Numbers(vb) is not { Length: 4 } box || box[2] <= 0 || box[3] <= 0 || box[2] > 1000 || box[3] > 1000)
         {
-            problem("image.viewBox is [x, y, width, height], each width and height above 0 and up to 1000; the app's own picture is kept.");
+            problem($"image.viewBox is [x, y, width, height], each width and height above 0 and up to 1000; {kept}.");
             return null;
         }
         var shapes = new List<CycleShape>();
@@ -99,11 +107,11 @@ internal sealed partial record ThemeCycle(CycleImage? Image, int Size, int Offse
                 problem($"image has more than {MaxShapes} shapes; the rest are left out.");
                 break;
             }
-            if (ParseShape(s, $"image.shapes[{i - 1}]", problem) is { } shape) shapes.Add(shape);
+            if (ParseShape(s, $"image.shapes[{i - 1}]", problem, colours, stroke, colourHelp) is { } shape) shapes.Add(shape);
         }
         if (shapes.Count == 0)
         {
-            problem("image has no shapes the app can draw; the app's own picture is kept.");
+            problem($"image has no shapes the app can draw; {kept}.");
             return null;
         }
         return new CycleImage(box, shapes);
@@ -114,7 +122,7 @@ internal sealed partial record ThemeCycle(CycleImage? Image, int Size, int Offse
     /// "polyline" or "polygon" [x, y, x, y…], or "path" (path data), with "fill" and "stroke" (colours, or "none"), "width"
     /// (the stroke's, 0 to 8) and "opacity" (0 to 1).
     /// </summary>
-    private static CycleShape? ParseShape(JsonElement s, string where, Action<string> problem)
+    private static CycleShape? ParseShape(JsonElement s, string where, Action<string> problem, Func<string, bool> colours, string stroke, string colourHelp)
     {
         if (s.ValueKind != JsonValueKind.Object)
         {
@@ -162,11 +170,11 @@ internal sealed partial record ThemeCycle(CycleImage? Image, int Size, int Offse
         string? Colour(string name, string fallback)
         {
             if (!s.TryGetProperty(name, out var v)) return fallback;
-            if (v.ValueKind == JsonValueKind.String && IsColour(v.GetString()!)) return v.GetString();
-            problem($"{where}.{name} isn't a colour (\"cursor\", \"accent\", one of the page's colours, #rrggbb or \"none\"); \"{fallback}\" is used.");
+            if (v.ValueKind == JsonValueKind.String && colours(v.GetString()!)) return v.GetString();
+            problem($"{where}.{name} isn't a colour ({colourHelp}); \"{fallback}\" is used.");
             return fallback;
         }
-        return new CycleShape(kind, numbers, path, Colour("fill", "none")!, Colour("stroke", "cursor")!,
+        return new CycleShape(kind, numbers, path, Colour("fill", "none")!, Colour("stroke", stroke)!,
             Number(s, "width", 0, 8, 1.6, (w) => problem($"{where}.{w}")), Number(s, "opacity", 0, 1, 1, (w) => problem($"{where}.{w}")));
     }
 
@@ -175,7 +183,7 @@ internal sealed partial record ThemeCycle(CycleImage? Image, int Size, int Offse
             ? e.EnumerateArray().Select(n => n.GetDouble()).ToArray()
             : null;
 
-    private static double Number(JsonElement e, string name, double min, double max, double fallback, Action<string> problem)
+    internal static double Number(JsonElement e, string name, double min, double max, double fallback, Action<string> problem)
     {
         if (!e.TryGetProperty(name, out var v)) return fallback;
         if (v.ValueKind == JsonValueKind.Number && v.GetDouble() is var n && n >= min && n <= max) return n;
@@ -183,7 +191,7 @@ internal sealed partial record ThemeCycle(CycleImage? Image, int Size, int Offse
         return fallback;
     }
 
-    private static int Whole(JsonElement e, string name, int min, int max, int fallback, Action<string> problem)
+    internal static int Whole(JsonElement e, string name, int min, int max, int fallback, Action<string> problem)
     {
         if (!e.TryGetProperty(name, out var v)) return fallback;
         if (v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var n) && n >= min && n <= max) return n;

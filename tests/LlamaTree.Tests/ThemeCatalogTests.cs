@@ -89,7 +89,8 @@ public sealed class ThemeCatalogTests : IDisposable
         Assert.Equal((42, 85, (int?)null), (matrix.TerminalBackground, tron.TerminalBackground, nerds.TerminalBackground));
         Assert.DoesNotContain(themes, t => t.Id == "tron-ares");   // Tron in red is Tron with a red accent now
         // Matrix is written out in full: every colour the page, the terminals and the diff editor can take, so nothing of Dark shows through.
-        Assert.Equal(ThemeCatalog.ColorNames.OrderBy(n => n), matrix.Colors.Keys.OrderBy(n => n));
+        // (Not the status dots' own, which are its status colours when left out.)
+        Assert.Equal(ThemeCatalog.ColorNames.Where(n => !n.StartsWith("status-")).OrderBy(n => n), matrix.Colors.Keys.OrderBy(n => n));
         Assert.Equal(ThemeCatalog.DiffNames.OrderBy(n => n), matrix.Diff.Keys.OrderBy(n => n));
         Assert.Equal(ThemeCatalog.TerminalNames.Except(["selectionForeground"]).OrderBy(n => n), matrix.Terminal.Keys.OrderBy(n => n));
     }
@@ -98,9 +99,9 @@ public sealed class ThemeCatalogTests : IDisposable
     public void Every_colour_a_theme_can_set_is_one_the_stylesheet_uses()
     {
         var css = File.ReadAllText(Shipped("app.css"));
-        var root = css[css.IndexOf(":root {", StringComparison.Ordinal)..];
-        root = root[..root.IndexOf('}')];
-        var defined = Regex.Matches(root, @"--([a-z0-9-]+):").Select(m => m.Groups[1].Value).ToHashSet();
+        // The colours, and the status dots' own (status-ok…, each its status colour unless a theme sets it), in a :root of their own.
+        var defined = Regex.Matches(css, @":root \{([^}]*)\}").SelectMany(r => Regex.Matches(r.Groups[1].Value, @"--([a-z0-9-]+):"))
+            .Select(m => m.Groups[1].Value).ToHashSet();
         Assert.Subset(defined, ThemeCatalog.ColorNames.ToHashSet());
         // And every colour it defines is one a theme can set, apart from the accent (a theme's "accent") and layout.
         Assert.Empty(defined.Except(ThemeCatalog.ColorNames).Except(["accent", "accent-strong", "header-h"]));
