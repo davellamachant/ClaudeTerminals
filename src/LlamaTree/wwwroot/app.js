@@ -62,7 +62,7 @@ const PATHS = {
   more: 'M3.5 8h.01M8 8h.01M12.5 8h.01',
   collapse: 'M6 2v4H2M10 2v4h4M6 14v-4H2M10 14v-4h4',
   sideBySide: 'M2 3h12v10H2zM8 3v10',
-  panel: 'M2 3h12v10H2zM10 3v10',   // the side panel, with the Git tabs off
+  panel: 'M2 3h12v10H2zM10 3v10M10 6.5h4',   // the side panel, a small panel over a big one: its title bar button and Show/Hide the side panel
   inline: 'M2 3h12v10H2zM2 8h12',
   whitespace: 'M3 12h10M3 9v3M13 9v3M6 4h4M8 4v5',
   openFile: 'M9 2H4v12h8V5zM9 2v3h3',
@@ -2938,7 +2938,7 @@ function applySideEmpty() {
   const btn = $('#btnGit');
   btn.classList.toggle('active', state.gitVisible && !empty);
   const git = anyGitTab();
-  btn.innerHTML = icon(git ? 'git' : 'panel');
+  btn.innerHTML = icon('panel');
   btn.title = git ? 'Git and the side panel (Ctrl+Shift+G)'
     : empty ? 'Side panel: nothing open (click for its options)' : 'Side panel: panels and plugins (Ctrl+Shift+G)';
   $('#gitRefresh').hidden = !git;
@@ -9019,7 +9019,7 @@ loadThemes();
 // ------------------------------------------------------------------ boot
 
 $('#btnGrid').innerHTML = icon('grid');
-$('#btnGit').innerHTML = icon('git');
+$('#btnGit').innerHTML = icon('panel');
 $('#btnGitMenu').innerHTML = icon('chevD');
 $('#btnAdd').innerHTML = icon('plus') + '<span>New Session</span>';
 $('#gitRefresh').innerHTML = icon('refresh');
