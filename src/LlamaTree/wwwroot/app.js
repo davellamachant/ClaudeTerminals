@@ -625,10 +625,8 @@ function projectAllButtons(groups) {
   ];
 }
 
-// Its words in parts, so a narrow side bar can drop "New" and "(group sessions)" (see #navFoot in app.css).
 const projectAddButton = () => h('button', { class: 'tb-btn text project-add', title: 'New project', onclick: showNewProjectDialog }, iconEl('plus'),
-  state.projects.length ? h('span', {}, 'Project')
-    : h('span', {}, h('span', { class: 'new' }, 'New project'), h('span', { class: 'short' }, 'Project'), h('span', { class: 'why' }, ' (group sessions)')));
+  state.projects.length ? 'Project' : 'New project');
 
 /**
  * The bar down the left in the Hybrid and Left layouts: a row per project, as its tab in the Top layout's projects bar,
@@ -9441,7 +9439,7 @@ loadThemes();
 $('#btnGrid').innerHTML = icon('grid');
 $('#btnGit').innerHTML = icon('panel');
 $('#btnGitMenu').innerHTML = icon('chevD');
-$('#btnAdd').innerHTML = icon('plus') + '<span><span class="new">New </span>Session</span>';
+$('#btnAdd').innerHTML = icon('plus') + '<span>New Session</span>';
 $('#gitRefresh').innerHTML = icon('refresh');
 $('#gitHide').innerHTML = icon('close');
 $('#diffPrev').innerHTML = icon('up');

@@ -965,16 +965,12 @@ body[data-nav="left"] #docTools { display: flex; }
 #docTools .tb-btn { height: 24px; min-width: 24px; }
 #docTools .app-version { margin: 0 12px 0 2px; }   /* set apart from the buttons after it */
 #navHead > #btnGrid { flex: none; height: 24px; min-width: 24px; margin: 0 4px 0 -4px; }
-#navFoot { display: flex; align-items: center; gap: 2px; }
+#navFoot { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; }
+/* Each button keeps its words on one line: a side bar too narrow for both stacks them instead. */
+#navFoot > .tb-btn { white-space: nowrap; }
+#navFoot > .project-add { margin-left: 0; }
 #navFoot > #btnAdd { flex: none; padding: 0 8px; color: var(--text-dim); }
 #navFoot > #btnAdd:hover { color: var(--text); }
-/* A narrow side bar shortens the buttons rather than wrap them: "(group sessions)" goes first, then "New", then the words, leaving the +s. */
-#navFoot > .tb-btn { min-width: 0; white-space: nowrap; overflow: hidden; }
-#navFoot > .tb-btn > span { overflow: hidden; text-overflow: ellipsis; }
-@container nav-bar (max-width: 380px) { #navFoot .why { display: none; } }
-.project-add .short { display: none; }
-@container nav-bar (max-width: 260px) { #navFoot .new { display: none; } #navFoot .short { display: inline; } }
-@container nav-bar (max-width: 175px) { #navFoot > .tb-btn > span { display: none; } }
 
 #navBar { flex: none; flex-direction: column; min-width: 160px; min-height: 0; background: var(--chrome-3); }
 #navSplitter { width: 5px; flex: none; cursor: col-resize; background: var(--chrome); border-right: 1px solid var(--border-soft); }
