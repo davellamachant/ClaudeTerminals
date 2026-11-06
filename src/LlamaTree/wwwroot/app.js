@@ -803,7 +803,7 @@ function themeLook() {
   if (!themes.list.includes(t) && t !== themePreview) return t;   // the kept look
   const made = t.monochrome ? monochromeLook(accentColour(), t.base === 'light') : {};
   return {
-    id: t.id, name: t.name, base: t.base, font: t.font, glow: t.glow, grid: !!t.grid, rain: !!t.rain, monochrome: t.monochrome, cursor: t.cursor ?? null, terminalBackground: t.terminalBackground ?? null, floor: t.floor ?? null,
+    id: t.id, name: t.name, base: t.base, font: t.font, glow: t.glow, grid: !!t.grid, rain: !!t.rain, monochrome: t.monochrome, cursor: t.cursor ?? null, terminalBackground: t.terminalBackground ?? null, floor: t.floor ?? null, cycle: t.cycle ?? null,
     colors: { ...made.colors, ...t.colors }, terminal: { ...made.terminal, ...t.terminal }, diff: { ...made.diff, ...t.diff },
     accent: t.accent ?? made.accent ?? null,
   };
@@ -1335,20 +1335,81 @@ const TERM_THEME_LIGHT = {
 const termTheme = (look = themeLook()) => ({ ...(isLight() ? TERM_THEME_LIGHT : TERM_THEME_DARK), ...look?.terminal });
 
 // The light cycle (a theme's "cursor": "light-cycle"): a light cycle drawn in the terminal's cursor colour, riding a little to
-// the right of the cursor (CYCLE_OFFSET; three cells wide) and leaving a ribbon of light that fades behind it as it moves,
+// the right of the cursor (three cells wide, unless a theme's "cycle" says otherwise) and leaving a ribbon of light that fades behind it as it moves,
 // turning at right angles when it changes line. It's a layer over the terminal's screen. The cursor itself stays a
 // blinking bar in the cursor colour, so you can see where you're typing and whether the terminal has focus; the cycle
 // dims while it hasn't (see .cycle-head in app.css).
 const TRAIL_MAX = 48;        // pieces of ribbon kept at once
-const CYCLE_CELLS = 3;       // how many cells wide the light cycle is drawn
-const CYCLE_OFFSET = 25;     // how far right of the cursor it rides, in pixels, so it never covers what you're typing
-// Side view, facing right, in a 24 by 16 box: two tall wheels with hubs, the canopy sweeping over them, the rider's
-// back, and the white light stripe along the canopy.
-const CYCLE_SVG = '<svg viewBox="0 0 24 16" preserveAspectRatio="xMinYMid meet" aria-hidden="true">' +
-  '<circle cx="5.5" cy="10.5" r="4.6"/><circle cx="18.5" cy="10.5" r="4.6"/>' +
-  '<circle cx="5.5" cy="10.5" r="1.3" fill="currentColor"/><circle cx="18.5" cy="10.5" r="1.3" fill="currentColor"/>' +
-  '<path d="M1.5 8 C3.5 3.6 8 2.2 12 2.6 C16.5 3 20.5 5 22.5 8.5"/><path d="M8.5 6.2 L10.5 3.6"/><path d="M9 10.5 H15"/>' +
-  '<path d="M4 6.4 C8 3.2 15 3 20 5.8" stroke="#fff" stroke-width="1" opacity=".9"/></svg>';
+// The app's own cycle, written as a theme's "cycle" is (see ThemeCycle): side view, facing right, in a 24 by 16 box: two
+// tall wheels with hubs, the canopy sweeping over them, the rider's back, and the white light stripe along the canopy;
+// three cells wide, riding 25 pixels right of the cursor (so it never covers what you're typing), the ribbon at the
+// wheels' height (11 of 16).
+const cycleShape = (kind, numbers, more = {}) => ({ kind, numbers: kind === 'path' ? null : numbers, path: kind === 'path' ? numbers : null, fill: 'none', stroke: 'cursor', width: 1.6, opacity: 1, ...more });
+const CYCLE_DEFAULT = {
+  image: {
+    viewBox: [0, 0, 24, 16],
+    shapes: [
+      cycleShape('circle', [5.5, 10.5, 4.6]), cycleShape('circle', [18.5, 10.5, 4.6]),
+      cycleShape('circle', [5.5, 10.5, 1.3], { fill: 'cursor' }), cycleShape('circle', [18.5, 10.5, 1.3], { fill: 'cursor' }),
+      cycleShape('path', 'M1.5 8 C3.5 3.6 8 2.2 12 2.6 C16.5 3 20.5 5 22.5 8.5'), cycleShape('path', 'M8.5 6.2 L10.5 3.6'), cycleShape('path', 'M9 10.5 H15'),
+      cycleShape('path', 'M4 6.4 C8 3.2 15 3 20 5.8', { stroke: '#ffffff', width: 1, opacity: 0.9 }),
+    ],
+  },
+  size: 3, offset: 25, glow: 6,
+  trail: { width: 2, glow: 10, fade: 800, at: 0.69, colour: 'cursor' },
+};
+/** The cycle the theme on screen rides: its own picture and options (checked by ThemeCatalog), or the app's own. */
+function cycleOptions(look = themeLook()) {
+  const c = look?.cycle;
+  if (!c) return CYCLE_DEFAULT;
+  return { image: c.image ?? CYCLE_DEFAULT.image, size: c.size, offset: c.offset, glow: c.glow, trail: c.trail ?? null };
+}
+const CYCLE_HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+const CYCLE_PATH = /^\s*[Mm][MmLlHhVvCcSsQqTtAaZz0-9eE.,+\-\s]*$/;
+/** A cycle colour as CSS: the cursor's, the accent or a page colour by name (as variables), a hex, or none. */
+function cycleColour(v) {
+  if (v === 'cursor') return 'var(--cycle)';
+  if (typeof v === 'string' && CYCLE_HEX.test(v)) return v;
+  if (typeof v === 'string' && v !== 'none' && /^[a-z][a-z0-9-]{0,29}$/.test(v)) return `var(--${v})`;
+  return 'none';
+}
+/**
+ * The cycle's picture as SVG, built here element by element from its shapes' numbers and path data: a theme's markup
+ * is never put on the page, so a picture can't bring a script, a link or a style with it. Each value is checked again.
+ */
+function cycleSvg(image) {
+  const ns = 'http://www.w3.org/2000/svg';
+  const finite = (a) => Array.isArray(a) && a.every((n) => typeof n === 'number' && Number.isFinite(n) && Math.abs(n) <= 10000);
+  const clamp = (n, lo, hi, d) => (typeof n === 'number' && Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d);
+  const svg = document.createElementNS(ns, 'svg');
+  const box = finite(image?.viewBox) && image.viewBox.length === 4 && image.viewBox[2] > 0 && image.viewBox[3] > 0 ? image.viewBox : CYCLE_DEFAULT.image.viewBox;
+  svg.setAttribute('viewBox', box.join(' '));
+  svg.setAttribute('preserveAspectRatio', 'xMinYMid meet');
+  svg.setAttribute('aria-hidden', 'true');
+  const names = { circle: ['cx', 'cy', 'r'], ellipse: ['cx', 'cy', 'rx', 'ry'], rect: ['x', 'y', 'width', 'height'], line: ['x1', 'y1', 'x2', 'y2'] };
+  for (const sh of (Array.isArray(image?.shapes) ? image.shapes : []).slice(0, 64)) {
+    let el = null;
+    if (sh?.kind === 'path') {
+      if (typeof sh.path !== 'string' || sh.path.length > 4000 || !CYCLE_PATH.test(sh.path)) continue;
+      el = document.createElementNS(ns, 'path');
+      el.setAttribute('d', sh.path);
+    } else if (names[sh?.kind]) {
+      if (!finite(sh.numbers) || sh.numbers.length !== names[sh.kind].length) continue;
+      el = document.createElementNS(ns, sh.kind);
+      names[sh.kind].forEach((a, i) => el.setAttribute(a, String(sh.numbers[i])));
+    } else if (sh?.kind === 'polyline' || sh?.kind === 'polygon') {
+      if (!finite(sh.numbers) || sh.numbers.length < 4 || sh.numbers.length > 200 || sh.numbers.length % 2) continue;
+      el = document.createElementNS(ns, sh.kind);
+      el.setAttribute('points', sh.numbers.join(' '));
+    } else continue;
+    el.style.fill = cycleColour(sh.fill);
+    el.style.stroke = cycleColour(sh.stroke);
+    el.style.strokeWidth = String(clamp(sh.width, 0, 8, 1.6));
+    el.style.opacity = String(clamp(sh.opacity, 0, 1, 1));
+    svg.append(el);
+  }
+  return svg;
+}
 // A program repainting its screen (a listing streaming by, Claude's own interface) moves the cursor every frame; that's
 // not riding, so past this many moves in half a second only the glow follows, and the ribbon waits for your own moves.
 const BURST_MOVES = 12, BURST_MS = 500;
@@ -1372,21 +1433,25 @@ function dressCursor(s) {
 function lightCycle(s, on) {
   if (!on) {
     if (s.cycle) {
-      s.cycle.move.dispose(); s.cycle.resize.dispose(); s.cycle.layer.remove();
+      s.cycle.move.dispose(); s.cycle.resize.dispose(); s.cycle.write.dispose(); s.cycle.layer.remove();
       s.cycle = null;
     }
     dressCursor(s);
     return;
   }
+  const opts = cycleOptions(), key = JSON.stringify(opts);
+  if (s.cycle && s.cycle.key !== key) lightCycle(s, false);   // another theme's cycle: put up the new one
   if (s.cycle) { s.cycle.layer.style.setProperty('--cycle', termTheme().cursor); dressCursor(s); return; }
   const screen = s.surface.querySelector('.xterm-screen');
   if (!screen) return;
-  const head = h('div', { class: 'cycle-head', hidden: true });
-  head.innerHTML = CYCLE_SVG;
+  const head = h('div', { class: 'cycle-head', hidden: true }, cycleSvg(opts.image));
+  head.style.filter = opts.glow > 0 ? `drop-shadow(0 0 ${opts.glow / 3}px var(--cycle)) drop-shadow(0 0 ${opts.glow}px var(--cycle))` : 'none';
   const layer = h('div', { class: 'cycle-layer' }, head);
   layer.style.setProperty('--cycle', termTheme().cursor);
+  const trail = opts.trail;
+  if (trail) layer.style.setProperty('--cycle-trail', cycleColour(trail.colour));
   screen.append(layer);
-  const c = { layer, head, last: null, queued: false, pieces: [], moves: [] };
+  const c = { key, layer, head, last: null, queued: false, pieces: [], moves: [] };
   const ride = () => {
     c.queued = false;
     const term = s.term, b = term.buffer.active;
@@ -1394,30 +1459,40 @@ function lightCycle(s, on) {
     const cw = screen.clientWidth / term.cols, ch = screen.clientHeight / term.rows;
     const x = b.cursorX, y = b.cursorY;
     head.hidden = false;
-    Object.assign(head.style, { left: `${x * cw + CYCLE_OFFSET}px`, top: `${y * ch}px`, width: `${cw * CYCLE_CELLS}px`, height: `${ch}px` });
+    Object.assign(head.style, { left: `${x * cw + opts.offset}px`, top: `${y * ch}px`, width: `${cw * opts.size}px`, height: `${ch}px` });
+    // Text where it would ride (the cursor moved back into a line, or a hint after it, as Claude's prompt has): it steps
+    // back, faint and without its glow, so the text can be read, until it's over empty cells again.
+    const line = b.getLine(b.baseY + y), first = Math.floor(x + opts.offset / cw), last = Math.ceil(x + opts.offset / cw + opts.size);
+    let over = false;
+    for (let col = Math.max(first, x + 1); line && col <= last && col < term.cols && !over; col++) over = /\S/.test(line.getCell(col)?.getChars() ?? '');
+    head.classList.toggle('over-text', over);
     const from = c.last;
     c.last = { x, y };
     if (!from || (from.x === x && from.y === y)) return;
     const now = performance.now();
     c.moves = c.moves.filter((t) => now - t < BURST_MS);
     c.moves.push(now);
-    if (c.moves.length > BURST_MOVES || !trailsAllowed()) return;
+    if (c.moves.length > BURST_MOVES || !trailsAllowed() || !trail) return;
     // The ribbon, from the rear wheel: down (or up) the old column to the new line, then along it to the new cell.
-    const midX = (col) => (col + 0.5) * cw + CYCLE_OFFSET;   // a column's middle, where the cycle rides
-    const wheel = (row) => (row + 0.69) * ch;   // the wheels' height in the cell (11 of 16 in CYCLE_SVG)
+    const midX = (col) => (col + 0.5) * cw + opts.offset;   // a column's middle, where the cycle rides
+    const wheel = (row) => (row + trail.at) * ch;   // the wheels' height in the cell
+    const t = trail.width, g = trail.glow;
     const piece = (left, top, width, height) => {
       const p = h('div', { class: 'cycle-trail', style: `left:${left}px;top:${top}px;width:${width}px;height:${height}px` });
+      p.style.boxShadow = g > 0 ? `0 0 ${g * 0.4}px var(--cycle-trail), 0 0 ${g}px var(--cycle-trail)` : 'none';
+      p.style.animationDuration = trail.fade + 'ms';
       p.addEventListener('animationend', () => { p.remove(); c.pieces = c.pieces.filter((q) => q !== p); });
       layer.append(p);
       c.pieces.push(p);
       while (c.pieces.length > TRAIL_MAX) c.pieces.shift().remove();
     };
-    if (from.y !== y) piece(midX(from.x) - 1, Math.min(wheel(from.y), wheel(y)), 2, Math.abs(y - from.y) * ch);
-    if (from.x !== x) piece(Math.min(midX(from.x), midX(x)), wheel(y) - 1, Math.abs(x - from.x) * cw, 2);
+    if (from.y !== y) piece(midX(from.x) - t / 2, Math.min(wheel(from.y), wheel(y)), t, Math.abs(y - from.y) * ch);
+    if (from.x !== x) piece(Math.min(midX(from.x), midX(x)), wheel(y) - t / 2, Math.abs(x - from.x) * cw, t);
   };
   const queue = () => { if (!c.queued) { c.queued = true; requestAnimationFrame(ride); } };
   c.move = s.term.onCursorMove(queue);
   c.resize = s.term.onResize(() => { c.last = null; queue(); });
+  c.write = s.term.onWriteParsed(queue);   // text written beside it, though the cursor didn't move
   s.cycle = c;
   dressCursor(s);
   queue();

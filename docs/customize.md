@@ -58,9 +58,44 @@ A theme can set three colours or all of them:
 - **`rain`:** `true` has glyphs rain down the window's floor in the accent colour, as Matrix does, behind the title bar, tabs and panels and, dimmed, under the terminals' text (Matrix sets `terminalBackground` to 42 for this); editors, menus and cards keep their own backgrounds. With Windows' reduce-motion setting on, the rain stands still.
 - **`terminalBackground`:** a whole number from 0 (see-through) to 100 (solid): how solid the terminals start over the window's floor, and that you may change it with the slider in each terminal's corner. Matrix has `42`, so its rain shows through; Tron has `100`, solid until you slide it. Leave it out to keep the terminals solid, with no slider.
 - **`cursor`:** `"light-cycle"` puts a light cycle beside the terminals' cursor, as in the Tron themes: it rides a little to the right of the cursor (which stays a blinking bar in the cursor colour, so you can see where you're typing and whether the terminal has focus; the cycle dims while it hasn't), glows in that colour and leaves a ribbon of light fading behind it as it moves, turning at right angles when it changes line. Leave it out for the plain cursor. With Windows' reduce-motion setting on, the glow stays and the ribbon doesn't.
+- **`cycle`:** the light cycle's own picture and how it glows, for a theme with `"cursor": "light-cycle"` (see [below](#a-light-cycle-of-its-own)).
 - **`floor`:** a floor of the theme's own: a script that draws the window's floor (see [below](#a-floor-of-its-own)).
 
 A theme is only data: the app takes the names above and checks each value, so it can't restyle anything else or load anything. Its one piece of code, a `floor`, runs sandboxed, apart from the app (below). A file it can't use, or a value it leaves out, is listed under *Why?* in the palette menu.
+
+### A light cycle of its own
+
+A theme with `"cursor": "light-cycle"` can draw its own cycle, and say how it glows and the ribbon it leaves. Everything is optional: whatever's left out stays as Tron's.
+
+```json
+"cursor": "light-cycle",
+"cycle": {
+  "image": {
+    "viewBox": [0, 0, 32, 16],
+    "shapes": [
+      { "polygon": [2, 8, 8, 4, 24, 4, 30, 8, 24, 12, 8, 12], "stroke": "accent", "fill": "#00313a", "width": 1.4 },
+      { "circle": [20, 8, 2.2], "fill": "#ffffff", "stroke": "none" },
+      { "path": "M10 4 L6 0 M10 12 L6 16", "stroke": "accent" }
+    ]
+  },
+  "size": 3, "offset": 20, "glow": 10,
+  "trail": { "width": 4, "glow": 14, "fade": 2000, "at": 0.5, "colour": "#ff8800" }
+}
+```
+
+- **`image`:** the picture, side on and facing right. `viewBox` is `[x, y, width, height]` of its own coordinates, and it's fitted to the cells it rides in. `shapes` are up to 64 of:
+  - `circle` `[cx, cy, r]`, `ellipse` `[cx, cy, rx, ry]`, `rect` `[x, y, width, height]` or `line` `[x1, y1, x2, y2]`;
+  - `polyline` or `polygon` `[x, y, x, y, …]`;
+  - `path`: SVG path data (commands and numbers, starting with `M`), up to 4,000 characters.
+
+  Each can have a `fill` and a `stroke` (none and the cursor's colour if left out), a stroke `width` (0 to 8) and an `opacity` (0 to 1).
+- **Colours** are `"cursor"` (the terminal's cursor colour), `"accent"`, one of the page's colours by name (`working`, `danger`…), a `#rgb`, `#rrggbb` or `#rrggbbaa`, or `"none"`.
+- **`size`:** how many cells wide it's drawn, 1 to 6 (3), one row high.
+- **`offset`:** how far right of the cursor it rides, in pixels, 0 to 60 (25), so it doesn't cover what you're typing.
+- **`glow`:** how far its glow reaches, in pixels, 0 to 20 (6).
+- **`trail`:** the ribbon: its `width` in pixels, 1 to 6 (2); how far its `glow` reaches, 0 to 20 (10); how long it takes to `fade`, in milliseconds, 200 to 3,000 (800); how far down the row it runs, `at` from 0 (top) to 1 (bottom) (0.69, Tron's wheels); and its `colour` (`"cursor"`). `"trail": false` leaves no ribbon.
+
+The picture is only shapes and numbers: the app checks each one and draws the picture itself, so a picture can't carry a script, a link or a style the way an SVG file can. A shape it can't use is left out, and a number out of range keeps Tron's, with why under *Why?* in the palette menu. The picture is clipped to its cells, so it can't paint over what the terminal shows.
 
 ### A floor of its own
 
