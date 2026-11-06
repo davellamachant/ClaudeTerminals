@@ -1,10 +1,16 @@
 // Draws a static, Claude Code–style transcript for README screenshots, so no real session,
-// account or conversation ever appears in them. Usage: node fake-claude.mjs <scenario>
+// account or conversation ever appears in them. Run as `claude <scenario>` through the demo's claude.cmd (see
+// setup-demo.mjs), so the app takes it for Claude and adds what it adds to Claude's command line: --session-id or
+// --resume with the conversation's id, which this uses, and --settings and --mcp-config, which it ignores.
 //   checkout | payments  -> keeps "working" (animated spinner)
 //   frontend             -> works for a few seconds, then waits on a permission prompt
 //   docs                 -> finished, idle at the prompt
 
-const scenario = process.argv[2] ?? 'checkout';
+const args = process.argv.slice(2);
+const scenario = args[0] && !args[0].startsWith('-') ? args[0] : 'checkout';
+const flag = (...names) => { const i = args.findIndex((a) => names.includes(a)); return i >= 0 ? args[i + 1] : undefined; };
+// Asked for an answer without a terminal (claude -p, e.g. Suggest for a commit message): nothing to say.
+if (args.includes('-p') || args.includes('--print')) process.exit(0);
 const out = (s) => process.stdout.write(s);
 const ESC = '\x1b[';
 
@@ -110,20 +116,20 @@ const scenarios = {
     spinner: 'Restyling the order total…',
     tokens: '1.8k',
     workSeconds: 7,
+    // As Claude asks now: under a rule, with no box, so the app sees the picked choice and shows it as asking.
     then: [
-      ...box([
-        bold('Edit file'),
-        gray('web/components/CartSummary.tsx'),
-        '',
-        delBg(pad('- <span>Total: {formatPrice(total)}</span>', 66)),
-        addBg(pad('+ <TotalRow total={total} savings={savings} />', 66)),
-        addBg(pad('+ <PromoCodeInput onApply={applyPromo} />', 66)),
-        '',
-        'Do you want to make this edit to ' + bold('CartSummary.tsx') + '?',
-        blue('❯ 1. Yes'),
-        '  2. Yes, allow all edits during this session ' + gray('(shift+tab)'),
-        '  3. No, and tell Claude what to do differently ' + gray('(esc)'),
-      ], blue, 74),
+      blue('─'.repeat(74)),
+      ' ' + bold('Edit file'),
+      ' ' + gray('web/components/CartSummary.tsx'),
+      '',
+      ' ' + delBg(pad('- <span>Total: {formatPrice(total)}</span>', 66)),
+      ' ' + addBg(pad('+ <TotalRow total={total} savings={savings} />', 66)),
+      ' ' + addBg(pad('+ <PromoCodeInput onApply={applyPromo} />', 66)),
+      '',
+      ' Do you want to make this edit to ' + bold('CartSummary.tsx') + '?',
+      ' ' + blue('❯ 1. Yes'),
+      '   2. Yes, allow all edits during this session ' + gray('(shift+tab)'),
+      '   3. No, and tell Claude what to do differently ' + gray('(esc)'),
     ],
   },
 
@@ -178,7 +184,7 @@ function saveConversation(config) {
   const path = process.getBuiltinModule('node:path');
   const crypto = process.getBuiltinModule('node:crypto');
   const cwd = process.cwd();
-  const sessionId = crypto.randomUUID();
+  const sessionId = flag('--session-id', '--resume', '-r') ?? crypto.randomUUID();
   const encoded = path.resolve(cwd).replace(/[\\/]+$/, '').replace(/[^A-Za-z0-9]/g, '-');
   const dir = path.join(config, 'projects', encoded);
   fs.mkdirSync(dir, { recursive: true });
@@ -200,7 +206,8 @@ function saveConversation(config) {
     JSON.stringify({ pid: process.pid, sessionId, cwd, kind: 'interactive' }));
 }
 
-if (process.argv[3]) saveConversation(process.argv[3]);
+// The demo's own config folder (run.ps1 sets it), never the real one.
+if (process.env.CLAUDE_CONFIG_DIR) saveConversation(process.env.CLAUDE_CONFIG_DIR);
 
 const tailRow = s.lines.length + 1;   // 1-based row where the spinner / prompt area starts
 const spinFrames = ['·', '✢', '✳', '✶', '✻', '✽', '✻', '✶', '✳', '✢'];

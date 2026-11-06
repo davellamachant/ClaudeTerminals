@@ -9,6 +9,11 @@ namespace LlamaTree.Terminal;
 /// That keeps whatever launched the app (e.g. a Claude Code session, which sets NO_COLOR and
 /// CLAUDE_CODE_* markers) from leaking into every session, and picks up PATH changes made since startup.
 /// On macOS and Linux it's what the user's login shell sets up (see <see cref="FromLoginShell"/>).
+/// <para>
+/// One way in, on purpose: a variable <c>LLAMATREE_SESSION_&lt;NAME&gt;</c> in the app's own environment is set as
+/// <c>&lt;NAME&gt;</c> in every session's (see <see cref="ApplyOverrides"/>). Whoever starts the app chooses it, as they
+/// choose the app's own environment; tools/screenshots runs its demo sessions with their own PATH and Claude config so.
+/// </para>
 /// </summary>
 internal static class SessionEnvironment
 {
@@ -32,6 +37,21 @@ internal static class SessionEnvironment
         }
         // Claude Code and other TUIs render 24-bit colour when they see this.
         env["COLORTERM"] = "truecolor";
+        return ApplyOverrides(env, Environment.GetEnvironmentVariables());
+    }
+
+    internal const string OverridePrefix = "LLAMATREE_SESSION_";
+
+    /// <summary>
+    /// Sets NAME for each LLAMATREE_SESSION_NAME in <paramref name="own"/> (the app's environment); the
+    /// LLAMATREE_SESSION_ variables themselves aren't passed on.
+    /// </summary>
+    internal static Dictionary<string, string> ApplyOverrides(Dictionary<string, string> env, System.Collections.IDictionary own)
+    {
+        foreach (var key in env.Keys.Where(k => k.StartsWith(OverridePrefix, StringComparison.OrdinalIgnoreCase)).ToList()) env.Remove(key);
+        foreach (System.Collections.DictionaryEntry e in own)
+            if (e.Key is string key && key.Length > OverridePrefix.Length && key.StartsWith(OverridePrefix, StringComparison.OrdinalIgnoreCase))
+                env[key[OverridePrefix.Length..]] = e.Value as string ?? "";
         return env;
     }
 
@@ -43,7 +63,7 @@ internal static class SessionEnvironment
         env["COLORTERM"] = "truecolor";
         // An app started from the Dock or Finder gets no locale, and programs then fall back to ASCII.
         if (!env.Keys.Any(k => k is "LANG" or "LC_ALL" or "LC_CTYPE")) env["LANG"] = "en_US.UTF-8";
-        return env;
+        return ApplyOverrides(env, Environment.GetEnvironmentVariables());
     }
 
     private static readonly object ShellLock = new();
