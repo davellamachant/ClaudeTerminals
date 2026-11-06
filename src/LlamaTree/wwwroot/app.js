@@ -4488,6 +4488,13 @@ function fileSection(s, kind, title, files) {
         '-',
         { label: machine || s.server ? 'Browse the folder' : `Open in ${FILE_MANAGER}`, action: () => request('git.openFolder', { id: s.id, path: folder }) },
       ]);
+    },
+    // A folder stages (or unstages) everything changed under it, as Visual Studio's does.
+    (folder, folderFiles) => {
+      const n = folderFiles.length, what = `${n} file${n === 1 ? '' : 's'} in ${folder.replaceAll('/', '\\')}`;
+      return kind === 'staged'
+        ? h('button', { class: 'icon-btn small', title: `Unstage ${what}`, onclick: (e) => { e.stopPropagation(); gitOp(s, 'git.unstage', folderFiles.map((f) => f.path)); } }, iconEl('minus'))
+        : h('button', { class: 'icon-btn small', title: `Stage ${what}`, onclick: (e) => { e.stopPropagation(); gitOp(s, 'git.stage', folderFiles.map((f) => f.path)); } }, iconEl('plus'));
     })];
 }
 
@@ -4544,7 +4551,8 @@ function confirmUndo(s, kind, files, folder) {
 
 const joinPath = (root, rel) => root.replace(/[\\/]+$/, '') + '\\' + rel.replaceAll('/', '\\');
 
-function treeRows(files, depth, scope, s, onOpen, rowAction, onMenu, onFolderMenu) {
+/** The rows of a changed-files tree. folderAction(folder, files), if given, makes a folder's hover button (Stage, Unstage). */
+function treeRows(files, depth, scope, s, onOpen, rowAction, onMenu, onFolderMenu, folderAction) {
   const root = { dirs: new Map(), files: [] };
   for (const f of files) {
     const parts = f.path.split('/');
@@ -4576,7 +4584,8 @@ function treeRows(files, depth, scope, s, onOpen, rowAction, onMenu, onFolderMen
         class: 'row', style: `padding-left:${d * 12}px`, title: full,
         onclick: () => { isCollapsed ? s.collapsed.delete(key) : s.collapsed.add(key); renderGit(); },
         oncontextmenu: (e) => { e.preventDefault(); onFolderMenu?.(full, filesUnder(folderNode), e); },
-      }, h('span', { class: 'chev', html: icon(isCollapsed ? 'chevR' : 'chevD') }), iconEl('folder', 'ico-folder'), h('span', { class: 'label' }, name)));
+      }, h('span', { class: 'chev', html: icon(isCollapsed ? 'chevR' : 'chevD') }), iconEl('folder', 'ico-folder'), h('span', { class: 'label' }, name),
+      folderAction && h('span', { class: 'row-actions' }, folderAction(full, filesUnder(folderNode)))));
       if (!isCollapsed) walk(child, d + 1, full + '/');
     }
     const fl = [...node.files].sort((a, b) => a.path.localeCompare(b.path, undefined, { sensitivity: 'base' }));
