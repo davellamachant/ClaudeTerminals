@@ -509,6 +509,19 @@ body.side-empty #splitter, body.side-empty #gitPanel { display: none; }   /* sid
 #empty.welcome .welcome-mark { display: block; }
 @media (max-height: 760px) { #empty.welcome .welcome-mark { display: none; } }
 .empty-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+/* The welcome with no agent installed: each one's installer, to copy, and its install guide. */
+#emptyAgents { width: min(560px, calc(100% - 32px)); margin: 6px 0; display: flex; flex-direction: column; gap: 10px; text-align: left; }
+.agents-missing { color: var(--attention); }
+.agent-install { border: 1px solid var(--border); border-radius: 6px; background: var(--chrome-2); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.agent-install-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.agent-install-head a { color: var(--accent, var(--focus)); font-size: 12px; }
+.agent-install-label { color: var(--text-faint); font-size: 11px; margin-bottom: 2px; }
+.agent-install-line { display: flex; gap: 6px; align-items: center; }
+.agent-install-line code {
+  flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono, Consolas, monospace); font-size: 12px;
+  background: var(--terminal-bg, var(--bg)); border: 1px solid var(--border-soft); border-radius: 4px; padding: 5px 8px; user-select: all;
+}
+.agents-again { color: var(--text-faint); display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; }
 /* The welcome's recent conversations: the picker's rows in a card no wider than reads well. */
 #emptyRecent { width: min(560px, calc(100% - 32px)); margin: 6px 0; text-align: left; }
 #emptyRecent .conv-list { border-radius: 6px; height: auto; max-height: min(50vh, 560px); overflow: auto; }
