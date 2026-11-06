@@ -988,7 +988,7 @@ body.no-nav-branches #navList .tab-branch { display: none; }   /* Layout ▸ Sho
 #navList .session-tab .tab-label { flex: 1; min-width: 0; }
 #navList .session-tab .tab-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* A session's name with the branch it's on beneath it (tabBranch in app.js). */
-#navList .tab-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+#navList .tab-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; text-align: left; }   /* not the button's centring: a branch wider than the name would shift it */
 #navList .tab-text .tab-name { white-space: nowrap; }
 .tab-branch { display: inline-flex; align-items: center; gap: 3px; min-width: 0; font-size: 11px; color: var(--text-faint); }
 .tab-branch:empty { display: none; }
