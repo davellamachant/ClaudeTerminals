@@ -1,5 +1,6 @@
 {
   "name": "Matrix",
+  "version": "1.0.0",
   "base": "dark",
   "font": "Cascadia Mono",
   "glow": true,

@@ -101,6 +101,9 @@ public sealed class GalleryServiceTests : IDisposable
     [InlineData("1.0.0", "999.0.0", false, null, false, "needs-app")]
     [InlineData("1.0.0", "999.0.0", true, "1.0.0", false, "installed")]   // it's here already: nothing to ask of the app
     [InlineData("1.0.0", null, true, null, true, "built-in")]
+    [InlineData("1.0.0", null, true, "1.0.0", true, "built-in")]             // the app comes with this version
+    [InlineData("1.1.0", null, true, "1.0.0", true, "update")]               // LlamaTree-Themes has a newer one
+    [InlineData("1.1.0", "999.0.0", true, "1.0.0", true, "needs-app")]
     public void What_can_be_done_with_an_entry(string version, string? min, bool have, string? haveVersion, bool builtIn, string state) =>
         Assert.Equal(state, GalleryService.StateOf(version, min, have, haveVersion, builtIn));
 
@@ -197,5 +200,25 @@ public sealed class GalleryServiceTests : IDisposable
         File.Delete(Path.Combine(Themes, "forest.json"));
         File.WriteAllText(Path.Combine(BuiltIn, "forest.json"), """{ "name": "Shipped forest" }""");
         Assert.Throws<InvalidOperationException>(() => GalleryService.InstallTheme(Forest("1.0.0"), Themes, BuiltIn));
+    }
+
+    [Fact]
+    public void A_theme_the_app_comes_with_is_updated_from_Get_themes()
+    {
+        File.WriteAllText(Path.Combine(BuiltIn, "forest.json"), """{ "name": "Shipped forest", "version": "1.0.0" }""");
+        Assert.Throws<InvalidOperationException>(() => GalleryService.InstallTheme(Forest("1.0.0"), Themes, BuiltIn));   // the same one
+
+        GalleryService.InstallTheme(Forest("1.1.0"), Themes, BuiltIn);
+        var forest = Assert.Single(ThemeCatalog.Load(BuiltIn, Themes).Themes);
+        Assert.Equal(("Forest", "1.1.0", true), (forest.Name, forest.Version, forest.BuiltIn));   // the newer one, still one the app comes with
+
+        // The app updated past it: its own copy is newer, and the one from Get themes is passed over, without a word.
+        File.WriteAllText(Path.Combine(BuiltIn, "forest.json"), """{ "name": "Shipped forest", "version": "1.2.0" }""");
+        var (themes, problems) = ThemeCatalog.Load(BuiltIn, Themes);
+        Assert.Equal(("Shipped forest", "1.2.0"), (Assert.Single(themes).Name, themes[0].Version));
+        Assert.Empty(problems);
+
+        GalleryService.RemoveTheme(Themes, "forest");   // the app's own stays
+        Assert.Equal("Shipped forest", Assert.Single(ThemeCatalog.Load(BuiltIn, Themes).Themes).Name);
     }
 }

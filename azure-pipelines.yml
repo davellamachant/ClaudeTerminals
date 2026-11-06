@@ -55,6 +55,10 @@ steps:
     inputs:
       version: '22.x'
 
+  # The themes the app comes with are changed in LlamaTree-Themes: a release ships what it publishes, not an older copy.
+  - script: node tools/sync-themes.mjs --check
+    displayName: 'Check the built-in themes match LlamaTree-Themes'
+
   - task: UseDotNet@2
     displayName: '.NET 10 SDK'
     inputs:

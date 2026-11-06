@@ -74,7 +74,7 @@ public sealed class ThemeCatalogTests : IDisposable
         Assert.Equal(("#ffe066", "#3fe0a8"), (tron.Colors["attention"], tron.Colors["ok"]));
         Assert.DoesNotContain("chrome", tron.Colors.Keys);
         Assert.DoesNotContain("background", tron.Terminal.Keys);
-        Assert.Equal([new ThemeAccentChoice("Tron", "#00e5ff"), new ThemeAccentChoice("Ares", "#ff3b3b")], tron.Accents);
+        Assert.Equal([new ThemeAccentChoice("Tron", "#00e5ff"), new ThemeAccentChoice("Redline", "#ff3b3b")], tron.Accents);
         Assert.Equal(["Green phosphor", "Amber", "Paper white"], nerds.Accents.Select(a => a.Name));
         Assert.Equal("light-cycle", tron.Cursor);
         Assert.True(tron.Grid);

@@ -1,5 +1,6 @@
 {
   "name": "Tron",
+  "version": "1.0.0",
   "base": "dark",
   "font": "Bahnschrift",
   "glow": true,
@@ -9,7 +10,7 @@
   "monochrome": true,
   "accents": [
     { "name": "Tron", "color": "#00e5ff" },
-    { "name": "Ares", "color": "#ff3b3b" }
+    { "name": "Redline", "color": "#ff3b3b" }
   ],
   "colors": {
     "ok": "#3fe0a8", "attention": "#ffe066", "asking": "#ff8c1a", "danger": "#ff4d3a", "danger-fill": "#8a2318",
