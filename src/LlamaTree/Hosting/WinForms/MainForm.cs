@@ -86,6 +86,36 @@ internal sealed class MainForm : Form, HostLink.IWindow
 
     public string? ClipboardText() => Clipboard.ContainsText() ? Clipboard.GetText() : null;
 
+    /// <summary>The files sent with the message being received (see OnLoad's WebMessageReceived).</summary>
+    private string[] dropped = [];
+
+    public string[] DroppedFiles() => dropped;
+
+    /// <summary>
+    /// Comes to the front after files are dropped on it, so typing goes on in the terminal. The drop leaves the app they
+    /// were dragged from in front, and Windows won't let another app take that place by asking: it's joined to that
+    /// app's input for the moment it takes it.
+    /// </summary>
+    public void BringToFront()
+    {
+        if (WindowState == FormWindowState.Minimized) return;
+        var front = Native.GetForegroundWindow();
+        if (front == Handle) return;
+        var theirs = Native.GetWindowThreadProcessId(front, IntPtr.Zero);
+        var ours = Native.GetCurrentThreadId();
+        var joined = theirs != 0 && theirs != ours && Native.AttachThreadInput(ours, theirs, true);
+        try
+        {
+            Native.SetForegroundWindow(Handle);
+            Activate();
+        }
+        finally
+        {
+            if (joined) Native.AttachThreadInput(ours, theirs, false);
+        }
+        webView.Focus();
+    }
+
     public void ApplyTheme(bool light, string? background)
     {
         var dark = light ? 0 : 1;
@@ -176,8 +206,9 @@ internal sealed class MainForm : Form, HostLink.IWindow
 #else
             core.Settings.AreDevToolsEnabled = false;
 #endif
-            // A file or link dropped on the window would otherwise replace the app page (and could then talk to the host).
-            webView.AllowExternalDrop = false;
+            // Files dropped on a terminal paste their paths (see DroppedFiles). A file or link dropped anywhere else would
+            // navigate to it, which the page prevents, and failing that the check below: nothing but the app page loads.
+            webView.AllowExternalDrop = true;
             core.NavigationStarting += (_, args) => { if (!IsAppUri(args.Uri)) args.Cancel = true; };
             var root = Path.Combine(AppContext.BaseDirectory, "wwwroot");
             core.SetVirtualHostNameToFolderMapping("app.local", root, CoreWebView2HostResourceAccessKind.Allow);
@@ -185,7 +216,12 @@ internal sealed class MainForm : Form, HostLink.IWindow
             {
                 if (!IsAppUri(args.Source)) return;
                 pageUp = true;
-                link.Receive(args.WebMessageAsJson);
+                // Files the page sent along (postMessageWithAdditionalObjects): the dropped files, by their paths here.
+                dropped = args.AdditionalObjects is { Count: > 0 } objects
+                    ? objects.OfType<CoreWebView2File>().Select(f => f.Path).Where(p => !string.IsNullOrEmpty(p)).ToArray()
+                    : [];
+                try { link.Receive(args.WebMessageAsJson); }
+                finally { dropped = []; }
             };
             foreach (var (id, folder) in servedPlugins)
                 core.SetVirtualHostNameToFolderMapping(PluginCatalog.HostFor(id), folder, CoreWebView2HostResourceAccessKind.DenyCors);

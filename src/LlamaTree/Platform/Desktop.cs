@@ -292,12 +292,55 @@ internal static partial class Desktop
     }
 
     /// <summary>Where pasted images may go, best first: the runtime folder's (macOS and Linux, when it's sound), then the data folder's.</summary>
-    internal static IEnumerable<string> PastedImageFolders(string? runtimeFolder, string dataFolder)
+    internal static IEnumerable<string> PastedImageFolders(string? runtimeFolder, string dataFolder) => PrivateFolders(runtimeFolder, dataFolder, "pasted-images");
+
+    private static IEnumerable<string> PrivateFolders(string? runtimeFolder, string dataFolder, string name)
     {
         if (!OperatingSystem.IsWindows() && runtimeFolder is { Length: > 0 } && Path.IsPathFullyQualified(runtimeFolder) && IsPrivate(runtimeFolder, OthersAny))
-            yield return Path.Combine(runtimeFolder, "LlamaTree", "pasted-images");
-        yield return Path.Combine(dataFolder, "pasted-images");
+            yield return Path.Combine(runtimeFolder, "LlamaTree", name);
+        yield return Path.Combine(dataFolder, name);
     }
+
+    /// <summary>
+    /// A new file for one dropped on a terminal whose path the window can't tell (macOS and Linux, where the web view
+    /// gives the page a dropped file's contents but not its path; a picture dragged from a browser): it's saved, and
+    /// the copy's path pasted. Kept as pasted images are (see <see cref="NewPastedImagePath()"/>), in a folder of its
+    /// own, named for the time and then the dropped file (made safe), so the agent still sees what it was.
+    /// </summary>
+    public static string NewDroppedFilePath(string name) =>
+        NewDroppedFilePath(name, Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR"), AppProfile.CustomFolder ?? AppProfile.LocalFolder, DateTime.Now);
+
+    internal static string NewDroppedFilePath(string name, string? runtimeFolder, string dataFolder, DateTime now)
+    {
+        foreach (var folder in PrivateFolders(runtimeFolder, dataFolder, "dropped-files"))
+        {
+            if (!MakePrivateFolder(folder)) continue;
+            ClearOld(folder, DroppedFileName(), now.ToUniversalTime().AddDays(-7));
+            var stamp = $"{now:yyyyMMdd-HHmmss-fff}";
+            var safe = SafeFileName(name);
+            var path = Path.Combine(folder, $"{stamp}-{safe}");
+            for (var i = 2; Path.Exists(path); i++) path = Path.Combine(folder, $"{stamp}-{i}-{safe}");
+            return path;
+        }
+        throw new IOException("The dropped file wasn't saved: its folder isn't one only you can use (it's a link, or another account's).");
+    }
+
+    /// <summary>A file name made from what the page says a dropped file was called: no folders, nothing a file system refuses, not too long.</summary>
+    internal static string SafeFileName(string name)
+    {
+        var bad = Path.GetInvalidFileNameChars().Concat(['/', '\\', ':', '*', '?', '"', '<', '>', '|']).ToHashSet();
+        var safe = new string(name.Select(c => bad.Contains(c) || char.IsControl(c) ? '_' : c).ToArray()).Trim().TrimEnd('.', ' ');   // Windows drops trailing dots
+        if (safe.Length > 100)
+        {
+            var ext = Path.GetExtension(safe);
+            safe = ext.Length is > 1 and <= 16 ? safe[..(100 - ext.Length)] + ext : safe[..100];
+        }
+        return safe.Length > 0 ? safe : "file";
+    }
+
+    /// <summary>The names dropped files are saved under (see <see cref="NewDroppedFilePath(string)"/>): the only files their clear-out deletes.</summary>
+    [System.Text.RegularExpressions.GeneratedRegex(@"^\d{8}-\d{6}-\d{3}-.")]
+    private static partial System.Text.RegularExpressions.Regex DroppedFileName();
 
     /// <summary>The names pasted images are given (see <see cref="NewPastedImagePath()"/>): the only files the clear-out deletes.</summary>
     [System.Text.RegularExpressions.GeneratedRegex(@"^image-\d{8}-\d{6}-\d{3}\.png$")]
@@ -368,11 +411,14 @@ internal static partial class Desktop
     /// Deletes the pasted images in <paramref name="folder"/> last written before <paramref name="before"/>: only files
     /// of the app's own naming, never links, and nothing in folders within.
     /// </summary>
-    internal static void ClearOldPastedImages(string folder, DateTime before)
+    internal static void ClearOldPastedImages(string folder, DateTime before) => ClearOld(folder, PastedImageName(), before);
+
+    /// <summary>As <see cref="ClearOldPastedImages"/>, for the files whose names match <paramref name="names"/>.</summary>
+    private static void ClearOld(string folder, System.Text.RegularExpressions.Regex names, DateTime before)
     {
         foreach (var entry in new DirectoryInfo(folder).EnumerateFileSystemInfos())
         {
-            if (entry is not FileInfo file || !PastedImageName().IsMatch(file.Name)) continue;
+            if (entry is not FileInfo file || !names.IsMatch(file.Name)) continue;
             try
             {
                 if (file.LinkTarget != null || file.Attributes.HasFlag(FileAttributes.ReparsePoint) || file.LastWriteTimeUtc >= before) continue;
@@ -383,7 +429,7 @@ internal static partial class Desktop
         }
     }
 
-    /// <summary>Creates a pasted image's file: a new one (never one that's there, or a link), readable only by you (0600 on macOS and Linux).</summary>
+    /// <summary>Creates a pasted image's or dropped file's file: a new one (never one that's there, or a link), readable only by you (0600 on macOS and Linux).</summary>
     public static FileStream CreatePastedImage(string path) => new(path, OperatingSystem.IsWindows()
         ? new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write }
         : new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write, UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite });

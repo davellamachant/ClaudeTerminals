@@ -175,4 +175,63 @@ public class PastedImageFolderTests : IDisposable
         File.WriteAllBytes(path, [1]);
         Assert.Throws<IOException>(() => Desktop.CreatePastedImage(path).Dispose());
     }
+
+    // ---------------------------------------------------------------- files dropped by their contents
+
+    [Fact]
+    public void A_dropped_file_keeps_its_name_after_the_time_in_a_folder_of_its_own()
+    {
+        var path = Desktop.NewDroppedFilePath("report.pdf", null, data, Now);
+        Assert.Equal(Path.Combine(data, "dropped-files", "20261105-120000-000-report.pdf"), path);
+        Assert.True(Directory.Exists(Path.GetDirectoryName(path)));
+    }
+
+    [Fact]
+    public void Two_files_of_one_name_dropped_together_both_get_kept()
+    {
+        var first = Desktop.NewDroppedFilePath("a.txt", null, data, Now);
+        File.WriteAllBytes(first, [1]);
+        var second = Desktop.NewDroppedFilePath("a.txt", null, data, Now);
+        Assert.Equal(Path.Combine(data, "dropped-files", "20261105-120000-000-2-a.txt"), second);
+    }
+
+    [Theory]
+    [InlineData("../../evil.sh", ".._.._evil.sh")]
+    [InlineData("..\\x", ".._x")]
+    [InlineData(".env", ".env")]
+    [InlineData("name. ", "name")]
+    [InlineData("C:\\temp\\a.png", "C__temp_a.png")]
+    [InlineData("  ..  ", "file")]
+    [InlineData("", "file")]
+    [InlineData("tab\there", "tab_here")]
+    public void A_dropped_name_is_made_safe(string name, string safe) => Assert.Equal(safe, Desktop.SafeFileName(name));
+
+    [Fact]
+    public void A_long_dropped_name_keeps_its_extension()
+    {
+        var safe = Desktop.SafeFileName(new string('x', 300) + ".png");
+        Assert.Equal(100, safe.Length);
+        Assert.EndsWith("x.png", safe);
+    }
+
+    [Fact]
+    public void The_dropped_files_clear_out_deletes_only_old_files_of_its_own_naming()
+    {
+        var folder = Path.Combine(data, "dropped-files");
+        Directory.CreateDirectory(folder);
+        string Old(string name)
+        {
+            var path = Path.Combine(folder, name);
+            File.WriteAllBytes(path, [1]);
+            File.SetLastWriteTimeUtc(path, DateTime.UtcNow.AddDays(-30));
+            return path;
+        }
+        var ours = Old("20200101-000000-000-notes.txt");
+        var other = Old("notes.txt");
+
+        Desktop.NewDroppedFilePath("new.txt", null, data, Now);
+
+        Assert.False(File.Exists(ours));
+        Assert.True(File.Exists(other));
+    }
 }

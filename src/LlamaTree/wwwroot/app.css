@@ -485,6 +485,8 @@ body.side-empty #splitter, body.side-empty #gitPanel { display: none; }   /* sid
 .tile.current:not(.expanded) { border-color: var(--accent-strong); }
 .tile.attention:not(.expanded) { border-color: var(--attention); box-shadow: 0 0 0 1px var(--attention); }
 .tile.asking:not(.expanded) { border-color: var(--asking); box-shadow: 0 0 0 1px var(--asking); }
+/* Files dragged over a terminal: dropping them pastes their paths there. */
+.tile.drop-over { outline: 2px solid var(--accent); outline-offset: -2px; }
 .tile.expanded { z-index: 5; border-radius: 4px; }
 .tile.concealed { opacity: 0; pointer-events: none; }
 body.no-anim .tile, body.no-anim .surface { transition: none !important; }

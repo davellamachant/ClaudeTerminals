@@ -186,6 +186,12 @@ internal sealed class PhotinoHost : HostLink.IWindow
 
     public string[] ClipboardFiles() => OperatingSystem.IsWindows() ? [] : Desktop.UnixClipboardFiles();
 
+    /// <summary>WKWebView and WebKitGTK give the page a dropped file's contents but never its path: the page sends those.</summary>
+    public string[] DroppedFiles() => [];
+
+    /// <summary>Photino can't bring its window to the front; the window manager decides whether a drop does.</summary>
+    public void BringToFront() { }
+
     public string? ClipboardText() => OperatingSystem.IsWindows() ? null : Desktop.UnixClipboardText();
 
     /// <summary>The page paints the whole window, and Photino leaves the title bar to the system's light or dark.</summary>
