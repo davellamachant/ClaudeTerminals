@@ -50,6 +50,15 @@ internal sealed class HostLink
 
         string[] ClipboardFiles();
 
+        /// <summary>
+        /// The paths of the files that came with the page's message being handled (a drop on a terminal), where the
+        /// web view tells them (WebView2); otherwise none, and the page sends their contents instead.
+        /// </summary>
+        string[] DroppedFiles();
+
+        /// <summary>Brings the window to the front (after a drop from another app), where the system allows it.</summary>
+        void BringToFront();
+
         string? ClipboardText();
 
         void ApplyTheme(bool light, string? background);
@@ -212,22 +221,23 @@ internal sealed class HostLink
                     result = window.PickFolder("Choose the folder (worktree) for the session", Directory.Exists(initial) ? initial : null);
                     break;
                 }
-                case "clipboard.files" when Remote != null:
-                {
-                    // Files and pictures pasted into a server's session are copied there first: their paths there are pasted.
-                    var paths = window.ClipboardFiles();
-                    var link = channel ?? throw new InvalidOperationException($"Not connected to {Remote}.");
-                    _ = UploadAsync(link, paths).ContinueWith(t => window.RunOnUi(() =>
-                    {
-                        if (reqId == null) return;
-                        if (t.IsCompletedSuccessfully) Reply(reqId.Value, true, t.Result, null);
-                        else Reply(reqId.Value, false, null, t.Exception?.InnerException?.Message ?? "The files couldn't be copied to the server.");
-                    }), TaskScheduler.Default);
-                    return true;
-                }
                 case "clipboard.files":
-                    result = window.ClipboardFiles();
+                    return ReplyWithFiles(reqId, window.ClipboardFiles());
+                case "window.front":
+                    window.BringToFront();
                     break;
+                case "drop.files":
+                    // Files dropped on a terminal, where the window can tell their paths (WebView2).
+                    return ReplyWithFiles(reqId, window.DroppedFiles());
+                case "drop.save":
+                {
+                    // One whose path it can't: the page sends its contents, saved here.
+                    var bytes = Convert.FromBase64String(Str(msg, "data"));
+                    if (bytes.Length > MaxDroppedBytes) throw new InvalidOperationException("That file is too big to drop here.");
+                    var path = Desktop.NewDroppedFilePath(Str(msg, "name"));
+                    using (var file = Desktop.CreatePastedImage(path)) file.Write(bytes);
+                    return ReplyWithFiles(reqId, [path]);
+                }
                 case "clipboard.text":
                     result = window.ClipboardText();
                     break;
@@ -287,6 +297,30 @@ internal sealed class HostLink
 
     private void Reply(int reqId, bool ok, object? result, string? error) =>
         window.PostJson(JsonSerializer.Serialize(new { type = "reply", reqId, ok, result, error }, JsonOptions));
+
+    /// <summary>The most a file dropped by its contents may hold (see "drop.save"); the page checks first, so it isn't sent.</summary>
+    private const int MaxDroppedBytes = 25 * 1024 * 1024;
+
+    /// <summary>
+    /// Answers with the paths of files on this computer, for pasting into a session. A window of a server's sessions
+    /// copies them there first and answers with the copies' paths there.
+    /// </summary>
+    private bool ReplyWithFiles(int? reqId, string[] paths)
+    {
+        if (Remote == null || paths.Length == 0)
+        {
+            if (reqId != null) Reply(reqId.Value, true, paths, null);
+            return true;
+        }
+        var link = channel ?? throw new InvalidOperationException($"Not connected to {Remote}.");
+        _ = UploadAsync(link, paths).ContinueWith(t => window.RunOnUi(() =>
+        {
+            if (reqId == null) return;
+            if (t.IsCompletedSuccessfully) Reply(reqId.Value, true, t.Result, null);
+            else Reply(reqId.Value, false, null, t.Exception?.InnerException?.Message ?? "The files couldn't be copied to the server.");
+        }), TaskScheduler.Default);
+        return true;
+    }
 
     // ---------------------------------------------------------------- the window's own requests to the host
 

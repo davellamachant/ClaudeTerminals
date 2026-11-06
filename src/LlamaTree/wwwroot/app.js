@@ -141,8 +141,6 @@ function photinoBridge() {
     const data = JSON.parse(text);
     for (const fn of listeners) fn({ data });
   });
-  // A file dropped on the window would otherwise replace the page; the page's own drop targets still get theirs.
-  for (const type of ['dragover', 'drop']) window.addEventListener(type, (e) => e.preventDefault());
   return {
     postMessage: (m) => window.external.sendMessage(JSON.stringify({ ...m, bridgeToken: token })),
     addEventListener: (type, fn) => { if (type === 'message') listeners.push(fn); },
@@ -192,6 +190,30 @@ function request(type, payload = {}) {
     post({ type, reqId, ...payload });
   });
 }
+
+/** As request, with files sent along: WebView2 hands the host their paths (see MainForm's DroppedFiles). */
+function requestWithFiles(type, files) {
+  const reqId = ++reqSeq;
+  return new Promise((resolve, reject) => {
+    pending.set(reqId, { resolve, reject });
+    try {
+      host.postMessageWithAdditionalObjects({ type, reqId }, files);
+    } catch (err) {
+      pending.delete(reqId);
+      reject(err);
+    }
+  });
+}
+
+// A file dropped anywhere but a terminal (see dropOnTerminal) would otherwise replace the page: refused. Text dragged
+// into a text box still goes in as usual.
+const refuseDrop = (e) => e.dataTransfer?.types.includes('Files') || !e.target.closest?.('input, textarea, [contenteditable]');
+window.addEventListener('dragover', (e) => {
+  if (e.defaultPrevented || !refuseDrop(e)) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'none';
+});
+window.addEventListener('drop', (e) => { if (!e.defaultPrevented && refuseDrop(e)) e.preventDefault(); });
 
 /** The clipboard's text. On macOS and Linux the app reads it: WebKit asks first (macOS) or refuses (Linux) when a page does. */
 function readClipboardText() {
@@ -1604,6 +1626,24 @@ function createSession(info) {
     e.stopPropagation();
     pasteClipboardFiles(s);
   }, true);
+  // Files dropped on the terminal paste their paths, as Ctrl+V does files copied in the file manager; dropped text pastes.
+  const droppable = (e) => ['Files', 'text/plain'].some((t) => e.dataTransfer?.types.includes(t));
+  s.tile.addEventListener('dragover', (e) => {
+    if (!droppable(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    s.tile.classList.add('drop-over');
+  });
+  s.tile.addEventListener('dragleave', (e) => { if (!s.tile.contains(e.relatedTarget)) s.tile.classList.remove('drop-over'); });
+  s.tile.addEventListener('drop', (e) => {
+    s.tile.classList.remove('drop-over');
+    if (!droppable(e)) return;
+    e.preventDefault();
+    // The drag came from another app, which is still in front: the window comes forward so typing goes on here.
+    post({ type: 'window.front' });
+    if (state.expandedId === s.id) s.term.focus();
+    dropOnTerminal(s, e.dataTransfer);
+  });
   return s;
 }
 
@@ -2312,13 +2352,57 @@ async function pasteClipboard(s) {
  */
 async function pasteClipboardFiles(s) {
   try {
-    let paths = await request('clipboard.files');
-    // A session on a server gets copies there: their paths there are pasted.
-    if (paths?.length && s.server) paths = await request('files.upload', { id: s.id, paths });
-    if (paths?.length) s.term.paste(paths.map((p) => (/\s/.test(p) ? `"${p}"` : p)).join(' '));
+    await pastePaths(s, await request('clipboard.files'));
   } catch (err) {
     toast(err.message, true);
   }
+}
+
+/** Pastes the paths of files on this computer; a session on a server gets copies there, and their paths there are pasted. */
+async function pastePaths(s, paths) {
+  if (paths?.length && s.server) paths = await request('files.upload', { id: s.id, paths });
+  if (paths?.length) s.term.paste(paths.map((p) => (/\s/.test(p) ? `"${p}"` : p)).join(' '));
+}
+
+/** The most a file dropped by its contents may hold (as the host's MaxDroppedBytes). */
+const MAX_DROPPED_BYTES = 25 * 1024 * 1024;
+
+/**
+ * Files dropped on a terminal paste their paths. WebView2 tells the window where they are; WKWebView and WebKitGTK
+ * (and WebView2, for a picture dragged from a browser) give only their contents, which the window saves (see
+ * Desktop.NewDroppedFilePath) to paste the copies' paths. Dropped text is pasted as it is.
+ */
+async function dropOnTerminal(s, dt) {
+  const files = [...(dt.files ?? [])];   // taken now: the drop's data is gone once the event is over
+  if (!files.length) {
+    const text = dt.getData('text/plain');
+    if (text) s.term.paste(text);
+    return;
+  }
+  try {
+    let paths = host.postMessageWithAdditionalObjects ? await requestWithFiles('drop.files', files).catch(() => []) : [];
+    if (paths?.length !== files.length) {
+      paths = [];
+      for (const file of files) {
+        if (file.size > MAX_DROPPED_BYTES) throw new Error(`${file.name} is too big to drop here (over 25 MB).`);
+        paths.push(...await request('drop.save', { name: file.name, data: await fileBase64(file) }));
+      }
+    }
+    await pastePaths(s, paths);
+    if (state.expandedId === s.id) s.term.focus();
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+/** A dropped file's contents in base64; fails for a folder, which only WebView2 can drop (by its path). */
+function fileBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).replace(/^data:[^,]*,/, ''));
+    reader.onerror = () => reject(new Error(`${file.name} couldn't be read (a folder can't be dropped here).`));
+    reader.readAsDataURL(file);
+  });
 }
 
 document.addEventListener('keydown', (e) => {

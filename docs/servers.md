@@ -116,7 +116,7 @@ The sessions belong to a LlamaTree session host on the server, not to your windo
 
 - **Browsing:** *Browse…* in New Session, and *Browse the folder* wherever you'd open one in File Explorer or Finder, show the server's folders in the window.
 - **Opening a file** (a path link in the terminal, Git's *Open*, a file in those folders) copies it to this computer and opens it here, as it would be locally. It's a copy, so edits to it stay here.
-- **Pasting** a screenshot or files into a session copies them to the server first, then pastes their paths there. They're kept in LlamaTree's data folder on the server, under `pasted/`, and cleared after a week.
+- **Pasting or dropping** a screenshot or files into a session copies them to the server first, then pastes their paths there. They're kept in LlamaTree's data folder on the server, under `pasted/`, and cleared after a week.
 - **Plugins** installed on the server show as they would locally: the window is sent a copy of each plugin's folder. Web links open on this computer.
 
 ## A server in a window of its own
