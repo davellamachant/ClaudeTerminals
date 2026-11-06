@@ -6342,6 +6342,110 @@ function showCountDialog() {
   ]);
 }
 
+// ---- Let my other computers connect --------------------------------------------------------------------------------
+// This Windows computer as a server for LlamaTree on your others, through Windows' own OpenSSH Server (RemoteAccess in
+// the window, which asks Windows for permission where it needs it). Only in a window of this computer's own sessions.
+
+const canShareThisComputer = () => !machine && !IS_MAC && !IS_LINUX;
+
+async function showRemoteAccessDialog() {
+  let st;
+  try { st = await request('remoteAccess.state'); } catch (e) { toast(e.message, true); return; }
+  let busy = null;   // what's being done, while Windows asks or it runs
+  let keysOnly = true, publicNetworks = false;
+  const keyBox = h('textarea', { class: 'key-text', rows: 3, spellcheck: 'false', placeholder: 'ssh-ed25519 AAAA… you@laptop' });
+
+  const run = async (what, type, args, after) => {
+    busy = what;
+    render();
+    try {
+      const said = await request(type, args);
+      if (typeof said === 'string') toast(said);
+      after?.();
+    } catch (e) {
+      toast(e.message, true);
+    }
+    busy = null;
+    try { st = await request('remoteAccess.state'); } catch { /* keep what's shown */ }
+    if (!$('#modalHost').hidden && $('#modalHost .remote-access')) render();
+  };
+
+  const code = (text) => h('code', { class: 'remote-access-code' }, text);
+  const copy = (text) => h('button', { class: 'btn', onclick: () => navigator.clipboard.writeText(text).then(() => toast('Copied.'), (e) => toast(e.message, true)) }, 'Copy');
+
+  function serverPart() {
+    if (st.entra) {
+      return [h('p', {}, `This PC is signed in with ${st.account}, a Microsoft Entra ID (work or school) account. Windows' SSH server can't sign those in with a key, which is all LlamaTree uses, so your other computers can't connect to this one. A PC signed in with a local or Microsoft account can be one.`)];
+    }
+    const on = st.installed && st.running;
+    const parts = [h('div', { class: 'remote-access-status' }, h('span', { class: 'dot' + (on ? ' on' : '') }), on
+      ? `On: OpenSSH Server is running${st.automatic ? ' and starts with Windows' : ' (it won’t start again after a restart)'}.`
+      : st.installed ? 'Off: OpenSSH Server is installed, but not running.' : 'Off.')];
+    if (on) {
+      parts.push(h('p', {}, 'On your other computer, add a session with ', h('b', {}, 'Computer'), ' set to ', code(`${st.login}@${st.computer}`), ' (or this PC’s address in place of its name).'));
+      if (st.addresses.length) parts.push(h('ul', { class: 'remote-access-list' }, st.addresses.map((a) =>
+        h('li', {}, code(a.address), ` on ${a.network}`, a.tailscale ? ' (Tailscale: reachable from your other networks too)' : ''))));
+      if (st.passwordSignIn) parts.push(h('p', { class: 'remote-access-warn' }, 'Password sign-in is on, so anyone who can reach this PC can try passwords. LlamaTree only needs keys. ',
+        h('button', { class: 'btn', disabled: !!busy, onclick: () => run('Turning off password sign-in…', 'remoteAccess.enable', { keysOnly: true, publicNetworks: false }) }, 'Turn off password sign-in')));
+      if (st.defaultShell) parts.push(h('p', { class: 'remote-access-warn' }, `OpenSSH Server runs commands in ${st.defaultShell} (its DefaultShell setting). LlamaTree needs cmd, its default: remove that setting for LlamaTree to connect.`));
+    } else {
+      parts.push(h('p', {}, 'Turning it on installs Windows’ own OpenSSH Server (from Windows Update; it can take a few minutes), starts it now and with Windows, and opens it in the firewall. Windows may ask for your permission once. Your sessions here keep running in your desktop session, and your other computers show them beside their own.'));
+      parts.push(h('label', { class: 'check-field' }, h('input', { type: 'checkbox', checked: keysOnly, onchange: (e) => { keysOnly = e.target.checked; } }), 'Keys only: turn off password sign-in (recommended)'));
+      parts.push(h('label', { class: 'check-field' }, h('input', { type: 'checkbox', checked: publicNetworks, onchange: (e) => { publicNetworks = e.target.checked; } }), 'Also on networks Windows calls public (a cloud VM’s, say)'));
+    }
+    // Rules of its own that Turn off doesn't touch (one you made, say): they open port 22 whatever this dialog says.
+    if (st.otherRules?.length) {
+      const names = st.otherRules.map((n) => `“${n}”`).join(', ');
+      parts.push(h('p', { class: 'remote-access-warn' }, on
+        ? `Other firewall rules let port 22 in too (${names}), on whatever networks they’re set for. Turn off leaves them on.`
+        : `Other firewall rules still let port 22 in (${names}). Nothing answers while OpenSSH Server is off, but if it’s started some other way, they let other computers reach it. Remove them in Windows Defender Firewall if you don’t need them.`));
+    }
+    // The keys that can sign in as you.
+    parts.push(h('div', { class: 'remote-access-head' }, 'Computers that can connect'));
+    parts.push(st.keys.length
+      ? h('ul', { class: 'remote-access-list' }, st.keys.map((k) => h('li', {}, k.comment || 'A key with no name', ' ',
+        // Its fingerprint's start, which tells apart keys with the same name (ssh-keygen -lf shows it whole).
+        h('code', { class: 'remote-access-code', title: k.fingerprint }, k.fingerprint.replace(/^SHA256:/, '').slice(0, 12) + '…'), ' ',
+        h('button', { class: 'btn', disabled: !!busy, onclick: () => run('Removing the key…', 'remoteAccess.removeKey', { fingerprint: k.fingerprint }) }, 'Remove'))))
+      : h('p', {}, st.admin ? 'None added here yet.' : 'None yet.', ' Paste another computer’s public key below (on it: the one line of ~/.ssh/id_ed25519.pub, or Copy in this dialog there).'));
+    if (st.admin) parts.push(h('p', { class: 'remote-access-note' }, 'Keys added some other way aren’t listed: Windows keeps an administrator’s where only administrators can read them.'));
+    parts.push(keyBox);
+    parts.push(h('div', {}, h('button', { class: 'btn', disabled: !!busy, onclick: () => {
+      if (!keyBox.value.trim()) { toast('Paste the other computer’s public key first.', true); return; }
+      run('Adding the key…', 'remoteAccess.addKey', { key: keyBox.value }, () => { keyBox.value = ''; });
+    } }, 'Add key'), st.admin ? h('span', { class: 'remote-access-note' }, ' Windows may ask for permission: an administrator’s keys are kept where only administrators can change them.') : null));
+    return parts;
+  }
+
+  function myKeyPart() {
+    const parts = [h('div', { class: 'remote-access-head' }, 'This computer’s key'),
+      h('p', {}, 'For connecting from this computer to another: add this on that one.')];
+    if (st.myKey) {
+      parts.push(h('div', { class: 'remote-access-key' }, code(st.myKey.text), copy(st.myKey.text)));
+    } else {
+      parts.push(h('p', {}, 'This computer has no SSH key yet. ',
+        h('button', { class: 'btn', disabled: !!busy, onclick: async () => {
+          try { st.myKey = await request('remoteAccess.myKey.make'); render(); } catch (e) { toast(e.message, true); }
+        } }, 'Make one')));
+    }
+    return parts;
+  }
+
+  function render() {
+    const on = st.installed && st.running;
+    openModal('Let my other computers connect', [
+      h('div', { class: 'remote-access' }, ...serverPart(), ...myKeyPart()),
+    ], [
+      busy ? h('span', { class: 'remote-access-note' }, busy) : null,
+      h('div', { class: 'spacer' }),
+      !st.entra && on ? h('button', { class: 'btn', disabled: !!busy, onclick: () => run('Turning it off…', 'remoteAccess.disable', {}) }, 'Turn off') : null,
+      !st.entra && !on ? h('button', { class: 'btn primary', disabled: !!busy, onclick: () => run('Turning it on… (installing OpenSSH Server can take a few minutes)', 'remoteAccess.enable', { keysOnly, publicNetworks }) }, 'Turn on') : null,
+      h('button', { class: 'btn' + (on || st.entra ? ' primary' : ''), onclick: closeModal }, 'Close'),
+    ]);
+  }
+  render();
+}
+
 /** The one question, along the top where tips go, until it's answered. */
 function renderCountAsk(bar) {
   bar.hidden = false;
@@ -6787,6 +6891,7 @@ function versionMenu(x, y) {
         if (updates.auto) checkForUpdates();
       } },
     ]),
+    ...(canShareThisComputer() ? [{ icon: 'server', label: 'Let my other computers connect…', action: showRemoteAccessDialog }, '-'] : []),
     { icon: 'bulb', label: 'Show tips and offers', checked: notices.tips, action: () => setShowTips(!notices.tips) },
     { icon: 'gift', label: 'Tips and offers…', action: showNoticesDialog },
     '-',
