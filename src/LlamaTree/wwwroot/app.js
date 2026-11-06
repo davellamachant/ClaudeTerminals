@@ -7592,21 +7592,26 @@ function makeScrollable(row, extraClass = '') {
  * be re-rendered freely. With `outside`, a tab can also be dragged out below the row: `outside.over(id, x, y)` shows
  * where it would land and returns that place (or null), `outside.over(null)` hides it, and `outside.drop(id, place)`
  * puts it there. `fixed(id)` items stay where they are: only dragged out, and never a place to drop beside. `axis: 'y'`
- * is for a list down the page (the bar down the left) rather than a row across it.
+ * is for a list down the page (the bar down the left) rather than a row across it. With `into`, an item can also be
+ * dropped onto something anywhere on the page, in this row or not: `into.at(id, x, y)` gives the element under the
+ * pointer it would go into, or null, and `into.drop(id, el)` puts it there. An element `into.where(id, el)` says is
+ * where the item already is isn't marked, and dropping there does nothing (rather than a move beside the nearest item).
  *
  * Built on pointer events rather than HTML5 drag and drop: in WebView2 an HTML5 drag runs through the operating
  * system's drag loop, which AllowExternalDrop = false (set so dropped files can't navigate the page) also blocks.
  */
-function enableTabDrag(row, { item, canDrag = () => true, onDrop, outside = null, fixed = () => false, axis = 'x' }) {
+function enableTabDrag(row, { item, canDrag = () => true, onDrop, outside = null, into = null, fixed = () => false, axis = 'x' }) {
   const THRESHOLD = 8;   // pixels the pointer must move before a press becomes a drag (a hurried click can move ~5)
   let press = null;      // { id, el, x, y, pointerId } from pointerdown until pointerup
   let dragging = false;
   let place = null;      // where outside.over says a drop below the row lands
+  let onto = null;       // the element into.at says a drop goes into
   const down = axis === 'y';
   const along = (e) => (down ? e.clientY : e.clientX);                         // the pointer's place along the row
   const span = (r) => (down ? [r.top, r.bottom] : [r.left, r.right]);         // a box's extent along it
 
   const clear = () => row.querySelectorAll('.drop-before, .drop-after').forEach((el) => el.classList.remove('drop-before', 'drop-after'));
+  const clearOnto = () => { onto?.classList.remove('drop-into'); onto = null; };
 
   /** The item nearest the pointer (other than the dragged one), and which side of it the drop lands on. */
   const targetAt = (at) => {
@@ -7623,6 +7628,7 @@ function enableTabDrag(row, { item, canDrag = () => true, onDrop, outside = null
 
   const finish = () => {
     clear();
+    clearOnto();
     if (place != null) outside.over(null);
     place = null;
     press?.el.classList.remove('dragging');
@@ -7646,9 +7652,9 @@ function enableTabDrag(row, { item, canDrag = () => true, onDrop, outside = null
     // than letting plain mouse movement start a drag that eats the next click.
     if ((e.buttons & 1) === 0) { if (dragging) finish(); else press = null; return; }
     if (!dragging) {
-      // Along the row only, unless a tab can be dragged out of it: then down counts too (the row loses the pointer once it's
-      // out, so a drag must start before then).
-      const moved = outside ? Math.hypot(e.clientX - press.x, e.clientY - press.y) : Math.abs(along(e) - (down ? press.y : press.x));
+      // Along the row only, unless a tab can be dragged out of it or onto something elsewhere: then any way counts (the row
+      // loses the pointer once it's out, so a drag must start before then).
+      const moved = outside || into ? Math.hypot(e.clientX - press.x, e.clientY - press.y) : Math.abs(along(e) - (down ? press.y : press.x));
       if (moved < THRESHOLD) return;
       dragging = true;
       row.setPointerCapture(e.pointerId);   // keep receiving moves even when the pointer leaves the row
@@ -7656,6 +7662,11 @@ function enableTabDrag(row, { item, canDrag = () => true, onDrop, outside = null
       document.body.classList.add('tab-dragging');
     }
     const r = row.getBoundingClientRect();
+    if (into) {
+      const el = into.at(press.id, e.clientX, e.clientY);
+      if (el !== onto) { clearOnto(); onto = el; if (onto && !into.where(press.id, onto)) onto.classList.add('drop-into'); }
+      if (onto) { clear(); return; }
+    }
     if (outside) {
       place = e.clientY > r.bottom + 6 ? outside.over(press.id, e.clientX, e.clientY) : (place != null && outside.over(null), null);
       if (place != null) { clear(); return; }
@@ -7684,13 +7695,14 @@ function enableTabDrag(row, { item, canDrag = () => true, onDrop, outside = null
     }
     const t = targetAt(along(e));
     const id = press.id;
-    const out = place;
+    const out = place, dest = onto;
     finish();
     // The click that follows this pointerup would also switch tabs; swallow it.
     const swallow = (c) => { c.stopPropagation(); c.preventDefault(); };
     window.addEventListener('click', swallow, { capture: true, once: true });
     setTimeout(() => window.removeEventListener('click', swallow, { capture: true }), 0);
-    if (out != null) outside.drop(id, out);
+    if (dest) { if (!into.where(id, dest)) into.drop(id, dest); }
+    else if (out != null) outside.drop(id, out);
     else if (t) onDrop(id, t.el.dataset.id, t.before);
   });
 
@@ -9467,9 +9479,29 @@ function moveId(ids, id, targetId, before) {
   return rest;
 }
 
-// Session tabs: dropping into another project's group moves the session into that project, at that spot.
+/** Moves a session into another project (UNKNOWN: none), last among that project's sessions. */
+function moveToProject(s, projectId) {
+  const ids = [...state.sessions.filter((x) => x !== s).map((x) => x.id), s.id];
+  state.sessions = ids.map((x) => state.byId.get(x));
+  post({ type: 'reorder', ids });
+  s.project = projectId === UNKNOWN ? null : projectId;   // shown at once; the host's reply confirms it
+  request('updateSession', { id: s.id, project: s.project ?? '' }).catch((e) => toast(e.message, true));
+  applyProjectFilter();
+  if (state.hiddenProjects.has(projectId)) {
+    toast(`"${s.name}" moved to ${projectName(projectId)}, which is hidden; show it to see the session.`);
+  }
+}
+
+// Session tabs: dropping into another project's group moves the session into that project, at that spot. Dropping one
+// on a project (its tab or row, or its group's name in the tab row), Unknown included, moves it there too, even when
+// none of that project's sessions are showing to drop beside.
 const sessionDrag = {
   item: '.session-tab',
+  into: {
+    at: (id, x, y) => document.elementFromPoint(x, y)?.closest('.project-tab[data-id], .session-group-label[data-project]') ?? null,
+    where: (id, el) => (el.dataset.id ?? el.dataset.project) === groupOf(state.byId.get(id)),
+    drop: (id, el) => moveToProject(state.byId.get(id), el.dataset.id ?? el.dataset.project),
+  },
   onDrop: (id, targetId, before) => {
     const s = state.byId.get(id), target = state.byId.get(targetId);
     const ids = moveId(state.sessions.map((x) => x.id), id, targetId, before);
