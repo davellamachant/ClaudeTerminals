@@ -475,7 +475,26 @@ body.side-empty #splitter, body.side-empty #gitPanel { display: none; }   /* sid
   position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
 }
 .empty-title { font-size: 18px; font-weight: 600; }
-.empty-sub { color: var(--text-dim); }
+.empty-sub { color: var(--text-dim); text-align: center; padding: 0 16px; }
+/* The website's mark (docs/brand/LlamaTree-Icon.svg) above the welcome's title, with the site's warm glow; left out
+   when the window is too short to spare it. */
+.welcome-mark { display: none; width: 112px; height: 112px; margin-bottom: 4px; filter: drop-shadow(0 8px 24px rgba(255, 138, 26, .25)); }
+#empty.welcome .welcome-mark { display: block; }
+@media (max-height: 760px) { #empty.welcome .welcome-mark { display: none; } }
+.empty-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+/* The welcome's recent conversations: the picker's rows in a card no wider than reads well. */
+#emptyRecent { width: min(560px, calc(100% - 32px)); margin: 6px 0; text-align: left; }
+#emptyRecent .conv-list { border-radius: 6px; height: auto; max-height: min(50vh, 560px); overflow: auto; }
+#emptyProject { width: min(560px, calc(100% - 32px)); text-align: left; }
+#emptyProject .field { margin-bottom: 4px; }
+#emptyProject input { width: 100%; }
+#btnOpenPicked { min-width: 130px; }   /* the count changing the text doesn't shift the buttons beside it */
+#emptyProject .help { color: var(--text-faint); }
+.welcome-item { display: flex; gap: 10px; align-items: flex-start; }
+.welcome-item input { margin-top: 3px; flex: none; pointer-events: none; }
+.welcome-text { min-width: 0; flex: 1; }
+#emptyRecent .conv-item:last-child { border-bottom: none; }
+#emptyRecent .conv-item:focus-visible { outline: none; border-left-color: var(--focus); background: var(--hover); }
 
 /* ---------------------------------------------------------------- tiles */
 /* The terminal veil: the tile paints the terminal's background at --terminal-veil over whatever is behind it (the

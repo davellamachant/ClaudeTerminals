@@ -396,6 +396,7 @@ function applyProjectFilter(instant = false) {
   $('#empty .empty-sub').textContent = anySessions
     ? `${tabbedProjects() ? 'Pick' : 'Tick'} a project ${state.navLayout === 'top' ? 'above' : 'on the left'} (Unknown holds sessions with no project), or choose All.`
     : 'Add a session for each worktree you want Claude to work in.';
+  renderWelcome(!anySessions);
   layout(instant);
   for (const s of state.sessions) renderTileHeader(s);
   renderProjectBar();
@@ -2939,6 +2940,185 @@ function conversationPicker({ directory = null, agent = null, server = null, onP
     .then((r) => { all = r || []; render(); })
     .catch((e) => list.replaceChildren(h('div', { class: 'conv-empty' }, e.message)));
   return h('div', { class: 'conv-picker' }, search, list);
+}
+
+// ------------------------------------------------------------------ welcome: no sessions at all
+
+/**
+ * With no sessions (the first run, or after closing them all) the empty grid offers the conversations already had with
+ * Claude or Codex, latest first: tick any number and open them together, or double-click one to open just it. Read on
+ * the way in (again if it's been a minute); the list is only rebuilt when it's read, so redraws keep its ticks and scroll.
+ */
+const welcome = { at: 0, conversations: [], loading: false, picked: new Set(), project: null };
+const WELCOME_SHOWN = 20;
+
+function renderWelcome(on) {
+  const host = $('#emptyRecent');
+  if (on && !welcome.loading && Date.now() - welcome.at > 60000) {
+    welcome.loading = true;
+    request('conversations', {})
+      .then((r) => { welcome.conversations = (r || []).filter((c) => c.cwd && agentById(c.agent)).slice(0, WELCOME_SHOWN); })
+      .catch(() => { welcome.conversations = []; })
+      .finally(() => {
+        welcome.loading = false;
+        welcome.at = Date.now();
+        const ids = new Set(welcome.conversations.map((c) => c.sessionId));
+        for (const id of welcome.picked) if (!ids.has(id)) welcome.picked.delete(id);
+        buildWelcomeList();
+        renderWelcome(!state.sessions.length);
+      });
+  }
+  const shown = on && welcome.conversations.length > 0;
+  $('#empty').classList.toggle('welcome', shown);   // shows the LlamaTree mark above the title
+  host.hidden = $('#btnResumeEmpty').hidden = !shown;
+  syncWelcomePicked(shown);
+  if (!shown) return;
+  $('#empty .empty-title').textContent = 'Welcome to LlamaTree';
+  $('#empty .empty-sub').textContent = 'Pick up where you left off: tick the conversations to carry on and open them as sessions, or start a new one.';
+}
+
+function buildWelcomeList() {
+  $('#emptyRecent').replaceChildren(h('div', { class: 'conv-list' }, welcome.conversations.map((c) => {
+    const prompt = c.lastPrompt && c.lastPrompt !== c.firstPrompt ? c.lastPrompt : c.firstPrompt;
+    const box = h('input', { type: 'checkbox', tabindex: '-1' });
+    const toggle = () => {
+      if (welcome.picked.has(c.sessionId)) welcome.picked.delete(c.sessionId); else welcome.picked.add(c.sessionId);
+      syncWelcomePicked(true);
+    };
+    return h('div', {
+      class: 'conv-item welcome-item', tabindex: '0', 'data-id': c.sessionId,
+      title: `${c.title}\n${c.cwd}\nSession ${c.sessionId}\nClick to tick it; double-click to open just this one`,
+      onclick: toggle,
+      ondblclick: () => resumeAsSessions([c]),
+      onkeydown: (e) => {
+        if (e.key === ' ') { e.preventDefault(); toggle(); }
+        else if (e.key === 'Enter') openWelcomePicked(c);
+      },
+    },
+    box,
+    h('div', { class: 'welcome-text' },
+      h('div', { class: 'conv-title' }, h('span', {}, c.title), agentTag(c.agent),
+        Date.now() - new Date(c.modified) < 3 * 60000 && h('span', { class: 'conv-open', title: 'Updated in the last few minutes — it may still be running in another terminal' }, 'active now')),
+      h('div', { class: 'conv-meta' }, [c.cwd, c.branch && 'on ' + c.branch, relTime(c.modified)].filter(Boolean).join('  ·  ')),
+      prompt && h('div', { class: 'conv-prompt' }, prompt)));
+  })));
+  buildWelcomeProject();
+}
+
+/**
+ * The project the sessions go into, in one box like the New Session dialog's Command: pick from its drop-down (the
+ * arrow, or Alt+Down) or type a name, and a name that isn't a project yet makes one. The drop-down also suggests the
+ * ticked conversations' folder names as new projects. Empty is no project. resolve() gives the project's id (creating
+ * it first if needed), or null.
+ */
+function buildWelcomeProject() {
+  const initial = state.projects.find((p) => p.id === defaultProjectId());
+  const input = h('input', {
+    value: initial?.name ?? '', spellcheck: 'false', maxlength: '60',
+    placeholder: 'No project: choose one, or type a name for a new one',
+  });
+  const note = h('div', { class: 'help' });
+  const byName = (name) => state.projects.find((p) => p.name.toLowerCase() === name.toLowerCase());
+  const describe = () => {
+    const name = input.value.trim();
+    note.textContent = !name ? `No project: the sessions show under ${UNKNOWN_NAME}.`
+      : byName(name) ? `Adds the sessions to ${byName(name).name}.`
+      : `Makes a new project, "${name}", for the sessions.`;
+  };
+  const choose = (name) => { input.value = name; describe(); input.focus(); };
+  const suggestions = () => {
+    const r = input.getBoundingClientRect();
+    const current = input.value.trim().toLowerCase();
+    const folders = [...new Set(welcome.conversations.filter((c) => welcome.picked.has(c.sessionId)).map((c) => leafName(c.cwd)))]
+      .filter((f) => !byName(f));
+    showMenu(r.left, r.bottom + 2, [
+      { label: `No project (shown under ${UNKNOWN_NAME})`, checked: !current, action: () => choose('') },
+      state.projects.length && '-',
+      ...state.projects.map((p) => ({ label: p.name, checked: p.name.toLowerCase() === current, action: () => choose(p.name) })),
+      folders.length && '-',
+      folders.length && { header: 'New project' },
+      ...folders.map((f) => ({ label: f, checked: f.toLowerCase() === current, action: () => choose(f) })),
+    ]);
+    openMenuEl.style.minWidth = r.width + 'px';
+  };
+  input.addEventListener('input', describe);
+  input.addEventListener('keydown', (e) => {
+    if (e.altKey && e.key === 'ArrowDown') { e.preventDefault(); suggestions(); }
+    else if (e.key === 'Enter') openWelcomePicked();
+  });
+  const arrow = h('button', { class: 'combo-btn', title: 'Projects (Alt+Down)', tabindex: '-1', onclick: suggestions }, iconEl('chevD'));
+  let created = null;   // so retrying after a failed add doesn't make the project twice
+  welcome.project = {
+    async resolve() {
+      const name = input.value.trim();
+      if (!name) return null;
+      const existing = byName(name);
+      if (existing) return existing.id;
+      if (created?.name !== name) created = { name, id: await request('projects.add', { name }) };
+      return created.id;
+    },
+  };
+  describe();
+  $('#emptyProject').replaceChildren(field('Project', h('div', { class: 'combo' }, input, arrow)), note);
+}
+
+/**
+ * The ticks, and the Open button that counts them (the main button while anything is ticked, else New Session is).
+ * The project box and the button are always there, disabled until something is ticked, so ticking moves nothing.
+ */
+function syncWelcomePicked(shown) {
+  for (const row of $('#emptyRecent').querySelectorAll('.welcome-item')) {
+    const on = welcome.picked.has(row.dataset.id);
+    row.classList.toggle('selected', on);
+    row.querySelector('input').checked = on;
+  }
+  const n = shown ? welcome.picked.size : 0;
+  $('#emptyProject').hidden = !shown;
+  const open = $('#btnOpenPicked');
+  open.hidden = !shown;
+  open.disabled = !n;
+  open.textContent = n === 1 ? 'Open 1 session' : n ? `Open ${n} sessions` : 'Open sessions';
+  $('#btnAddEmpty').classList.toggle('primary', !n);
+}
+
+/** Opens the ticked conversations; Enter on a row with nothing ticked opens that row's. */
+function openWelcomePicked(fallback = null) {
+  const list = welcome.conversations.filter((c) => welcome.picked.has(c.sessionId));
+  if (!list.length && fallback) list.push(fallback);
+  if (list.length) resumeAsSessions(list);
+}
+
+/**
+ * A session for each saved conversation, in its folder, with the command last used for its agent (else the plain one),
+ * in the project chosen under the list.
+ */
+async function resumeAsSessions(convs) {
+  const last = store.get('lastCommand', null);
+  let projectId;
+  try { projectId = welcome.project ? await welcome.project.resolve() : defaultProjectId(); }
+  catch (e) { toast(e.message, true); welcome.project?.newName.focus(); return; }
+  const project = projectId ?? '';
+  const taken = new Set(state.sessions.map((x) => x.name.toLowerCase()));
+  const unique = (base) => {
+    let name = base;
+    for (let n = 2; taken.has(name.toLowerCase()); n++) name = `${base} ${n}`;
+    taken.add(name.toLowerCase());
+    return name;
+  };
+  const sessions = convs.map((c) => ({
+    directory: c.cwd, name: unique(leafName(c.cwd)), conversation: c.sessionId, project,
+    command: last && agentOf(last)?.id === c.agent ? ownOptionsOnly(last) : agentById(c.agent).programs[0],
+  }));
+  const before = new Set(state.sessions.map((x) => x.id));
+  try {
+    await request('addSessions', { sessions });
+    welcome.picked.clear();
+    buildWelcomeProject();   // fresh for next time: the project just made is now one to pick
+    if (projectId && state.hiddenProjects.has(projectId)) toggleProject(projectId);   // on screen even if its project was hidden
+    store.set('lastDir', convs[0].cwd);
+    const added = state.sessions.filter((x) => !before.has(x.id));
+    if (added.length === 1) expand(added[0].id);   // several stay side by side in the grid
+  } catch (e) { toast(e.message, true); }
 }
 
 /**
@@ -9453,6 +9633,8 @@ $('#btnGitMenu').addEventListener('click', sidePanelMenu);
 // Not addEventListener('click', showAddDialog): the click event would arrive as its `mode` argument.
 $('#btnAdd').addEventListener('click', () => showAddDialog());
 $('#btnAddEmpty').addEventListener('click', () => showAddDialog());
+$('#btnResumeEmpty').addEventListener('click', () => showAddDialog('resume'));
+$('#btnOpenPicked').addEventListener('click', () => openWelcomePicked());
 
 makeScrollable($('#projectTabs'));
 makeScrollable($('#sessionTabs'));
