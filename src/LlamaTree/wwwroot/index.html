@@ -47,9 +47,16 @@
         <div id="termPane">
           <div id="grid"></div>
           <div id="empty" hidden>
+            <img class="welcome-mark" src="icon.svg" alt="" width="112" height="112">
             <div class="empty-title">No sessions yet</div>
             <div class="empty-sub">Add a session for each worktree you want Claude to work in.</div>
-            <button id="btnAddEmpty" class="btn primary">New Session…</button>
+            <div id="emptyRecent" hidden></div>
+            <div id="emptyProject" hidden></div>
+            <div class="empty-actions">
+              <button id="btnResumeEmpty" class="btn" hidden>More conversations…</button>
+              <button id="btnAddEmpty" class="btn primary">New Session…</button>
+              <button id="btnOpenPicked" class="btn primary" hidden>Open sessions</button>
+            </div>
           </div>
         </div>
 
