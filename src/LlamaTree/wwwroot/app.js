@@ -1235,6 +1235,8 @@ function syncSessions(list, projects) {
       Object.assign(s, { name: info.name, directory: info.directory, command: info.command, conversation: info.conversation, server: info.server ?? null });
     }
     s.project = info.project || null;
+    s.startWithApp = info.startWithApp || null;   // see showEditDialog
+    s.autoStart = !!info.autoStart;   // the app has just opened, and this session starts with it
     // Running already: it ran on in the session host while no window was open (its output follows as a replay).
     if (info.running && !s.running) s.started = true;
     s.startedBy = info.startedBy || null;   // the session whose agent started this one (start_session)
@@ -1267,12 +1269,13 @@ function syncSessions(list, projects) {
   layout(true);
   // Claude sessions brought back with the app start when they're first opened, not all at once: Claude's start-up
   // context (hooks, the date, Git status) is then fresh when you use it, and a session nobody opens runs nothing. A new
-  // session, and any other command (a dev server, say), starts straight away, visible or not.
+  // session, and any other command (a dev server, say), starts straight away, visible or not. So does one set to start
+  // with LlamaTree (always, or when it was running as LlamaTree closed).
   const restoring = !state.restored;
   state.restored = true;
   for (const s of state.sessions) {
     if (s.running || s.started || s.startsOnOpen) continue;
-    if (restoring && agentOf(s.command)) { s.startsOnOpen = true; renderTileHeader(s); }
+    if (restoring && agentOf(s.command) && !s.autoStart) { s.startsOnOpen = true; renderTileHeader(s); }
     else startSession(s);
   }
   applyProjectFilter(true);
@@ -1624,7 +1627,7 @@ function statusClass(s) {
 }
 
 function statusText(s) {
-  if (s.startsOnOpen) return 'Starts when you open it';
+  if (s.startsOnOpen) return 'Starts when you click it';
   return { exited: 'Not running', asking: 'Needs your answer', attention: 'Waiting for you', working: 'Working…', running: 'Idle' }[statusClass(s)];
 }
 
@@ -1729,7 +1732,7 @@ function renderTileHeader(s) {
   const away = serverDown(s);   // a session on a server that can't be reached: why, rather than whether it runs
   s.exitedBadge.hidden = !away && (s.running || !(s.started || s.startsOnOpen));
   s.exitedBadge.textContent = away ? serverStateText(serverOf(s))
-    : s.startsOnOpen ? 'Starts when you open it' : s.exitCode === null ? 'Not running' : `Exited (${s.exitCode})`;
+    : s.startsOnOpen ? 'Starts when you click it' : s.exitCode === null ? 'Not running' : `Exited (${s.exitCode})`;
   renderTileState(s);
   syncControlStatus(s);
 }
@@ -2452,11 +2455,27 @@ function defaultProjectId() {
   return shown.length === 1 ? shown[0].id : null;
 }
 
+/**
+ * When a Claude or Codex session on this computer starts: when its terminal is first shown (''), or as LlamaTree opens ("always",
+ * or "running": if it was running as LlamaTree closed). See SessionInfo.StartWithApp.
+ */
+function startsField(selected) {
+  const select = h('select', {},
+    [['', 'When you first click on its terminal'], ['running', 'When LlamaTree opens, if its terminal was running when LlamaTree last closed'], ['always', 'When LlamaTree opens, always']]
+      .map(([value, label]) => h('option', { value, selected: (selected ?? '') === value }, label)));
+  return {
+    select,
+    el: field('Starts', h('div', { class: 'combo' }, select, h('span', { class: 'combo-btn' }, iconEl('chevD'))),
+      'Started when you first click on its terminal, its start-up context (hooks, the date, Git status) is fresh when you use it. "If its terminal was running" brings back the terminals you were using, even after you sign out or restart the computer.'),
+  };
+}
+
 function showEditDialog(s, focus) {
   const agent = agentOf(s.command);
   const name = h('input', { value: s.name, spellcheck: 'false' });
   const command = h('input', { value: s.command, spellcheck: 'false' });
   const project = projectField(s.project);
+  const starts = agent && !s.server ? startsField(s.startWithApp) : null;   // a server's session runs with its own LlamaTree
   const error = h('div', { class: 'form-error', hidden: true });
   const save = async () => {
     let projectId;
@@ -2467,7 +2486,9 @@ function showEditDialog(s, focus) {
       error.textContent = e.message;
       return;
     }
-    request('updateSession', { id: s.id, name: name.value, command: command.value, project: projectId ?? '' }).catch((e) => toast(e.message, true));
+    request('updateSession', {
+      id: s.id, name: name.value, command: command.value, project: projectId ?? '', ...(starts && { startWithApp: starts.select.value }),
+    }).catch((e) => toast(e.message, true));
     closeModal();
     if (s.running && command.value.trim() !== s.command) toast('Command changes apply the next time the session starts.');
     if (projectId && state.hiddenProjects.has(projectId)) toast(`"${s.name}" moved to a project that's hidden; tick it above to see the session.`);
@@ -2484,6 +2505,7 @@ function showEditDialog(s, focus) {
         placeholder: agent.choosesId ? `Learned from ${agent.name} once it has picked one (--continue)` : `Learned from ${agent.name} once it has started one`,
       }),
       `The conversation this session reopens each time it starts, followed ${agent.follows}. Change it with Resume a different conversation…`),
+    starts?.el,
     error,
   ], [h('button', { class: 'btn', onclick: closeModal }, 'Cancel'), h('button', { class: 'btn primary', onclick: save }, 'Save')]);
   if (focus === 'project') setTimeout(() => project.select.focus(), 30);
@@ -2574,6 +2596,7 @@ function showAddDialog(mode = 'new', from = null) {
     browserHost.hidden = true;
     wtHost.hidden = true;
     setPlaceholder();
+    showStarts();
     if (mode === 'resume') setMode('resume');   // that computer's conversations
     else loadWorktrees();
   };
@@ -2587,6 +2610,9 @@ function showAddDialog(mode = 'new', from = null) {
   const project = projectField(from ? from.project : defaultProjectId());
   const firstPrompt = from?.prompt != null && h('textarea', { class: 'first-prompt', spellcheck: 'false' }, from.prompt);
   const commandNote = h('span');
+  // Only a Claude or Codex session on this computer can start with LlamaTree (a server's runs with its own).
+  const starts = startsField(null);
+  const showStarts = () => { starts.el.hidden = !agentOf(command.value.trim() || DEFAULT_COMMAND) || !!serverValue(); };
   let picked = null;   // the saved conversation chosen in "Resume existing conversation"
 
   const loadWorktrees = debounce(async () => {
@@ -2637,13 +2663,14 @@ function showAddDialog(mode = 'new', from = null) {
     const d = dir.value.trim();
     if (mode === 'resume' ? !picked : !d) { error.hidden = false; error.textContent = mode === 'resume' ? 'Choose a conversation.' : 'Choose a folder.'; return; }
     const cmd = command.value.trim() || DEFAULT_COMMAND;
+    const startWithApp = starts.el.hidden ? undefined : starts.select.value;
     const list = [{
       directory: d, name: name.value.trim(), command: cmd, prompt: firstPrompt ? firstPrompt.value.trim() : undefined,
-      conversation: mode === 'resume' ? picked?.sessionId : undefined,
+      conversation: mode === 'resume' ? picked?.sessionId : undefined, startWithApp,
     }];
     if (mode === 'new' && !wtHost.hidden && wtHost.dataset.for === d) {   // only ticks made for this folder
       for (const cb of wtHost.querySelectorAll('input[type=checkbox]:checked')) {
-        list.push({ directory: cb.dataset.path, name: leafName(cb.dataset.path), command: cmd });
+        list.push({ directory: cb.dataset.path, name: leafName(cb.dataset.path), command: cmd, startWithApp });
       }
     }
     const before = new Set(state.sessions.map((x) => x.id));
@@ -2720,6 +2747,7 @@ function showAddDialog(mode = 'new', from = null) {
     else if (hasOption(agent.continue, cmd)) text = 'Carries on the folder\'s latest conversation, then keeps that one: it reopens each time the session starts.';
     else text = `${agent.choosesId ? 'Gets a conversation of its own' : 'Starts a new conversation'} and reopens it each time the session or the app restarts, following it ${agent.follows}.`;
     commandNote.textContent = text;
+    showStarts();
   }
   command.addEventListener('input', updateNote);
   // Each agent's plain command to pick from, dropped down from the box like a combo box's list (the arrow, or Alt+Down
@@ -2747,6 +2775,7 @@ function showAddDialog(mode = 'new', from = null) {
     firstPrompt && field('First prompt', firstPrompt, 'From the panel. Starts a new conversation in this session; edit it first if you like.'),
     field('Command', h('div', { class: 'combo' }, command, suggest), commandNote),
     project.el,
+    starts.el,
     wtHost,
     error,
   ], [h('button', { class: 'btn', onclick: closeModal }, 'Cancel'), h('button', { class: 'btn primary', onclick: add }, firstPrompt ? 'Start session' : 'Add')]);

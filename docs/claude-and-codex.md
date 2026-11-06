@@ -10,7 +10,7 @@ A session's command decides what it runs: `claude` for [Claude Code](https://doc
 | Tiles, tabs, projects, shortcuts | ✓ | ✓ | ✓ |
 | Working, waiting, idle and not running dots | ✓ | ✓ | ✓ |
 | *Needs your answer* dot | ✓ permissions, questions, plans, the folder trust check | ✓ approvals and questions (Codex reports them), the folder trust check | with [OSC 7501](#other-agents-the-needs-your-answer-dot) |
-| Starts when you first open it, after the app restarts | ✓ | ✓ | No, starts straight away |
+| Starts when you first click on its terminal, after the app restarts | ✓ | ✓ | No, starts straight away |
 | **Conversations** | | | |
 | A conversation of its own, even several in one folder | ✓ the app picks its id | ✓ learned once Codex saves it | No |
 | Reopens it when the app or the session restarts | ✓ `--resume <id>` | ✓ `codex resume <id>` | No |

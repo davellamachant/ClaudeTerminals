@@ -50,6 +50,20 @@ internal sealed partial class AppHost
     /// <summary>Whether any session's program is running.</summary>
     public bool AnyRunning => sessions.Values.Any(s => s.IsRunning);
 
+    /// <summary>
+    /// Sessions the first window starts straight away rather than when each is first opened (see
+    /// <see cref="SessionInfo.StartWithApp"/>): told to that window's page once, so a later window doesn't start one you stopped.
+    /// </summary>
+    private readonly HashSet<string> startWithApp = [];
+
+    /// <summary>Keeps <see cref="SessionInfo.WasRunning"/>, saving it when it changes.</summary>
+    private void NoteRunning(TerminalSession s, bool running)
+    {
+        if (s.Info.WasRunning == running || !sessions.ContainsKey(s.Id)) return;
+        s.Info.WasRunning = running;
+        SaveSessions();
+    }
+
     /// <summary>A session started or ended (on the app thread).</summary>
     public event Action? RunningChanged;
 
@@ -117,6 +131,9 @@ internal sealed partial class AppHost
             }
             tidied |= TidyConversation(info);
             AddSessionRuntime(info);
+            if (info.StartsWithApp) startWithApp.Add(info.Id);
+            // Any other isn't running until it's opened, and isn't in use if the app closes before then.
+            else if (info.WasRunning) (info.WasRunning, tidied) = (false, true);
         }
         ApplyResumeAfterUpdate();
         foreach (var s in sessions.Values.Where(s => TerminalSession.NeedsOwnConversation(s.Info)))
@@ -391,6 +408,7 @@ internal sealed partial class AppHost
             }
             if (app.sessions.GetValueOrDefault(id) is not { } s) return;
             app.CatchUpConversation(s);
+            app.NoteRunning(s, false);
             if (!s.Stop()) return;
             app.FlushOutput();
             app.Post(new { type = "exited", id, code = (int?)null });
@@ -701,6 +719,13 @@ internal sealed partial class AppHost
             FlushOutput();
             Post(new { type = "exited", id = session.Id, code });
             RunningChanged?.Invoke();
+            // Quit on its own (/exit): no longer in use. Not straight away: signing out ends the sessions' programs
+            // too, perhaps before this app, and those still count as running when it closed.
+            if (code == 0)
+                _ = Task.Delay(TimeSpan.FromSeconds(10)).ContinueWith(_ => RunOnUi(() =>
+                {
+                    if (generation == session.Generation && !session.IsRunning) NoteRunning(session, false);
+                }), TaskScheduler.Default);
         });
         s.StatusChanged += (session, status) => RunOnUi(() => Post(StatusMessage(session, status)));
         sessions[info.Id] = s;
@@ -749,6 +774,8 @@ internal sealed partial class AppHost
             running = x.Item2,
             server = x.Info.Server,
             startedBy = x.Info.StartedBy,
+            startWithApp = x.Info.StartWithApp,
+            autoStart = startWithApp.Contains(x.Info.Id),   // start now, rather than when first opened
         }),
         servers = ServersState(),
     };
@@ -839,6 +866,7 @@ internal sealed partial class AppHost
             case "ready":
                 window.PostJson(AccentMessage());   // first: with Windows' app mode the page knows its theme before sessions start
                 Post(SessionList());
+                startWithApp.Clear();   // told to this window's page, the first: a later one starts none of them
                 // Sessions that ran on while no window was open: what they showed, and a redraw at the page's size.
                 foreach (var s in order.Where(sessions.ContainsKey).Select(id => sessions[id]).Where(s => s.IsRunning))
                 {
@@ -869,6 +897,7 @@ internal sealed partial class AppHost
                 tails[s.Id].Clear();
                 var prompted = s.FirstPromptOnce != null;   // starts on a prompt: its first output is work, not start-up
                 s.Start(Int(msg, "cols"), Int(msg, "rows"), OptStr(msg, "theme"), PanelLinkFor(s));
+                NoteRunning(s, true);
                 RunningChanged?.Invoke();
                 return new { prompted };
             }
@@ -902,6 +931,7 @@ internal sealed partial class AppHost
                 tails[s.Id].Clear();
                 var prompted = s.FirstPromptOnce != null;
                 s.Start(Int(msg, "cols"), Int(msg, "rows"), OptStr(msg, "theme"), PanelLinkFor(s));
+                NoteRunning(s, true);
                 RunningChanged?.Invoke();
                 return new { prompted };
             }
@@ -927,6 +957,7 @@ internal sealed partial class AppHost
                 // Stopping disposes the process without raising Exited, so tell the page itself (code null = stopped).
                 var s = Get(msg);
                 CatchUpConversation(s);
+                NoteRunning(s, false);
                 if (s.Stop())
                 {
                     FlushOutput();
@@ -942,7 +973,7 @@ internal sealed partial class AppHost
                     .Select(item => (Dir: Str(item, "directory"), Name: Str(item, "name"), Command: Str(item, "command"), Project: ProjectId(item),
                         Prompt: OptStr(item, "prompt")?.Trim() is { Length: > 0 and <= PanelSpec.MaxPrompt } p ? p : null,
                         Conversation: OptStr(item, "conversation") is { } conv && TerminalSession.IsConversationId(conv) ? conv : null,
-                        Within: OptStr(item, "within")))
+                        Within: OptStr(item, "within"), StartWithApp: SessionInfo.StartWithAppValue(OptStr(item, "startWithApp"))))
                     .ToList();
                 // All or nothing: check every folder before adding any. Adding as we went left the earlier sessions
                 // added but unsaved and unshown after a failure, and a retry then added them a second time.
@@ -969,6 +1000,7 @@ internal sealed partial class AppHost
                         Command = string.IsNullOrWhiteSpace(item.Command) ? "claude" : item.Command.Trim(),
                         Project = item.Project,
                         Within = item.Within,   // as resolved and checked above; checked again at each start
+                        StartWithApp = item.StartWithApp,
                     };
                     TidyConversation(info);   // a "claude --resume X" typed as the command: conversation X
                     if (item.Conversation != null && TerminalSession.CanTrackConversation(info.Command))
@@ -1015,6 +1047,7 @@ internal sealed partial class AppHost
                     s.Info.Command = TerminalSession.StripContinue(s.Info.Command);
                 }
                 if (msg.TryGetProperty("project", out _)) s.Info.Project = ProjectId(msg);
+                if (msg.TryGetProperty("startWithApp", out _)) s.Info.StartWithApp = SessionInfo.StartWithAppValue(OptStr(msg, "startWithApp"));
                 SaveSessions();
                 Post(SessionList());
                 return null;

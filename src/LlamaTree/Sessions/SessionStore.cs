@@ -38,6 +38,23 @@ internal sealed class SessionInfo
     /// Terminal.ConfinedFolder); null for any other session.
     /// </summary>
     public string? Within { get; set; }
+    /// <summary>
+    /// Whether a Claude or Codex session starts as soon as LlamaTree opens, rather than when it's first opened (null):
+    /// "always", or "running" for when it was running as LlamaTree last closed (<see cref="WasRunning"/>).
+    /// </summary>
+    public string? StartWithApp { get; set; }
+    /// <summary>
+    /// Whether the session was in use: set as it starts, cleared when you stop it or its program quits on its own. LlamaTree
+    /// closing (or signing out, which may end it without warning) leaves it, so it says what was running at the end.
+    /// </summary>
+    public bool WasRunning { get; set; }
+
+    /// <summary>A <see cref="StartWithApp"/> from the page: "always", "running", or null for anything else.</summary>
+    public static string? StartWithAppValue(string? value) => value is "always" or "running" ? value : null;
+
+    /// <summary>Whether this session starts as soon as LlamaTree opens (see <see cref="StartWithApp"/>).</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool StartsWithApp => StartWithApp == "always" || (StartWithApp == "running" && WasRunning);
 }
 
 internal sealed partial class ProjectInfo
