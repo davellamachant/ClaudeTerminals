@@ -33,10 +33,11 @@ namespace LlamaTree.Themes;
 /// window's size, the theme's colours and how many sessions are in each state (see themeFloor in app.js, and
 /// docs/customize.md#a-floor-of-its-own).
 /// </param>
+/// <param name="Cycle">The light cycle's own picture and options (see <see cref="ThemeCycle"/>), or null for the app's own.</param>
 internal sealed record ThemeInfo(string Id, string Name, string Base, string? Font, bool Glow, bool Grid, bool Rain, bool Monochrome, string? Cursor, ThemeAccent? Accent,
     IReadOnlyList<ThemeAccentChoice> Accents,
     IReadOnlyDictionary<string, string> Colors, IReadOnlyDictionary<string, string> Terminal, IReadOnlyDictionary<string, string> Diff,
-    bool BuiltIn, int? TerminalBackground = null, string? Version = null, string? Floor = null);
+    bool BuiltIn, int? TerminalBackground = null, string? Version = null, string? Floor = null, ThemeCycle? Cycle = null);
 
 /// <param name="Line">Lines, ticks and highlights: readable on the theme's background.</param>
 /// <param name="Strong">Fills that carry white text: active tabs, buttons, menus.</param>
@@ -215,6 +216,8 @@ internal static partial class ThemeCatalog
             if (c.ValueKind == JsonValueKind.String && c.GetString() == "light-cycle") cursor = "light-cycle";
             else problems.Add($"{fileName}: cursor is \"light-cycle\" or left out.");
         }
+        var cycle = ThemeCycle.Parse(e, fileName, problems);
+        if (cycle != null && cursor == null) problems.Add($"{fileName}: cycle is for \"cursor\": \"light-cycle\", which this theme doesn't have.");
 
         int? terminalBackground = null;
         if (e.TryGetProperty("terminalBackground", out var tb))
@@ -243,7 +246,7 @@ internal static partial class ThemeCatalog
             Colors(e, "terminal", TerminalNames, CssColor(), fileName, problems),
             Colors(e, "diff", DiffNames, HexColor(), fileName, problems),
             builtIn, terminalBackground,
-            Str(e, "version") is { } v && Plugins.PluginCatalog.VersionPattern().IsMatch(v) ? v : null, floor);
+            Str(e, "version") is { } v && Plugins.PluginCatalog.VersionPattern().IsMatch(v) ? v : null, floor, cursor == null ? null : cycle);
     }
 
     /// <summary>
