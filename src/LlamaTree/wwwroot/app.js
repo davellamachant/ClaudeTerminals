@@ -626,7 +626,7 @@ function projectAllButtons(groups) {
 }
 
 const projectAddButton = () => h('button', { class: 'tb-btn text project-add', title: 'New project', onclick: showNewProjectDialog }, iconEl('plus'),
-  state.projects.length ? 'Project' : 'New project (group sessions)');
+  state.projects.length ? 'Project' : 'New project');
 
 /**
  * The bar down the left in the Hybrid and Left layouts: a row per project, as its tab in the Top layout's projects bar,

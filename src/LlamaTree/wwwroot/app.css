@@ -965,7 +965,10 @@ body[data-nav="left"] #docTools { display: flex; }
 #docTools .tb-btn { height: 24px; min-width: 24px; }
 #docTools .app-version { margin: 0 12px 0 2px; }   /* set apart from the buttons after it */
 #navHead > #btnGrid { flex: none; height: 24px; min-width: 24px; margin: 0 4px 0 -4px; }
-#navFoot { display: flex; align-items: center; gap: 2px; }
+#navFoot { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; }
+/* Each button keeps its words on one line: a side bar too narrow for both stacks them instead. */
+#navFoot > .tb-btn { white-space: nowrap; }
+#navFoot > .project-add { margin-left: 0; }
 #navFoot > #btnAdd { flex: none; padding: 0 8px; color: var(--text-dim); }
 #navFoot > #btnAdd:hover { color: var(--text); }
 
