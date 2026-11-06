@@ -632,11 +632,17 @@ for (const [cwd, gitBranch, title, prompt, daysAgo] of conversations) {
 
 // ------------------------------------------------------------------ LlamaTree profile
 
-const fake = path.join(here, 'fake-claude.mjs');
-// The config folder lets each fake session register itself and save its conversation (for the conversation rail).
-const session = (Id, Name, Directory, scenario, Project = null) => ({ Id, Name, Directory, Command: `node "${fake}" ${scenario} "${claudeConfig}"`, Project });
+// The sessions run `claude`, so the app treats them as Claude (the rail, asking, conversations): run.ps1 puts this folder
+// first on PATH, and its claude.cmd runs the fake. Each registers itself and saves its conversation in the demo's
+// CLAUDE_CONFIG_DIR, under the id the app gives it.
+const bin = path.join(root, 'bin');
+fs.mkdirSync(bin, { recursive: true });
+fs.writeFileSync(path.join(bin, 'claude.cmd'), `@node "${path.join(here, 'fake-claude.mjs')}" %*\r\n`);
+const session = (Id, Name, Directory, scenario, Project = null) => ({ Id, Name, Directory, Command: `claude ${scenario}`, Project });
 const profile = path.join(root, 'profile');
 fs.mkdirSync(profile, { recursive: true });
+// "May we count you?" already answered, so it isn't along the top of every screenshot (and the demo is never counted).
+fs.writeFileSync(path.join(profile, 'telemetry.json'), JSON.stringify({ enabled: false }));
 // Three projects, plus a session with none so the Unknown group shows too.
 fs.writeFileSync(path.join(profile, 'projects.json'), JSON.stringify([
   { Id: 'acme', Name: 'Acme Shop', Color: null },
@@ -652,7 +658,7 @@ fs.writeFileSync(path.join(profile, 'sessions.json'), JSON.stringify([
   session('tooling', 'tooling', main, 'docs'),
 ], null, 2));
 
-// Panels, as Claude would have shown them with show_panel (the fake sessions aren't Claude, so they're written here).
+// Panels, as Claude would have shown them with show_panel (the fake sessions only look like Claude, so they're written here).
 const ago = (minutes) => new Date(Date.now() - minutes * 60_000).toISOString();
 const task = (key, title, subtitle, badges, minutes, checked, extra = {}) => ({
   key, title, subtitle, link: `https://tracker.example/${key}`, time: ago(minutes), checked,
@@ -710,4 +716,4 @@ fs.writeFileSync(path.join(profile, 'panels.json'), JSON.stringify([
   },
 ], null, 2));
 
-console.log(JSON.stringify({ root, profile, claudeConfig }));
+console.log(JSON.stringify({ root, profile, claudeConfig, bin }));

@@ -175,4 +175,21 @@ public sealed class CommandLineTests : IDisposable
     [WindowsFact]
     public void Cmd_built_ins_still_run_through_cmd() =>
         Assert.Contains("/d /v:off /s /c \"echo hi\"", CommandLineResolver.Resolve("echo hi", Env(onPath)));
+
+    [Fact]
+    public void The_app_s_LLAMATREE_SESSION_variables_are_set_in_sessions_without_their_prefix()
+    {
+        var env = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["PATH"] = @"C:\Windows", ["LLAMATREE_SESSION_STALE"] = "x" };
+        var own = new System.Collections.Hashtable
+        {
+            ["LLAMATREE_SESSION_PATH"] = @"D:\Demo\bin;C:\Windows",
+            ["LLAMATREE_SESSION_CLAUDE_CONFIG_DIR"] = @"D:\Demo\config",
+            ["LLAMATREE_SESSION_"] = "no name: ignored",
+            ["OTHER"] = "not passed on",
+        };
+        SessionEnvironment.ApplyOverrides(env, own);
+        Assert.Equal(@"D:\Demo\bin;C:\Windows", env["PATH"]);
+        Assert.Equal(@"D:\Demo\config", env["CLAUDE_CONFIG_DIR"]);
+        Assert.DoesNotContain(env.Keys, k => k.StartsWith("LLAMATREE_SESSION_") || k == "OTHER" || k == "");
+    }
 }

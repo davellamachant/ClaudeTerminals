@@ -65,8 +65,11 @@ await js('setFontSize(17);');
 await js(`setThemePref('dark'); accent.choice = 'purple'; store.set('accentColour', 'purple'); applyAccent();`);
 
 // Let every session start, the "working" ones spin, and web-frontend reach its permission prompt.
+// Saved Claude sessions start when they're first opened; here they all start at once.
 await js(`
-  for (let i = 0; i < 60 && !(state.sessions.length === 6 && state.sessions.every((s) => s.running && s.git)); i++)
+  for (let i = 0; i < 60 && state.sessions.length < 6; i++) await new Promise((r) => setTimeout(r, 500));
+  for (const s of state.sessions) if (s.startsOnOpen) startSession(s);
+  for (let i = 0; i < 60 &&!(state.sessions.length === 6 && state.sessions.every((s) => s.running && s.git)); i++)
     await new Promise((r) => setTimeout(r, 500));
 `);
 await sleep(13_000);
@@ -78,6 +81,8 @@ const reset = `
   resetDock();   // one group of side-panel tabs, Git Changes open
   if (state.gitWidth !== 400) { state.gitWidth = 400; applyGitVisibility(); layout(true); }
   showAllProjects();
+  for (const n of notices.list) notices.dismissed.add(n.id);   // no tip, offer or news along the top (not saved)
+  renderNotice();
 `;
 
 // 1. Overview: Inventory unticked to show the project toggles; the other projects and Unknown at once.
@@ -113,7 +118,9 @@ await shot('history');
 await js(`${reset} showGit('checkout');
   showAddDialog('resume');
   for (let i = 0; i < 20 && !document.querySelector('.conv-item'); i++) await new Promise((r) => setTimeout(r, 200));
-  document.querySelectorAll('.conv-item')[1]?.click();`);
+  const pick = document.querySelectorAll('.conv-item:not(.open)')[0];
+  pick?.click();
+  document.querySelector('.conv-item.selected')?.scrollIntoView({ block: 'center' });`);   // one that isn't already open in a session
 await shot('resume');
 
 // 6. The conversation rail beside the open terminal, with the hover card for an earlier prompt (shown as hovering does).
@@ -148,7 +155,8 @@ await js(`${reset} expand('checkout');
 await shot('docking');
 
 // 7. The light theme, on the Conversation tab: the whole conversation as text, opened at an earlier prompt.
-await js(`${reset} setThemePref('light'); expand('checkout');
+await js(`${reset} setThemePref('light'); if (!$('#modalHost').hidden) closeModal();   // not "Update Claude's colours?"
+  expand('checkout');
   openConversation(state.byId.get('checkout'), 1);
   for (let i = 0; i < 20 && !document.querySelector('.chat-turn.filled'); i++) await new Promise((r) => setTimeout(r, 250));
   await new Promise((r) => setTimeout(r, 800));`);
