@@ -23,7 +23,13 @@ Run this in PowerShell:
 powershell -c "irm https://github.com/LlamachantTechnology/LlamaTree/releases/latest/download/install.ps1 | iex"
 ```
 
-It downloads the latest installer, checks that it's ours (it must match the release's checksums signed with our code signing certificate, and carry our own signature, *Llamachant Technology Ltd*), and installs it silently for your account. No administrator rights are needed. The script is in [tools/install](https://github.com/LlamachantTechnology/LlamaTree/tree/main/tools/install) if you'd like to read it first.
+It downloads the latest installer, checks that it's ours (it must match the release's checksums signed with our code signing certificate, and carry our own signature, *Llamachant Technology Ltd*), and installs it silently for your account. No administrator rights are needed. When it's done, it opens LlamaTree (not from an administrator window, so the app doesn't run as administrator; then start it from the Start menu). To install without opening it, for example in a script, set `LLAMATREE_NO_LAUNCH=1` first:
+
+```powershell
+$env:LLAMATREE_NO_LAUNCH = '1'; irm https://github.com/LlamachantTechnology/LlamaTree/releases/latest/download/install.ps1 | iex
+```
+
+The script is in [tools/install](https://github.com/LlamachantTechnology/LlamaTree/tree/main/tools/install) if you'd like to read it first.
 
 Or download `LlamaTree-Setup-<version>.exe` from the [latest release](https://github.com/LlamachantTechnology/LlamaTree/releases/latest) and run it. It also installs for your account only, and later versions install themselves from inside the app (see [Updates](#updates)).
 
@@ -41,6 +47,12 @@ It downloads the latest release and checks that it's ours: it must match the rel
 
 ```sh
 curl -fsSL https://github.com/LlamachantTechnology/LlamaTree/releases/latest/download/install.sh | LLAMATREE_INSTALL=tar sh
+```
+
+When it's done, it opens LlamaTree, if you're at a desktop. Over SSH, without a display, or when it's run as root, it says how to start it instead. To install without opening it, set `LLAMATREE_NO_LAUNCH=1`:
+
+```sh
+curl -fsSL https://github.com/LlamachantTechnology/LlamaTree/releases/latest/download/install.sh | LLAMATREE_NO_LAUNCH=1 sh
 ```
 
 The script is in [tools/install](https://github.com/LlamachantTechnology/LlamaTree/tree/main/tools/install) if you'd like to read it first.
