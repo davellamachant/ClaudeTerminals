@@ -27,10 +27,16 @@ namespace LlamaTree.Themes;
 /// may change it with the slider in a terminal's corner; null keeps the terminals solid, with no slider.
 /// </param>
 /// <param name="Version">"version" in its file (major.minor.patch), as themes from Get themes have; null if it has none.</param>
+/// <param name="Floor">
+/// The theme's own floor: a script that draws the window's floor, or null for none. It's never run on the app's page: the
+/// page runs it in a worker inside a sandboxed frame with no network, storage or way to navigate, and gives it only the
+/// window's size, the theme's colours and how many sessions are in each state (see themeFloor in app.js, and
+/// docs/customize.md#a-floor-of-its-own).
+/// </param>
 internal sealed record ThemeInfo(string Id, string Name, string Base, string? Font, bool Glow, bool Grid, bool Rain, bool Monochrome, string? Cursor, ThemeAccent? Accent,
     IReadOnlyList<ThemeAccentChoice> Accents,
     IReadOnlyDictionary<string, string> Colors, IReadOnlyDictionary<string, string> Terminal, IReadOnlyDictionary<string, string> Diff,
-    bool BuiltIn, int? TerminalBackground = null, string? Version = null);
+    bool BuiltIn, int? TerminalBackground = null, string? Version = null, string? Floor = null);
 
 /// <param name="Line">Lines, ticks and highlights: readable on the theme's background.</param>
 /// <param name="Strong">Fills that carry white text: active tabs, buttons, menus.</param>
@@ -44,14 +50,18 @@ internal sealed record ThemeAccentChoice(string Name, string Color);
 /// <c>{ "name": "Nerds", "base": "dark", "font": "Cascadia Mono", "glow": true, "monochrome": true, "accent": { "line": "#39ff6a", "strong": "#0b6b26" },
 /// "colors": { "chrome": "#050a06", … }, "terminal": { "background": "#020703", … }, "diff": { "insertedLine": "#1a5a2a55", … } }</c>.
 /// A theme is only data: names the app knows and colour values it checks, so a theme can't restyle the page any other
-/// way, or load anything.
+/// way, or load anything. Its one piece of code, a floor (<see cref="ThemeInfo.Floor"/>), is never run on the page.
 /// </summary>
 internal static partial class ThemeCatalog
 {
     /// <summary>The names a theme can't take: the app's own choices in the theme menu.</summary>
     private static readonly HashSet<string> Reserved = ["system", "light", "dark"];
 
-    internal const int MaxFileBytes = 64 * 1024;
+    /// <summary>How long a theme's floor script can be, in characters.</summary>
+    internal const int MaxFloorChars = 256 * 1024;
+
+    /// <summary>How large a theme file can be: its colours, and a floor script of up to <see cref="MaxFloorChars"/>.</summary>
+    internal const int MaxFileBytes = 64 * 1024 + MaxFloorChars * 3;   // a script's characters are up to 3 bytes each in UTF-8
 
     /// <summary>How many accent colours a theme can suggest.</summary>
     public const int MaxAccents = 8;
@@ -213,6 +223,13 @@ internal static partial class ThemeCatalog
             else problems.Add($"{fileName}: terminalBackground is a whole number from 0 (see-through) to 100 (solid), or left out.");
         }
 
+        string? floor = null;
+        if (e.TryGetProperty("floor", out var fl))
+        {
+            if (fl.ValueKind == JsonValueKind.String && fl.GetString() is { Length: > 0 and <= MaxFloorChars } script) floor = script;
+            else problems.Add($"{fileName}: floor is the floor's script, as a string of up to {MaxFloorChars / 1024}K characters, or left out.");
+        }
+
         ThemeAccent? accent = null;
         if (e.TryGetProperty("accent", out var a) && a.ValueKind == JsonValueKind.Object)
         {
@@ -226,7 +243,7 @@ internal static partial class ThemeCatalog
             Colors(e, "terminal", TerminalNames, CssColor(), fileName, problems),
             Colors(e, "diff", DiffNames, HexColor(), fileName, problems),
             builtIn, terminalBackground,
-            Str(e, "version") is { } v && Plugins.PluginCatalog.VersionPattern().IsMatch(v) ? v : null);
+            Str(e, "version") is { } v && Plugins.PluginCatalog.VersionPattern().IsMatch(v) ? v : null, floor);
     }
 
     /// <summary>

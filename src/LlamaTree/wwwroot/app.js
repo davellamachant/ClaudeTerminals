@@ -781,7 +781,7 @@ function themeLook() {
   if (!themes.list.includes(t) && t !== themePreview) return t;   // the kept look
   const made = t.monochrome ? monochromeLook(accentColour(), t.base === 'light') : {};
   return {
-    id: t.id, name: t.name, base: t.base, font: t.font, glow: t.glow, grid: !!t.grid, rain: !!t.rain, monochrome: t.monochrome, cursor: t.cursor ?? null, terminalBackground: t.terminalBackground ?? null,
+    id: t.id, name: t.name, base: t.base, font: t.font, glow: t.glow, grid: !!t.grid, rain: !!t.rain, monochrome: t.monochrome, cursor: t.cursor ?? null, terminalBackground: t.terminalBackground ?? null, floor: t.floor ?? null,
     colors: { ...made.colors, ...t.colors }, terminal: { ...made.terminal, ...t.terminal }, diff: { ...made.diff, ...t.diff },
     accent: t.accent ?? made.accent ?? null,
   };
@@ -858,6 +858,219 @@ function rainFrame() {
 }
 addEventListener('resize', () => rainSize());
 
+// ---- A theme's own floor ---------------------------------------------------------------------------------------------
+// A theme can bring a floor of its own: a script ("floor" in its file) that draws the window's floor, as the rain does.
+// That's someone else's code, so it never runs on this page. It runs in a worker inside a frame that's sandboxed with
+// nothing but scripts (no same origin, so no storage, cookies or this page; no forms, popups or navigating the window),
+// and the frame's page, written here, allows no network at all: no fetch, sockets, images, fonts, frames or scripts
+// from anywhere. A worker has no page, so nothing in it can navigate or reach the frame's document either. And the
+// floor is told nothing worth taking: the window's size, the theme's colours, whether to keep still, and how many
+// sessions are in each state; never their names, folders or anything they show. It can't take the pointer or the
+// keyboard (inert, and under everything), and what it sends back is only how it's doing.
+// The app keeps it in check from out here: paused while the window's hidden, stopped and taken away if it stops
+// answering (a script that never lets go), or if it fails, and gone altogether with Show the theme's own floor off.
+const floor = { on: store.get('themeFloors', true), frame: null, script: null, failed: null, ping: 0, lastPong: 0, timer: null, paused: false, sessions: '' };
+const FLOOR_COLOURS = ['accent', 'accent-strong', 'chrome', 'chrome-2', 'chrome-3', 'panel', 'panel-2', 'border', 'border-soft', 'border-strong',
+  'text', 'text-dim', 'text-faint', 'text-strong', 'ok', 'working', 'attention', 'asking', 'danger', 'terminal-bg', 'link'];
+const FLOOR_PING_MS = 2000, FLOOR_DEAD_MS = 7000;
+/** Whether the theme's own floor is on the window: it has one, it's wanted, and it hasn't failed. */
+const floorShown = (look = themeLook()) => !!(floor.on && typeof look?.floor === 'string' && look.floor && look.floor !== floor.failed);
+
+/**
+ * What runs in the floor's worker, around the theme's script: floor({ layout(ctx, info), draw(ctx, now, info), fps })
+ * registers the floor; this draws it at up to its fps (30 if it doesn't say, 60 at most), lays it out again when the
+ * window's size changes, draws once and stops when it's to keep still, and answers the frame's pings. Written as text:
+ * it's put in the worker with the theme's script, and never runs here.
+ */
+const FLOOR_WORKER = `(() => {
+  let handlers = null, canvas = null, ctx = null, info = null, paused = false, timer = 0, last = -1e9;
+  const later = self.requestAnimationFrame ? (f) => requestAnimationFrame(f) : (f) => setTimeout(() => f(performance.now()), 16);
+  const cancel = self.cancelAnimationFrame ? (t) => cancelAnimationFrame(t) : (t) => clearTimeout(t);
+  self.floor = (h) => { if (!handlers && h && typeof h.draw === 'function') handlers = h; };
+  const fps = () => Math.min(60, Math.max(1, Number(handlers && handlers.fps) || 30));
+  const call = (name, ...args) => {
+    const f = handlers && handlers[name];
+    if (typeof f !== 'function') return;
+    try { f.call(handlers, ctx, ...args); } catch (e) { handlers = null; postMessage({ problem: name + ': ' + (e && e.message || e) }); }
+  };
+  const size = () => {
+    canvas.width = Math.max(1, Math.round(info.width * info.dpr));
+    canvas.height = Math.max(1, Math.round(info.height * info.dpr));
+    ctx.setTransform(info.dpr, 0, 0, info.dpr, 0, 0);
+    call('layout', info);
+  };
+  const tick = (now) => {
+    timer = 0;
+    if (paused || !handlers) return;
+    if (now - last >= 1000 / fps() - 2) { last = now; call('draw', now, info); }
+    if (!info.still) timer = later(tick);
+  };
+  const run = () => { if (!timer && !paused) timer = later(tick); };
+  addEventListener('message', (e) => {
+    const m = e.data;
+    if (m === 'ping') { postMessage('pong'); return; }
+    if (!m || typeof m !== 'object') return;
+    if (m.type === 'start' && !canvas) {
+      canvas = m.canvas; ctx = canvas.getContext('2d'); info = m.info;
+      if (!handlers) { postMessage({ problem: 'the script never called floor({ draw })' }); return; }
+      size(); run();
+    } else if (m.type === 'info' && canvas) {
+      const resized = m.info.width !== info.width || m.info.height !== info.height || m.info.dpr !== info.dpr;
+      info = m.info;
+      if (resized) size();
+      if (info.still) { last = -1e9; run(); }
+    } else if (m.type === 'pause') { paused = true; if (timer) cancel(timer); timer = 0; }
+    else if (m.type === 'resume') { paused = false; run(); }
+  });
+})();
+`;
+
+/**
+ * The frame's own script (this page's code, not the theme's), run in the frame as text: it starts the worker with the
+ * floor's code, hands it the canvas, passes on only start, info, pause, resume and ping, and stops the worker if it
+ * fails or stops answering.
+ */
+function floorFrameScript(code) {
+  const canvas = document.querySelector('canvas');
+  let worker = null, lastPong = Date.now();
+  const tell = (m) => parent.postMessage(m, '*');
+  const stop = (why, detail) => { if (worker) worker.terminate(); worker = null; tell({ floor: 'stopped', why, detail: String(detail ?? '').slice(0, 300) }); };
+  addEventListener('message', (e) => {
+    if (e.source !== parent) return;
+    const m = e.data;
+    if (!m || typeof m !== 'object') return;
+    if (m.type === 'start' && !worker) {
+      if (typeof canvas.transferControlToOffscreen !== 'function' || typeof Worker !== 'function') { tell({ floor: 'stopped', why: 'unsupported' }); return; }
+      const offscreen = canvas.transferControlToOffscreen();
+      worker = new Worker(URL.createObjectURL(new Blob([code], { type: 'text/javascript' })));
+      worker.onmessage = (w) => { if (w.data === 'pong') lastPong = Date.now(); else if (w.data && w.data.problem) stop('error', w.data.problem); };
+      worker.onerror = (w) => { w.preventDefault(); stop('error', w.message); };
+      lastPong = Date.now();
+      worker.postMessage({ type: 'start', canvas: offscreen, info: m.info }, [offscreen]);
+    } else if (!worker) {
+      // nothing running: nothing to pass on
+    } else if (m.type === 'ping') {
+      if (Date.now() - lastPong > 5000) { stop('busy'); return; }
+      worker.postMessage('ping');
+      tell({ floor: 'pong' });
+    } else if (m.type === 'info') worker.postMessage({ type: 'info', info: m.info });
+    else if (m.type === 'pause' || m.type === 'resume') worker.postMessage({ type: m.type });
+  });
+  tell({ floor: 'ready' });
+}
+
+/**
+ * The floor frame's page: a canvas, and the frame's script with the worker's code, under a policy that allows that one
+ * script (by a nonce made for it), workers made from it, its one style, and nothing else from anywhere.
+ */
+function floorPage(script) {
+  const nonce = [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, '0')).join('');
+  // As JSON in the script, with every < escaped, so nothing in the theme's code can end the script element.
+  const code = JSON.stringify(FLOOR_WORKER + '\n' + script + '\n').replace(/</g, '\\u003c');
+  return '<!doctype html><html><head><meta charset="utf-8">'
+    + `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; worker-src blob:">`
+    + `<style nonce="${nonce}">html,body{margin:0;height:100%;overflow:hidden;background:transparent}canvas{display:block;width:100%;height:100%}</style>`
+    + `</head><body><canvas></canvas><script nonce="${nonce}">(${floorFrameScript.toString()})(${code});<\/script></body></html>`;
+}
+
+/** What the floor is told: the window's size, whether to keep still, the theme's colours, and how many sessions are in each state. */
+function floorInfo() {
+  const css = getComputedStyle(document.documentElement);
+  return {
+    width: innerWidth, height: innerHeight, dpr: devicePixelRatio || 1,
+    still: matchMedia('(prefers-reduced-motion: reduce)').matches,
+    colors: Object.fromEntries(FLOOR_COLOURS.map((n) => [n, css.getPropertyValue('--' + n).trim()]).filter(([, v]) => v)),
+    sessions: floorSessions(),
+  };
+}
+
+/** How many sessions are in each state, and in all: only counts. */
+function floorSessions() {
+  const counts = { working: 0, waiting: 0, asking: 0, idle: 0, stopped: 0, total: 0 };
+  const names = { working: 'working', attention: 'waiting', asking: 'asking', running: 'idle', exited: 'stopped' };
+  for (const s of state.sessions) {
+    let cls = 'exited';
+    try { cls = statusClass(s); } catch { /* one not filled in yet counts as stopped */ }
+    counts[names[cls] ?? 'idle']++;
+    counts.total++;
+  }
+  return counts;
+}
+
+const floorSend = (m) => floor.frame?.contentWindow?.postMessage(m, '*');
+
+/** Puts the theme's floor on the window, or takes it away: when the theme has one, and Show the theme's own floor is on. */
+function themeFloor(look) {
+  const script = floorShown(look) ? look.floor : null;   // one that failed stays off until it's turned on again, or the next start
+  if (script && script === floor.script && floor.frame) return;   // the same floor: applyTheme sends it the new colours
+  floorStop();
+  if (!script) return;
+  floor.script = script;
+  floor.lastPong = Date.now();
+  floor.paused = false;
+  const frame = h('iframe', { id: 'themeFloor', sandbox: 'allow-scripts', referrerpolicy: 'no-referrer', 'aria-hidden': 'true', tabindex: '-1', title: '' });
+  frame.inert = true;
+  frame.srcdoc = floorPage(script);
+  floor.frame = frame;
+  document.body.prepend(frame);
+  floor.timer = setInterval(floorCheck, FLOOR_PING_MS);
+}
+
+function floorStop() {
+  clearInterval(floor.timer);
+  floor.timer = null;
+  floor.frame?.remove();
+  floor.frame = floor.script = null;
+  floor.sessions = '';
+}
+
+/** Every couple of seconds: paused while the window's hidden; new counts when they change; and still answering? */
+function floorCheck() {
+  if (!floor.frame) return;
+  if (Date.now() - floor.lastPong > FLOOR_DEAD_MS) { floorFailed('busy'); return; }
+  floorPause(document.hidden);
+  floorSend({ type: 'ping' });
+  const counts = JSON.stringify(floorSessions());
+  if (counts !== floor.sessions) { floor.sessions = counts; floorSend({ type: 'info', info: floorInfo() }); }
+}
+
+function floorPause(hidden) {
+  if (!floor.frame || hidden === floor.paused) return;
+  floor.paused = hidden;
+  floorSend({ type: hidden ? 'pause' : 'resume' });
+}
+
+/** The floor failed or stopped answering: it's taken away, and said once. */
+function floorFailed(why, detail) {
+  const name = themeLook()?.name ?? 'The theme';
+  floor.failed = floor.script;
+  floorStop();
+  markTheme();   // without it: the window's floor as the theme's colours have it
+  if (why === 'unsupported') return;   // this web view can't run one: the theme's colours are on, without it
+  toast(why === 'busy'
+    ? `${name}'s floor stopped answering, so it's been taken away. Choose the theme again to try it once more.`
+    : `${name}'s floor ran into a problem and has been taken away${detail ? `: ${detail}` : '.'}`, true);
+}
+
+addEventListener('message', (e) => {
+  if (!floor.frame || e.source !== floor.frame.contentWindow) return;
+  const m = e.data;
+  if (!m || typeof m !== 'object') return;
+  if (m.floor === 'ready') { floor.lastPong = Date.now(); floorSend({ type: 'start', info: floorInfo() }); }
+  else if (m.floor === 'pong') floor.lastPong = Date.now();
+  else if (m.floor === 'stopped') floorFailed(String(m.why), typeof m.detail === 'string' ? m.detail : '');
+});
+addEventListener('resize', () => { if (floor.frame) floorSend({ type: 'info', info: floorInfo() }); });
+document.addEventListener('visibilitychange', () => floorPause(document.hidden));
+
+/** Show the theme's own floor, on or off (kept). */
+function setThemeFloors(on) {
+  floor.on = on;
+  store.set('themeFloors', on);
+  floor.failed = null;
+  markTheme();
+}
+
 // ---- Terminal background --------------------------------------------------------------------------------------------
 // How solid the terminals are over the window's floor: the tile paints the terminal's background at --terminal-veil (see
 // .tile in app.css). A theme that lets you see through says how solid they start ("terminalBackground": Matrix's 42 shows
@@ -878,7 +1091,7 @@ function veilAmount() {
   return Number.isFinite(v) ? Math.min(100, Math.max(0, v)) : 100;
 }
 /** Whether the terminals' own canvas must be see-through: over a floor, or under a veil of less than 100%. */
-const seeThrough = (look = themeLook()) => !!(look?.grid || look?.rain) || veilAmount() < 100;
+const seeThrough = (look = themeLook()) => !!(look?.grid || look?.rain || floorShown(look)) || veilAmount() < 100;
 /**
  * Puts the amount on the page (yours, else the theme's own; none when the theme keeps the terminals solid), marks the
  * page while the terminals are see-through, and while the theme has a slider (data-veil-slider shows it).
@@ -947,8 +1160,11 @@ function markTheme(look = themeLook()) {
   else delete root.dataset.grid;
   if (look?.rain) root.dataset.rain = '';
   else delete root.dataset.rain;
+  if (floorShown(look)) root.dataset.floor = '';
+  else delete root.dataset.floor;
   markVeil(look);   // after the floor is marked: whether the terminals are see-through depends on it
   digitalRain(!!look?.rain);
+  themeFloor(look);
 }
 markTheme(themes.last?.id === theme.pref ? themes.last : null);   // the accent isn't known yet: last time's look
 
@@ -6273,6 +6489,7 @@ function applyTheme(before = null) {
   if (window.monaco) monaco.editor.setTheme(diffTheme(look));
   applyAccent();
   rainColours();   // the rain takes the accent, which is only now on the page
+  if (floor.frame) floorSend({ type: 'info', info: floorInfo() });   // and so does a theme's own floor
   for (const f of pluginFrames.values()) if (f.ready) postPluginTheme(f.frame);   // one still loading gets it on its load
   // A theme's window and title bar take its own background; Light and Dark keep Windows' own.
   post({ type: 'theme', light: isLight(), background: look?.colors.chrome ?? null });
@@ -6296,6 +6513,7 @@ function offerClaudeRestart() {
 
 function setThemePref(pref) {
   const before = themeName();
+  floor.failed = null;   // choosing a theme again tries its floor again
   themePreview = null;
   theme.pref = pref;
   store.set('theme', pref);
@@ -6944,6 +7162,7 @@ function themeMenu(x, y) {
     ...themes.list.map((t) => ({ icon: themeSwatch(t), label: t.name, checked: theme.pref === t.id, kbd: t.builtIn ? '' : 'Yours', action: () => setThemePref(t.id) })),
     themes.problems.length > 0 && { icon: 'warn', label: `${themes.problems.length} theme${themes.problems.length === 1 ? '' : 's'} not loaded`, kbd: 'Why?', action: () => toast(themes.problems.join('\n'), true) },
     '~',
+    own?.floor && { label: `Show ${own.name}’s own floor`, checked: floor.on, action: () => setThemeFloors(!floor.on) },
     { icon: 'save', label: 'Save as a new theme…', action: showSaveThemeDialog },
     { icon: 'bag', label: 'Get themes…', action: () => openGallery('themes') },
     { icon: 'folder', label: 'Open the themes folder', action: () => request('themes.openFolder') },
@@ -8161,6 +8380,8 @@ function galleryThemeCard(e) {
         : have && h('span', { class: 'chip gallery-have', title: `Version ${e.installed} is in your themes folder` }, iconEl('markAllow'), e.state === 'update' ? `${e.installed} installed` : 'Installed')),
     e.description && h('p', { class: 'gallery-about' }, e.description),
     effects.length > 0 && h('ul', { class: 'gallery-facts dim' }, h('li', {}, 'With ' + effects.join(', '))),
+    t.floor && h('p', { class: 'gallery-facts dim', title: 'Its floor is its own code. It runs sandboxed: no network, no storage, nothing of this window, and it’s told only the window’s size, the theme’s colours and how many sessions are in each state.' },
+      'Draws a floor of its own: its own code, run sandboxed, with no network and nothing of your sessions but how many there are.'),
     note && h('p', { class: 'gallery-note' }, note),
     h('footer', {},
       (e.state === 'install' || e.state === 'update') && h('button', { class: 'btn primary', disabled: busy, onclick: () => installTheme(e) },

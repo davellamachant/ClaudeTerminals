@@ -56,8 +56,46 @@ A theme can set three colours or all of them:
 - **`rain`:** `true` has glyphs rain down the window's floor in the accent colour, as Matrix does, behind the title bar, tabs and panels and, dimmed, under the terminals' text (Matrix sets `terminalBackground` to 42 for this); editors, menus and cards keep their own backgrounds. With Windows' reduce-motion setting on, the rain stands still.
 - **`terminalBackground`:** a whole number from 0 (see-through) to 100 (solid): how solid the terminals start over the window's floor, and that you may change it with the slider in each terminal's corner. Matrix has `42`, so its rain shows through; Tron has `100`, solid until you slide it. Leave it out to keep the terminals solid, with no slider.
 - **`cursor`:** `"light-cycle"` puts a light cycle beside the terminals' cursor, as in the Tron themes: it rides a little to the right of the cursor (which stays a blinking bar in the cursor colour, so you can see where you're typing and whether the terminal has focus; the cycle dims while it hasn't), glows in that colour and leaves a ribbon of light fading behind it as it moves, turning at right angles when it changes line. Leave it out for the plain cursor. With Windows' reduce-motion setting on, the glow stays and the ribbon doesn't.
+- **`floor`:** a floor of the theme's own: a script that draws the window's floor (see [below](#a-floor-of-its-own)).
 
-A theme is only data: the app takes the names above and checks each value, so it can't restyle anything else or load anything. A file it can't use, or a value it leaves out, is listed under *Why?* in the palette menu.
+A theme is only data: the app takes the names above and checks each value, so it can't restyle anything else or load anything. Its one piece of code, a `floor`, runs sandboxed, apart from the app (below). A file it can't use, or a value it leaves out, is listed under *Why?* in the palette menu.
+
+### A floor of its own
+
+A theme can draw the window's floor itself, the way Matrix's rain does: an animated scene behind the title bar, tabs and panels, and under the terminals as far as `terminalBackground` lets it show. `floor` is the script, as one string in the theme's file, of up to 256K characters:
+
+```js
+let stars = [];
+floor({
+  fps: 30,                        // how often draw is called: 30 if left out, 60 at most
+  layout(ctx, info) {             // at the start, and when the window's size changes
+    stars = Array.from({ length: 200 }, () => ({ x: Math.random() * info.width, y: Math.random() * info.height }));
+  },
+  draw(ctx, now, info) {          // each frame: now is in milliseconds
+    ctx.fillStyle = info.colors.chrome;
+    ctx.fillRect(0, 0, info.width, info.height);
+    ctx.fillStyle = info.colors.accent;
+    for (const s of stars) ctx.fillRect(s.x, (s.y + now / 50) % info.height, 1.5, 1.5);
+  },
+});
+```
+
+`ctx` is a [2D canvas context](https://developer.mozilla.org/docs/Web/API/OffscreenCanvasRenderingContext2D) the size of the window, in CSS pixels (the app scales it for the screen). `info` holds:
+
+- `width`, `height` and `dpr` (the screen's pixels per CSS pixel);
+- `still`: `true` while Windows' reduce-motion setting is on. `draw` is then called once (and again when anything in `info` changes) rather than every frame, so draw a picture that stands still;
+- `colors`: the theme's colours by name, with the accent colour picked: `accent`, `accent-strong`, `chrome`, `chrome-2`, `chrome-3`, `panel`, `panel-2`, `border`, `border-soft`, `border-strong`, `text`, `text-dim`, `text-faint`, `text-strong`, `ok`, `working`, `attention`, `asking`, `danger`, `terminal-bg`, `link`;
+- `sessions`: how many sessions are `working`, `waiting` (done while you were away), `asking` (needing your answer), `idle` and `stopped`, and the `total`. Only the counts: never a session's name, folder or anything it shows.
+
+**What a floor can't do.** A floor is someone else's code, so it never runs on the app's page. It runs in a web worker inside a sandboxed frame of its own, and:
+
+- **It has no network.** The frame allows no requests of any kind: no fetch, sockets, scripts, images or fonts from anywhere. Everything it draws is drawn by its own code.
+- **It sees nothing of the app.** Not the page, its storage, your sessions' names or output, files, or other themes and plugins. It has no storage of its own either. It's told only what's listed above.
+- **It can't take the pointer or the keyboard**, open windows, or navigate anywhere. It sits under everything.
+- **It's kept in check.** It's paused while the window is hidden. If it stops answering for a few seconds (a loop that never lets go) or its script fails, it's taken away and the app says so. The theme stays on without it.
+- **You can turn it off.** *Show <theme>'s own floor* in the palette menu, under the themes.
+
+*Get themes…* marks a theme with a floor on its card. A theme from LlamaTree-Themes with a floor has also been reviewed there before it's published.
 
 ## Plugins
 
