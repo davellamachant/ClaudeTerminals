@@ -1003,6 +1003,18 @@ body.no-nav-branches #navList .tab-branch { display: none; }   /* Layout ▸ Sho
 .tab-branch span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tab-branch svg.ic { width: 11px; height: 11px; flex: none; }
 #navList .session-tab .key { margin-left: auto; min-width: 40px; text-align: right; }
+/* A narrow bar keeps the name: the shortcut gives up its room first, then the agent and server marks, and only then the
+   name; narrower still, they're hidden rather than shown cut off. The bar is a container for that (see #navBar). */
+#navBar { container: nav-bar / inline-size; }
+#navList .session-tab .key { flex: 0 1000000000 40px; min-width: 0; }   /* weights far apart, so each gives way entirely before the next: so far that what the next would give is less than a layout unit */
+#navList .session-tab .session-marks { flex: 0 100000 auto; min-width: 0; }
+/* Whole or not at all: what doesn't fit wraps to a second line, which is cut off. It wraps after the ::before, a
+   zero-width space (an empty one isn't laid out, so there'd be nothing to wrap after); nowrap keeps Ctrl+1 whole rather
+   than broken at its +. */
+#navList .session-tab :is(.key, .session-marks) { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; height: 15px; overflow: hidden; white-space: nowrap; }
+#navList .session-tab :is(.key, .session-marks)::before { content: '\200b'; }
+@container nav-bar (max-width: 215px) { #navList .session-tab .key { display: none; } }
+@container nav-bar (max-width: 180px) { #navList .session-tab .session-marks { display: none; } }
 /* Which agent a session runs and where, before its Ctrl+N (sessionMarks in app.js) */
 .session-marks { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; flex: none; }
 #navList .session-marks + .key { margin-left: 2px; }   /* the marks take the free space, so they line up down the list */
