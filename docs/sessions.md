@@ -62,7 +62,13 @@ Tick *Don't ask again* to always do one or the other; the version menu (top righ
 
 ### Restarting
 
-After a restart, the sessions come back, each in its own conversation. A Claude or Codex session brought back after a restart waits until you first open it (its tile says *Starts when you open it*; pressing Enter in it works too). Its start-up context, such as hooks, the date and Git status, is then fresh when you use the session, and a session you don't open costs nothing. A message from another session starts it too, so the sender isn't left waiting. New sessions, and sessions running other commands (a dev server, say), start straight away.
+After a restart, the sessions come back, each in its own conversation. A Claude or Codex session brought back after a restart waits until you first click on its terminal (its tile says *Starts when you click it*; pressing Enter in it works too). Its start-up context, such as hooks, the date and Git status, is then fresh when you use the session, and a session you don't click on costs nothing. A message from another session starts it too, so the sender isn't left waiting. New sessions, and sessions running other commands (a dev server, say), start straight away.
+
+To have a Claude or Codex session start as soon as LlamaTree opens instead, set **Starts** when you add it in *New session*, or later in its ⋯ menu › *Rename / edit command…*:
+
+- **When you first click on its terminal**: the default, as above.
+- **When LlamaTree opens, if its terminal was running when LlamaTree last closed**: brings back the sessions you were using, whether you stopped them by closing LlamaTree, signing out or restarting the computer. A session you stopped yourself, or whose Claude you quit (`/exit`), waits to be clicked on as usual.
+- **When LlamaTree opens, always**.
 
 ## Conversation rail and tab
 
