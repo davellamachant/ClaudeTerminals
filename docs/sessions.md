@@ -32,6 +32,8 @@ How working, waiting and asking move is up to you: the palette button › **Stat
 | **Calm** | a ring with a gap turns slowly | a dot in a ring, fading gently | a pink diamond that slowly swells |
 | **Signal** | a ring fills round a small core | a square light blinking | a dot in a ring that shakes |
 
+A theme can come with status dots of its own (see [Themes and plugins](customize.md#status-dots-of-its-own)). While it's on, they're one more card, first in **Status dots**, and they're used until you pick another style. That choice holds for that theme only: your own style comes back with every other theme, and picking the theme's card again brings its dots back.
+
 With your OS's animation effects turned off, the dots stay still, and in every style their shapes still tell the states apart.
 
 ## Each session has its own conversation

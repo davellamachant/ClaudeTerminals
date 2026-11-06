@@ -34,10 +34,11 @@ namespace LlamaTree.Themes;
 /// docs/customize.md#a-floor-of-its-own).
 /// </param>
 /// <param name="Cycle">The light cycle's own picture and options (see <see cref="ThemeCycle"/>), or null for the app's own.</param>
+/// <param name="Dots">Its own status dots (see <see cref="ThemeDots"/>), or null for none.</param>
 internal sealed record ThemeInfo(string Id, string Name, string Base, string? Font, bool Glow, bool Grid, bool Rain, bool Monochrome, string? Cursor, ThemeAccent? Accent,
     IReadOnlyList<ThemeAccentChoice> Accents,
     IReadOnlyDictionary<string, string> Colors, IReadOnlyDictionary<string, string> Terminal, IReadOnlyDictionary<string, string> Diff,
-    bool BuiltIn, int? TerminalBackground = null, string? Version = null, string? Floor = null, ThemeCycle? Cycle = null);
+    bool BuiltIn, int? TerminalBackground = null, string? Version = null, string? Floor = null, ThemeCycle? Cycle = null, ThemeDots? Dots = null);
 
 /// <param name="Line">Lines, ticks and highlights: readable on the theme's background.</param>
 /// <param name="Strong">Fills that carry white text: active tabs, buttons, menus.</param>
@@ -72,7 +73,8 @@ internal static partial class ThemeCatalog
     [
         "chrome", "chrome-2", "chrome-3", "panel", "panel-2", "hover", "hover-strong", "border", "border-soft", "border-strong",
         "text", "text-dim", "text-faint", "text-strong", "focus", "select", "select-inactive", "terminal-bg", "editor-bg",
-        "ok", "working", "attention", "asking", "danger", "danger-fill", "st-m", "st-a", "st-d", "st-r", "st-u",
+        "ok", "working", "attention", "asking", "danger", "danger-fill",
+        "status-ok", "status-working", "status-attention", "status-asking", "st-m", "st-a", "st-d", "st-r", "st-u",
         "info-bg", "info-border", "error-bg", "error-border", "pv-warn-bg", "pv-warn-border", "ico-folder", "ico-file", "graph",
         "ref-bg", "ref-fg", "ref-head-bg", "ref-head-fg", "ref-tag-bg", "ref-tag-fg", "scroll-thumb", "scroll-thumb-hover",
         "tab-border-shown", "tab-border-hover", "tick", "tick-active", "tick-hot", "card-bg", "card-border", "bubble",
@@ -272,7 +274,8 @@ internal static partial class ThemeCatalog
             Colors(e, "terminal", TerminalNames, CssColor(), fileName, problems),
             Colors(e, "diff", DiffNames, HexColor(), fileName, problems),
             builtIn, terminalBackground,
-            Str(e, "version") is { } v && Plugins.PluginCatalog.VersionPattern().IsMatch(v) ? v : null, floor, cursor == null ? null : cycle);
+            Str(e, "version") is { } v && Plugins.PluginCatalog.VersionPattern().IsMatch(v) ? v : null, floor, cursor == null ? null : cycle,
+            ThemeDots.Parse(e, fileName, problems));
     }
 
     /// <summary>
