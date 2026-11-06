@@ -3007,36 +3007,106 @@ function conversationPicker({ directory = null, agent = null, server = null, onP
 // ------------------------------------------------------------------ welcome: no sessions at all
 
 /**
- * With no sessions (the first run, or after closing them all) the empty grid offers the conversations already had with
- * Claude or Codex, latest first: tick any number and open them together, or double-click one to open just it. Read on
- * the way in (again if it's been a minute); the list is only rebuilt when it's read, so redraws keep its ticks and scroll.
+ * With no sessions (the first run, or after closing them all) the empty grid welcomes you, in one of three ways:
+ * - with the conversations already had with Claude or Codex, latest first: tick any number and open them together, or
+ *   double-click one to open just it;
+ * - with neither agent installed, how to install one (it checks again on its own, so installing one shows up here);
+ * - with an agent but no conversations yet, a nudge to start the first session.
+ * What it shows is read on the way in, again when the window comes back to the front, and again every few seconds while
+ * there's nothing to list (the host may still be starting, or an agent being installed). A full list is kept for a
+ * minute, and only rebuilt when it's read, so redraws keep its ticks and scroll.
  */
-const welcome = { at: 0, conversations: [], loading: false, picked: new Set(), project: null };
+const welcome = { at: 0, read: false, installed: null, conversations: [], loading: false, retry: 0, picked: new Set(), project: null };
 const WELCOME_SHOWN = 20;
 
 function renderWelcome(on) {
-  const host = $('#emptyRecent');
-  if (on && !welcome.loading && Date.now() - welcome.at > 60000) {
-    welcome.loading = true;
-    request('conversations', {})
-      .then((r) => { welcome.conversations = (r || []).filter((c) => c.cwd && agentById(c.agent)).slice(0, WELCOME_SHOWN); })
-      .catch(() => { welcome.conversations = []; })
-      .finally(() => {
-        welcome.loading = false;
-        welcome.at = Date.now();
-        const ids = new Set(welcome.conversations.map((c) => c.sessionId));
-        for (const id of welcome.picked) if (!ids.has(id)) welcome.picked.delete(id);
-        buildWelcomeList();
-        renderWelcome(!state.sessions.length);
-      });
-  }
-  const shown = on && welcome.conversations.length > 0;
-  $('#empty').classList.toggle('welcome', shown);   // shows the LlamaTree mark above the title
-  host.hidden = $('#btnResumeEmpty').hidden = !shown;
-  syncWelcomePicked(shown);
-  if (!shown) return;
+  if (on) readWelcome();
+  const known = welcome.installed != null;   // until the host first answers, just the title
+  const noAgents = on && known && !welcome.installed.length;
+  const list = on && !noAgents && welcome.conversations.length > 0;
+  $('#empty').classList.toggle('welcome', on);   // shows the LlamaTree mark above the title
+  if (noAgents && $('#emptyAgents').hidden) buildWelcomeAgents();   // on the way in: a server's window knows it's one by then
+  $('#emptyAgents').hidden = !noAgents;
+  $('#emptyRecent').hidden = $('#btnResumeEmpty').hidden = !list;
+  syncWelcomePicked(list);
+  if (!on) return;
   $('#empty .empty-title').textContent = 'Welcome to LlamaTree';
-  $('#empty .empty-sub').textContent = 'Pick up where you left off: tick the conversations to carry on and open them as sessions, or start a new one.';
+  $('#empty .empty-sub').textContent = !known ? ''
+    : noAgents ? 'Each session runs Claude Code or Codex in a folder of yours. Install one of them to get started.'
+    : list ? 'Pick up where you left off: tick the conversations to carry on and open them as sessions, or start a new one.'
+    : 'Start your first session: pick a folder to work in, and it opens there.';
+}
+
+function readWelcome() {
+  const full = welcome.read && welcome.installed?.length && welcome.conversations.length;
+  if (welcome.loading || Date.now() - welcome.at < (full ? 60000 : 4000)) return;
+  welcome.loading = true;
+  Promise.all([request('agents.installed', {}), request('conversations', {})])
+    .then(([installed, conversations]) => {
+      welcome.read = true;
+      welcome.installed = installed || [];
+      welcome.conversations = (conversations || []).filter((c) => c.cwd && agentById(c.agent)).slice(0, WELCOME_SHOWN);
+    })
+    .catch(() => { welcome.read = false; })
+    .finally(() => {
+      welcome.loading = false;
+      welcome.at = Date.now();
+      const ids = new Set(welcome.conversations.map((c) => c.sessionId));
+      for (const id of welcome.picked) if (!ids.has(id)) welcome.picked.delete(id);
+      buildWelcomeList();
+      if (state.sessions.length) return;
+      renderWelcome(true);
+      // Nothing to list yet: look again soon, while the window is on screen (coming back to it looks at once).
+      clearTimeout(welcome.retry);
+      if (!(welcome.read && welcome.installed.length && welcome.conversations.length))
+        welcome.retry = setTimeout(() => { if (!state.sessions.length && !document.hidden) renderWelcome(true); }, 5000);
+    });
+}
+
+window.addEventListener('focus', () => {
+  if (state.sessions.length) return;
+  welcome.at = 0;   // an agent installed, or a conversation had, while the window was in the background
+  renderWelcome(true);
+});
+
+/**
+ * How to install each agent, from their own setup pages (code.claude.com/docs/en/setup and the openai/codex README):
+ * the one-line installer for this computer's system (both kinds in a server's window, which may be either).
+ */
+const AGENT_INSTALLS = [
+  {
+    name: 'Claude Code', guide: 'https://code.claude.com/docs/en/setup',
+    windows: 'irm https://claude.ai/install.ps1 | iex',
+    unix: 'curl -fsSL https://claude.ai/install.sh | bash',
+  },
+  {
+    name: 'Codex', guide: 'https://github.com/openai/codex',
+    windows: 'powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"',
+    unix: 'curl -fsSL https://chatgpt.com/codex/install.sh | sh',
+  },
+];
+
+function buildWelcomeAgents() {
+  const kinds = machine ? [['windows', 'Windows (PowerShell)'], ['unix', 'macOS or Linux']]
+    : [IS_MAC || IS_LINUX ? ['unix', 'In a terminal'] : ['windows', 'In PowerShell']];
+  const copy = (text, btn) => navigator.clipboard.writeText(text)
+    .then(() => { btn.textContent = 'Copied'; setTimeout(() => { btn.textContent = 'Copy'; }, 1500); })
+    .catch((e) => toast(e.message, true));
+  $('#emptyAgents').replaceChildren(
+    h('div', { class: 'agents-missing' }, machine
+      ? 'Neither Claude Code nor Codex is installed on this server, so its sessions have nothing to run.'
+      : 'Neither Claude Code nor Codex is installed on this computer, so sessions have nothing to run.'),
+    ...AGENT_INSTALLS.map((a) => h('div', { class: 'agent-install' },
+      h('div', { class: 'agent-install-head' }, h('b', {}, a.name),
+        h('a', { href: '#', onclick: (e) => { e.preventDefault(); request('openUrl', { uri: a.guide }).catch((err) => toast(err.message, true)); } }, 'Install guide')),
+      kinds.map(([kind, label]) => {
+        const btn = h('button', { class: 'btn', onclick: () => copy(a[kind], btn) }, 'Copy');
+        return h('div', { class: 'agent-install-cmd' },
+          h('div', { class: 'agent-install-label' }, label),
+          h('div', { class: 'agent-install-line' }, h('code', {}, a[kind]), btn));
+      }))),
+    h('div', { class: 'agents-again' }, 'This page checks again by itself once one is installed. ',
+      h('button', { class: 'btn', onclick: () => { welcome.at = 0; renderWelcome(!state.sessions.length); } }, 'Check again')));
 }
 
 function buildWelcomeList() {

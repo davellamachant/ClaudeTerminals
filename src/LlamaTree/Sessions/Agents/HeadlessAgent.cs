@@ -18,9 +18,13 @@ internal static class HeadlessAgent
     public static AgentProfile Writer(AgentProfile? agent) => agent?.HeadlessCommand != null ? agent : Agents.Claude;
 
     /// <summary>Whether the agent's headless command can be run: its program is on the PATH sessions get.</summary>
-    public static bool IsInstalled(AgentProfile agent)
+    public static bool IsInstalled(AgentProfile agent) => agent.HeadlessCommand is { } command && CanRun(command);
+
+    /// <summary>Whether a session could start the agent: its program ("claude") is on the PATH sessions get.</summary>
+    public static bool CanStart(AgentProfile agent) => CanRun(agent.Programs[0]);
+
+    private static bool CanRun(string command)
     {
-        if (agent.HeadlessCommand is not { } command) return false;
         var env = SessionEnvironment.Build();
         try
         {

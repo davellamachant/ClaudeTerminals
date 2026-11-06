@@ -1330,6 +1330,9 @@ internal sealed partial class AppHost
                         }),
                 };
             }
+            case "agents.installed":
+                // The agents a session here could start (their program is on the sessions' PATH), for the welcome screen.
+                return await Task.Run(() => Agents.All.Where(HeadlessAgent.CanStart).Select(a => a.Id).ToList());
             case "conversations":
             {
                 // Every agent's, latest first; only one agent's when the page asks for it (a session switching conversation).
