@@ -131,7 +131,7 @@ internal sealed partial class AppHost
             }
             tidied |= TidyConversation(info);
             AddSessionRuntime(info);
-            if (info.StartsWithApp) startWithApp.Add(info.Id);
+            if (info.StartsWithApp(projects.FirstOrDefault(p => p.Id == info.Project)?.StartWithApp)) startWithApp.Add(info.Id);
             // Any other isn't running until it's opened, and isn't in use if the app closes before then.
             else if (info.WasRunning) (info.WasRunning, tidied) = (false, true);
         }
@@ -762,7 +762,7 @@ internal sealed partial class AppHost
     {
         type = "sessions",
         agents = Agents.All.Select(a => a.Describe()),
-        projects = projects.Select(p => new { id = p.Id, name = p.Name, color = p.Color }),
+        projects = projects.Select(p => new { id = p.Id, name = p.Name, color = p.Color, startWithApp = p.StartWithApp }),
         sessions = order.Select(id => sessions.TryGetValue(id, out var s) ? (s.Info, s.IsRunning) : (serverSessions[id].Info, serverSessions[id].Running)).Select(x => new
         {
             id = x.Info.Id,
@@ -1056,7 +1056,11 @@ internal sealed partial class AppHost
             // ---- projects (a grouping of sessions; deleting one never removes sessions)
             case "projects.add":
             {
-                var project = new ProjectInfo { Name = ProjectName(msg), Color = ProjectInfo.NormalizeColor(OptStr(msg, "color")) };
+                var project = new ProjectInfo
+                {
+                    Name = ProjectName(msg), Color = ProjectInfo.NormalizeColor(OptStr(msg, "color")),
+                    StartWithApp = ProjectInfo.StartWithAppValue(OptStr(msg, "startWithApp")),
+                };
                 projects.Add(project);
                 ProjectStore.Save(projects);
                 Post(SessionList());
@@ -1068,6 +1072,8 @@ internal sealed partial class AppHost
                 project.Name = ProjectName(msg);
                 // Sent only by the edit dialog: a missing "color" leaves it alone, null or "" means automatic.
                 if (msg.TryGetProperty("color", out _)) project.Color = ProjectInfo.NormalizeColor(OptStr(msg, "color"));
+                // Likewise: when its sessions without a setting of their own start, from the next time LlamaTree opens.
+                if (msg.TryGetProperty("startWithApp", out _)) project.StartWithApp = ProjectInfo.StartWithAppValue(OptStr(msg, "startWithApp"));
                 ProjectStore.Save(projects);
                 Post(SessionList());
                 return null;

@@ -708,6 +708,9 @@ function moveProject(p, delta) {
  */
 function projectDialog(title, initial, okLabel, onOk) {
   const name = h('input', { value: initial.name, placeholder: 'e.g. FiscFlow', spellcheck: 'false', maxlength: '60' });
+  // When its Claude and Codex sessions start, for those without a setting of their own (ProjectInfo.StartWithApp).
+  const starts = h('select', {}, START_CHOICES.map(([value, label]) =>
+    h('option', { value, selected: (initial.startWithApp || 'click') === value }, label)));
   const error = h('div', { class: 'form-error', hidden: true });
   let color = initial.color ?? null;
   const automatic = initial.id ? autoProjectColor(initial.id) : PROJECT_COLORS[0];
@@ -735,27 +738,31 @@ function projectDialog(title, initial, okLabel, onOk) {
 
   const ok = async () => {
     if (!name.value.trim()) { error.hidden = false; error.textContent = 'Enter a name.'; return; }
-    try { await onOk(name.value.trim(), color); closeModal(); } catch (e) { error.hidden = false; error.textContent = e.message; }
+    const startWithApp = starts.value === 'click' ? '' : starts.value;
+    try { await onOk(name.value.trim(), color, startWithApp); closeModal(); } catch (e) { error.hidden = false; error.textContent = e.message; }
   };
   name.addEventListener('keydown', (e) => { if (e.key === 'Enter') ok(); });
   openModal(title, [
     field('Name', name),
     field('Colour', h('div', { class: 'swatch-row' }, autoBtn, swatches, customBtn, custom, preview)),
+    field('Its sessions start', comboSelect(starts),
+      'For its Claude and Codex sessions on this computer, unless a session has its own (in New session, or its ⋯ menu › Rename / edit command…). ' + STARTS_HELP),
     error,
   ], [h('button', { class: 'btn', onclick: closeModal }, 'Cancel'), h('button', { class: 'btn primary', onclick: ok }, okLabel)]);
   pick(color);
 }
 
 function showNewProjectDialog() {
-  projectDialog('New project', { name: '', color: null }, 'Create', async (name, color) => {
-    await request('projects.add', { name, color });
+  projectDialog('New project', { name: '', color: null }, 'Create', async (name, color, startWithApp) => {
+    await request('projects.add', { name, color, startWithApp });
     if (!state.sessions.length) return;
     toast(`Project "${name}" created. Put sessions in it with right-click → Move to project…, or pick it when adding a session.`);
   });
 }
 
 function showEditProjectDialog(p) {
-  projectDialog('Edit project', p, 'Save', (name, color) => request('projects.rename', { id: p.id, name, color: color ?? '' }));
+  projectDialog('Edit project', p, 'Save', (name, color, startWithApp) =>
+    request('projects.rename', { id: p.id, name, color: color ?? '', startWithApp }));
 }
 
 function confirmDeleteProject(p) {
@@ -2894,18 +2901,45 @@ function defaultProjectId() {
 }
 
 /**
- * When a Claude or Codex session on this computer starts: when its terminal is first shown (''), or as LlamaTree opens ("always",
- * or "running": if it was running as LlamaTree closed). See SessionInfo.StartWithApp.
+ * When a Claude or Codex session on this computer starts: when its terminal is first shown ("click"), or as LlamaTree
+ * opens ("always", or "running": if it was running as LlamaTree closed). A project has one of these for its sessions
+ * (with null for "click"), and a session has its own or '' for its project's. See SessionInfo.StartWithApp.
  */
-function startsField(selected) {
-  const select = h('select', {},
-    [['', 'When you first click on its terminal'], ['running', 'When LlamaTree opens, if its terminal was running when LlamaTree last closed'], ['always', 'When LlamaTree opens, always']]
-      .map(([value, label]) => h('option', { value, selected: (selected ?? '') === value }, label)));
-  return {
-    select,
-    el: field('Starts', h('div', { class: 'combo' }, select, h('span', { class: 'combo-btn' }, iconEl('chevD'))),
-      'Started when you first click on its terminal, its start-up context (hooks, the date, Git status) is fresh when you use it. "If its terminal was running" brings back the terminals you were using, even after you sign out or restart the computer.'),
+const START_CHOICES = [
+  ['click', 'When you first click on its terminal', 'when you first click on its terminal'],
+  ['running', 'When LlamaTree opens, if its terminal was running when LlamaTree last closed', 'when LlamaTree opens, if it was running'],
+  ['always', 'When LlamaTree opens, always', 'when LlamaTree opens, always'],
+];
+const STARTS_HELP = 'Started when you first click on its terminal, its start-up context (hooks, the date, Git status) is fresh when you use it. "If its terminal was running" brings back the terminals you were using, even after you sign out or restart the computer.';
+
+const comboSelect = (select) => h('div', { class: 'combo' }, select, h('span', { class: 'combo-btn' }, iconEl('chevD')));
+
+/** "When you first click on its terminal", in short, for what a session following project `id` (or none) does. */
+function projectStartText(id) {
+  const value = state.projects.find((p) => p.id === id)?.startWithApp || 'click';
+  return START_CHOICES.find(([v]) => v === value)[2];
+}
+
+/**
+ * A session's Starts: its project's (the first choice, which says what that is), or one of its own. setProject(id)
+ * keeps the first choice's words right when the project is changed in the same dialog.
+ */
+function startsField(selected, projectId) {
+  const same = h('option', { value: '', selected: !selected });
+  const setProject = (id) => {
+    const p = state.projects.find((x) => x.id === id);
+    same.textContent = p ? `Same as ${p.name}: ${projectStartText(id)}`
+      : id === '__new__' ? `Same as the new project: ${projectStartText(null)}`   // projectField's "New project…"
+      : `Default (no project): ${projectStartText(null)}`;
   };
+  setProject(projectId);
+  const select = h('select', {}, same, START_CHOICES.map(([value, label]) => h('option', { value, selected: selected === value }, label)));
+  return { select, setProject, el: field('Starts', comboSelect(select), STARTS_HELP) };
+}
+
+/** Follows a project picker (projectField) in a session's dialog: a new project's sessions start when clicked. */
+function startsFollowProject(starts, project) {
+  project.select.addEventListener('change', () => starts.setProject(project.select.value));
 }
 
 function showEditDialog(s, focus) {
@@ -2913,7 +2947,8 @@ function showEditDialog(s, focus) {
   const name = h('input', { value: s.name, spellcheck: 'false' });
   const command = h('input', { value: s.command, spellcheck: 'false' });
   const project = projectField(s.project);
-  const starts = agent && !s.server ? startsField(s.startWithApp) : null;   // a server's session runs with its own LlamaTree
+  const starts = agent && !s.server ? startsField(s.startWithApp, s.project) : null;   // a server's session runs with its own LlamaTree
+  if (starts) startsFollowProject(starts, project);
   const error = h('div', { class: 'form-error', hidden: true });
   const save = async () => {
     let projectId;
@@ -3298,7 +3333,8 @@ function showAddDialog(mode = 'new', from = null) {
   const firstPrompt = from?.prompt != null && h('textarea', { class: 'first-prompt', spellcheck: 'false' }, from.prompt);
   const commandNote = h('span');
   // Only a Claude or Codex session on this computer can start with LlamaTree (a server's runs with its own).
-  const starts = startsField(null);
+  const starts = startsField(null, from ? from.project : defaultProjectId());   // its project's, unless you pick
+  startsFollowProject(starts, project);
   const showStarts = () => { starts.el.hidden = !agentOf(command.value.trim() || DEFAULT_COMMAND) || !!serverValue(); };
   let picked = null;   // the saved conversation chosen in "Resume existing conversation"
 

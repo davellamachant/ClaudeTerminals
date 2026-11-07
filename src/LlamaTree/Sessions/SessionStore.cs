@@ -39,8 +39,10 @@ internal sealed class SessionInfo
     /// </summary>
     public string? Within { get; set; }
     /// <summary>
-    /// Whether a Claude or Codex session starts as soon as LlamaTree opens, rather than when it's first opened (null):
-    /// "always", or "running" for when it was running as LlamaTree last closed (<see cref="WasRunning"/>).
+    /// When a Claude or Codex session starts: "always" as soon as LlamaTree opens, "running" as LlamaTree opens if it was
+    /// running as LlamaTree last closed (<see cref="WasRunning"/>), "click" when it's first opened, or null for whatever
+    /// its project says (<see cref="ProjectInfo.StartWithApp"/>; with no project, when it's first opened). Sessions saved
+    /// before projects had the setting have null or their own choice, and projects start with none, so none change.
     /// </summary>
     public string? StartWithApp { get; set; }
     /// <summary>
@@ -49,12 +51,19 @@ internal sealed class SessionInfo
     /// </summary>
     public bool WasRunning { get; set; }
 
-    /// <summary>A <see cref="StartWithApp"/> from the page: "always", "running", or null for anything else.</summary>
-    public static string? StartWithAppValue(string? value) => value is "always" or "running" ? value : null;
+    /// <summary>A <see cref="StartWithApp"/> from the page: "always", "running", "click", or null (its project's) for anything else.</summary>
+    public static string? StartWithAppValue(string? value) => value is "always" or "running" or "click" ? value : null;
 
-    /// <summary>Whether this session starts as soon as LlamaTree opens (see <see cref="StartWithApp"/>).</summary>
-    [System.Text.Json.Serialization.JsonIgnore]
-    public bool StartsWithApp => StartWithApp == "always" || (StartWithApp == "running" && WasRunning);
+    /// <summary>
+    /// Whether this session starts as soon as LlamaTree opens: by its own <see cref="StartWithApp"/>, or else
+    /// <paramref name="projectSetting"/>, its project's.
+    /// </summary>
+    public bool StartsWithApp(string? projectSetting = null) => (StartWithApp ?? projectSetting) switch
+    {
+        "always" => true,
+        "running" => WasRunning,
+        _ => false,
+    };
 }
 
 internal sealed partial class ProjectInfo
@@ -63,6 +72,14 @@ internal sealed partial class ProjectInfo
     public string Name { get; set; } = "";
     /// <summary>A chosen colour as #rrggbb, or null for the automatic one (derived from the id).</summary>
     public string? Color { get; set; }
+    /// <summary>
+    /// When its Claude and Codex sessions start, for those without a setting of their own (see
+    /// <see cref="SessionInfo.StartWithApp"/>): "always", "running", or null for when each is first opened.
+    /// </summary>
+    public string? StartWithApp { get; set; }
+
+    /// <summary>A <see cref="StartWithApp"/> from the page or the file: "always", "running", or null for anything else.</summary>
+    public static string? StartWithAppValue(string? value) => value is "always" or "running" ? value : null;
 
     [System.Text.RegularExpressions.GeneratedRegex("^#[0-9a-fA-F]{6}$")]
     private static partial System.Text.RegularExpressions.Regex HexColor();
@@ -91,7 +108,11 @@ internal static class ProjectStore
             .DistinctBy(p => p.Id)
             .ToList();
         // The page puts the colour straight into a style, so only a plain #rrggbb ever reaches it.
-        foreach (var p in projects) p.Color = ProjectInfo.NormalizeColor(p.Color);
+        foreach (var p in projects)
+        {
+            p.Color = ProjectInfo.NormalizeColor(p.Color);
+            p.StartWithApp = ProjectInfo.StartWithAppValue(p.StartWithApp);
+        }
         return projects;
     }
 
