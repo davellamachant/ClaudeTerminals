@@ -72,7 +72,9 @@ public sealed class StartWithAppTests
     [Fact]
     public void A_projects_setting_is_saved_and_an_unknown_one_dropped_on_loading()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"projects-{Guid.NewGuid():N}.json");
+        // A folder of its own: saving makes the file's folder private, which a shared one like /tmp refuses.
+        var folder = Path.Combine(Path.GetTempPath(), $"start-proj-{Guid.NewGuid():N}");
+        var path = Path.Combine(folder, "projects.json");
         try
         {
             ProjectStore.Save(path, [
@@ -85,6 +87,6 @@ public sealed class StartWithAppTests
             Assert.Null(loaded["b"]);
             Assert.Null(loaded["c"]);
         }
-        finally { File.Delete(path); }
+        finally { Directory.Delete(folder, true); }
     }
 }
